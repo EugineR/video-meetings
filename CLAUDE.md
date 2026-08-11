@@ -9,7 +9,7 @@ pnpm workspace monorepo (`pnpm-workspace.yaml`: `apps/*`) with two applications:
 - `apps/api` — NestJS backend (TypeScript). See `apps/api/CLAUDE.md`.
 - `apps/web` — Next.js frontend (TypeScript, App Router). See `apps/web/CLAUDE.md`.
 
-Both apps are currently at their initial scaffold stage (default NestJS/Next.js starter templates) with no custom domain logic yet, and are not wired to each other.
+`apps/web` is still at its initial scaffold stage (default Next.js starter template). `apps/api` now has an auth module (email/password register & login, JWT issuance) backed by Postgres via Prisma; see `apps/api/CLAUDE.md`. The two apps are not wired to each other yet.
 
 ## Commands
 
@@ -22,6 +22,10 @@ Run from the repo root. Scripts use `pnpm -r` (all workspace packages) or `pnpm 
 - `pnpm format` / `pnpm format:check` — Prettier across `apps/**/*.{ts,tsx,js,jsx,json,md}`
 
 Requires Node >= 20; package manager is pinned via `packageManager: pnpm@11.20.0`.
+
+## Database
+
+`docker-compose.yml` at the repo root defines a `postgres` service (`postgres:16-alpine`) for local development. Start it with `docker compose up -d postgres`. Connection settings come from env vars documented in `.env.example` (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT`); data persists in the `postgres_data` volume. `apps/api` connects to it via Prisma — see `apps/api/CLAUDE.md` for the schema, migrations, and required `apps/api/.env` values.
 
 ## Formatting
 

@@ -51,5 +51,8 @@ Thumbs.db
 *.tsbuildinfo
 next-env.d.ts
 
+# Prisma generated client
+apps/api/generated/
+
 # Claude Code local settings
 .claude/settings.local.json
