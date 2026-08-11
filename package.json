@@ -1,0 +1,27 @@
+{
+  "name": "video-meetings",
+  "version": "0.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "dev": "pnpm --parallel -r run dev",
+    "dev:web": "pnpm --filter web run dev",
+    "dev:api": "pnpm --filter api run dev",
+    "build": "pnpm -r run build",
+    "build:web": "pnpm --filter web run build",
+    "build:api": "pnpm --filter api run build",
+    "lint": "pnpm -r run lint",
+    "lint:web": "pnpm --filter web run lint",
+    "lint:api": "pnpm --filter api run lint",
+    "test": "pnpm -r run test",
+    "test:api": "pnpm --filter api run test",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"apps/**/*.{ts,tsx,js,jsx,json,md}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2"
+  }
+}
