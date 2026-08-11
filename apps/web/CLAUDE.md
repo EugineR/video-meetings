@@ -26,3 +26,7 @@ Default Next.js App Router scaffold, unmodified:
 - `src/app/globals.css`, `src/app/page.module.css` — global + page-scoped styles (CSS Modules)
 
 ESLint config (`eslint.config.mjs`) composes `eslint-config-next`'s `core-web-vitals` and `typescript` rule sets via the flat-config `defineConfig` helper.
+
+## Documentation
+
+When this app's architecture changes (new routes, external services, commands), update this file and the root `CLAUDE.md`/`README.md` so they stay accurate.

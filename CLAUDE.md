@@ -26,3 +26,12 @@ Requires Node >= 20; package manager is pinned via `packageManager: pnpm@11.20.0
 ## Formatting
 
 Root `.prettierrc` sets `singleQuote: true, trailingComma: "all"` and applies repo-wide (each app also carries its own copy of the same config).
+
+## Documentation
+
+Whenever a change alters the project's architecture — new modules/services, changed repository structure, new inter-app wiring, new external dependencies (database, queue, third-party API), or new required commands/env vars — update the relevant documentation in the same change:
+
+- Root `README.md` and this `CLAUDE.md` for repo-wide structure, commands, or requirements.
+- `apps/api/CLAUDE.md` / `apps/web/CLAUDE.md` for changes scoped to one app's architecture or commands.
+
+Do not let these files describe a structure that no longer matches the code.

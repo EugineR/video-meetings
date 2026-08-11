@@ -28,3 +28,7 @@ Standard NestJS starter layout, unmodified from scaffold:
 Jest config for unit tests lives inline in `package.json` (`rootDir: "src"`, matches `*.spec.ts`); e2e tests have their own config at `test/jest-e2e.json`.
 
 ESLint (`eslint.config.mjs`) uses `typescript-eslint` recommendedTypeChecked + `eslint-plugin-prettier`; notably `@typescript-eslint/no-explicit-any` is off, and `no-floating-promises` / `no-unsafe-argument` are warnings, not errors.
+
+## Documentation
+
+When this app's architecture changes (new modules, external services, commands), update this file and the root `CLAUDE.md`/`README.md` so they stay accurate.
