@@ -9,8 +9,28 @@ out/
 
 # Env
 .env
-.env.local
-.env.*.local
+.env*.local
+.env.development
+.env.production
+.env.test
+!.env.example
+!.env.*.example
+
+# Secrets / credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*credentials*.json
+*serviceAccount*.json
+.aws/
+.npmrc
 
 # Logs
 *.log
