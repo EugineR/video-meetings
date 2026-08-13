@@ -1,71 +1,53 @@
-import Image from 'next/image';
-import { Button } from '@heroui/react';
-import styles from './page.module.css';
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Button, Card, Spinner } from '@heroui/react';
+import { clearAccessToken, getStoredUser, type StoredUser } from '@/lib/auth';
 
 export default function Home() {
+  const router = useRouter();
+  const [user, setUser] = useState<StoredUser | null>(null);
+
+  useEffect(() => {
+    const storedUser = getStoredUser();
+    if (!storedUser) {
+      router.replace('/register');
+      return;
+    }
+    setUser(storedUser);
+  }, [router]);
+
+  const handleSignOut = () => {
+    clearAccessToken();
+    router.replace('/register');
+  };
+
+  if (!user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Spinner aria-label="Loading" />
+      </div>
+    );
+  }
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>
-            To get started, edit the{' '}
-            <code className={styles.code}>page.tsx</code> file.
-          </h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{' '}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{' '}
-            or the{' '}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{' '}
-            center.
-          </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-accent/10 via-background to-background px-4 py-12">
+      <Card className="w-full max-w-md">
+        <Card.Header>
+          <Card.Title>Welcome back</Card.Title>
+          <Card.Description>{user.email}</Card.Description>
+        </Card.Header>
+        <Card.Footer>
+          <Button
+            className="w-full"
+            variant="secondary"
+            onPress={handleSignOut}
           >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-        <Button>Powered by HeroUI</Button>
-      </main>
+            Sign out
+          </Button>
+        </Card.Footer>
+      </Card>
     </div>
   );
 }

@@ -5,7 +5,7 @@ pnpm workspace monorepo with two applications:
 - `apps/api` — NestJS backend (TypeScript)
 - `apps/web` — Next.js frontend (TypeScript, App Router)
 
-`apps/web` is still at the default Next.js starter template for its page content, now wired up with Tailwind CSS v4 and the [HeroUI v3](https://heroui.com) component library. `apps/api` has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma. The two apps are not wired to each other yet.
+`apps/web` is wired up with Tailwind CSS v4 and the [HeroUI v3](https://heroui.com) component library, with a `/register` page that calls the API and a home page (`/`) that redirects unauthenticated visitors to `/register`. `apps/api` has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` — this is currently the only inter-app wiring.
 
 ## Requirements
 
@@ -34,6 +34,10 @@ Connection settings are read from environment variables (see `.env.example`): `P
 docker compose up -d postgres
 pnpm --filter api prisma:migrate
 ```
+
+### apps/web ↔ apps/api
+
+`apps/web` calls `apps/api` over HTTP using the base URL in `NEXT_PUBLIC_API_URL` (see `apps/web/.env.example`, defaults to `http://localhost:3001`). Copy `apps/web/.env.example` to `apps/web/.env` if you need to override it (e.g. a different API port).
 
 ## Commands
 

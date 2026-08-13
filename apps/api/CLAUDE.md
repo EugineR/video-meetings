@@ -21,7 +21,7 @@ Run from `apps/api/` (or via `pnpm --filter api <script>` from the repo root):
 
 ## Architecture
 
-- `src/main.ts` — bootstraps `AppModule` via `NestFactory`
+- `src/main.ts` — bootstraps `AppModule` via `NestFactory`; enables CORS restricted to `WEB_URL` (default `http://localhost:3000`) so `apps/web` can call this API from the browser
 - `src/app.module.ts` — root module. Imports `ConfigModule` (global), `PrismaModule`, `AuthModule`, `MeetingsModule`; registers a global `ValidationPipe` (`whitelist: true, transform: true`) via `APP_PIPE`
 - `src/app.controller.ts` / `src/app.service.ts` — scaffold feature (root `GET /` hello-world)
 - `src/prisma/` — `PrismaModule` (`@Global()`) and `PrismaService`, a `PrismaClient` subclass connected via the `@prisma/adapter-pg` driver adapter (Prisma 7 requires a driver adapter; the connection string can no longer live in `schema.prisma`), reading `DATABASE_URL` through `ConfigService`. Connects on `onModuleInit`, disconnects on `onModuleDestroy`
@@ -67,7 +67,7 @@ ESLint (`eslint.config.mjs`) uses `typescript-eslint` recommendedTypeChecked + `
 - Schema: `prisma/schema.prisma` — `User` (mapped to `users`) and `Meeting` (mapped to `meetings`, `ownerId` FK to `User` with `onDelete: Cascade`, `participants` stored as a native Postgres `String[]` column rather than a separate join table). Migrations live in `prisma/migrations/`.
 - CLI config: `prisma.config.ts` (reads `DATABASE_URL` via `dotenv/config`) — used by `prisma migrate`/`prisma generate`, separate from the app's own `ConfigModule`-based runtime connection in `PrismaService`.
 - Generated client: `generated/prisma`-style output is not used here — the schema uses the classic `prisma-client-js` generator, so the client is generated into `node_modules/@prisma/client` and imported as `import { PrismaClient } from '@prisma/client'`.
-- Required env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (Postgres connection string — must match the credentials in the root `docker-compose.yml`/`​.env.example`) and `JWT_SECRET`. `PORT` (default `3001` in `.env`/`.env.example`) sets the HTTP listen port in `src/main.ts` — it must differ from `apps/web`'s port (3000) since both apps are run together via `pnpm dev`.
+- Required env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (Postgres connection string — must match the credentials in the root `docker-compose.yml`/`​.env.example`) and `JWT_SECRET`. `PORT` (default `3001` in `.env`/`.env.example`) sets the HTTP listen port in `src/main.ts` — it must differ from `apps/web`'s port (3000) since both apps are run together via `pnpm dev`. `WEB_URL` (default `http://localhost:3000`) sets the allowed CORS origin in `src/main.ts` — it must match wherever `apps/web` is actually served from.
 
 ## Documentation
 

@@ -9,7 +9,7 @@ pnpm workspace monorepo (`pnpm-workspace.yaml`: `apps/*`) with two applications:
 - `apps/api` — NestJS backend (TypeScript). See `apps/api/CLAUDE.md`.
 - `apps/web` — Next.js frontend (TypeScript, App Router). See `apps/web/CLAUDE.md`.
 
-`apps/web` is still at the default Next.js starter template for its page content, now wired up with Tailwind CSS v4 and the HeroUI v3 component library (`@heroui/react`); see `apps/web/CLAUDE.md`. `apps/api` now has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma; see `apps/api/CLAUDE.md`. The two apps are not wired to each other yet.
+`apps/web` is wired up with Tailwind CSS v4 and the HeroUI v3 component library (`@heroui/react`), with a `/register` page that calls the API and a home page (`/`) that redirects unauthenticated visitors to `/register` (client-side, via a `localStorage`-stored JWT — see `apps/web/CLAUDE.md`). `apps/api` now has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma; see `apps/api/CLAUDE.md`. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` (see `apps/web/CLAUDE.md`) — this is currently the only inter-app wiring.
 
 ## Commands
 
@@ -39,6 +39,10 @@ Whenever a change alters the project's architecture — new modules/services, ch
 - `apps/api/CLAUDE.md` / `apps/web/CLAUDE.md` for changes scoped to one app's architecture or commands.
 
 Do not let these files describe a structure that no longer matches the code.
+
+## Testing UI changes
+
+Always use the Playwright MCP server (`mcp__playwright__*` tools) to verify UI changes in a browser — not the `claude-in-chrome` extension. Navigate to the relevant page, interact with it, and check console/network output as needed before reporting a UI change as done.
 
 ## Git workflow
 

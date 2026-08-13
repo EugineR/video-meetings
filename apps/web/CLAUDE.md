@@ -19,12 +19,19 @@ No test suite is configured for this app.
 
 ## Architecture
 
-Next.js App Router scaffold, now wired up with Tailwind CSS v4 and HeroUI v3:
+Next.js App Router app, wired up with Tailwind CSS v4 and HeroUI v3. No longer the default `create-next-app` scaffold content — `page.tsx`/`layout.tsx` were replaced with a minimal client-side-authenticated app shell:
 
-- `src/app/layout.tsx` — root layout; `body` carries HeroUI's semantic `bg-background text-foreground` classes
-- `src/app/page.tsx` — home page (`/`), otherwise the default scaffold content plus a HeroUI `Button` (`@heroui/react`) as a smoke test that the integration works
-- `src/app/globals.css`, `src/app/page.module.css` — global + page-scoped styles (CSS Modules). `globals.css` starts with `@import 'tailwindcss';` then `@import '@heroui/styles';` (order matters); the old hand-rolled `--background`/`--foreground` light/dark vars were removed in favor of HeroUI's own theme variables (see below)
+- `src/app/layout.tsx` — root layout; `body` carries HeroUI's semantic `bg-background text-foreground` classes; page `metadata` (title/description) set for this app rather than the `create-next-app` defaults
+- `src/app/page.tsx` — home page (`/`), a client component (`'use client'`). On mount it checks `getStoredUser()` (`src/lib/auth.ts`); if there's no valid stored user it redirects (`router.replace`) to `/register`, otherwise it renders a HeroUI `Card` welcoming the user by email with a sign-out button (`clearAccessToken` + redirect to `/register`). Shows a HeroUI `Spinner` while the check is pending.
+- `src/app/register/page.tsx` — `/register`, a client component rendering a HeroUI `Card`/`Form` that posts an email/password to `POST /auth/register` via `registerUser` from `src/lib/api.ts`. On success it stores the returned `accessToken` (`storeAccessToken`, `src/lib/auth.ts`) and redirects to `/`; on failure (e.g. duplicate email → 409) it renders the API's error message inline.
+- `src/lib/api.ts` — thin `fetch` wrapper for calling `apps/api`: reads the base URL from `NEXT_PUBLIC_API_URL` (env var, see below), exposes `registerUser`, and throws `ApiError` (with the HTTP status and the API's `message`) on non-2xx responses.
+- `src/lib/auth.ts` — client-side-only auth state, backed by `localStorage` (key `accessToken`, no cookie/session — nothing server-side reads it yet, so there's no SSR/middleware auth gate, only the client-side check in `page.tsx`). `storeAccessToken`/`clearAccessToken` write/clear the token; `getStoredUser()` decodes the JWT's payload (base64, no signature verification — the API is the source of truth) and returns `{ email }`, or `null` if missing/expired (`exp` claim), self-clearing the stored token when expired.
+- `src/app/globals.css` — global styles. Starts with `@import 'tailwindcss';` then `@import '@heroui/styles';` (order matters); the old hand-rolled `--background`/`--foreground` light/dark vars were removed in favor of HeroUI's own theme variables (see below)
 - `postcss.config.mjs` — registers the `@tailwindcss/postcss` plugin, required for Tailwind v4
+
+### Calling apps/api
+
+`NEXT_PUBLIC_API_URL` (see `.env.example`, defaults to `http://localhost:3001` in `src/lib/api.ts` if unset) is the base URL `src/lib/api.ts` calls. It must be prefixed `NEXT_PUBLIC_` to be readable in client components (Next.js only inlines env vars with that prefix into the browser bundle). It must point at `apps/api`'s port (`PORT` in `apps/api/.env`, default `3001`).
 
 ### HeroUI v3
 

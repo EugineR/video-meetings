@@ -39,6 +39,7 @@ pnpm-debug.log*
 
 # Testing / coverage
 coverage/
+.playwright-mcp/
 
 # Editor / OS
 .vscode/*
