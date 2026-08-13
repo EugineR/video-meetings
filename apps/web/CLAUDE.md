@@ -19,11 +19,19 @@ No test suite is configured for this app.
 
 ## Architecture
 
-Default Next.js App Router scaffold, unmodified:
+Next.js App Router scaffold, now wired up with Tailwind CSS v4 and HeroUI v3:
 
-- `src/app/layout.tsx` — root layout
-- `src/app/page.tsx` — home page (`/`)
-- `src/app/globals.css`, `src/app/page.module.css` — global + page-scoped styles (CSS Modules)
+- `src/app/layout.tsx` — root layout; `body` carries HeroUI's semantic `bg-background text-foreground` classes
+- `src/app/page.tsx` — home page (`/`), otherwise the default scaffold content plus a HeroUI `Button` (`@heroui/react`) as a smoke test that the integration works
+- `src/app/globals.css`, `src/app/page.module.css` — global + page-scoped styles (CSS Modules). `globals.css` starts with `@import 'tailwindcss';` then `@import '@heroui/styles';` (order matters); the old hand-rolled `--background`/`--foreground` light/dark vars were removed in favor of HeroUI's own theme variables (see below)
+- `postcss.config.mjs` — registers the `@tailwindcss/postcss` plugin, required for Tailwind v4
+
+### HeroUI v3
+
+- Packages: `@heroui/react`, `@heroui/styles`, `tailwind-variants`, plus `tailwindcss`/`@tailwindcss/postcss`/`postcss` for the Tailwind v4 base it builds on.
+- No provider component is needed (unlike HeroUI v2's `HeroUIProvider`).
+- Components use compound composition (e.g. `Card.Header`) and `onPress` instead of `onClick`; import from `@heroui/react`.
+- Theming is CSS-variable/`oklch`-based via `@heroui/styles`, switching on `[data-theme='dark']`/`[data-theme='light']` rather than `prefers-color-scheme`. No theme switcher is wired up yet — the app currently renders HeroUI's default light theme (`:root`'s values apply with no `data-theme` attribute set).
 
 ESLint config (`eslint.config.mjs`) composes `eslint-config-next`'s `core-web-vitals` and `typescript` rule sets via the flat-config `defineConfig` helper.
 

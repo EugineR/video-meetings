@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import { Button } from '@heroui/react';
 import styles from './page.module.css';
 
 export default function Home() {
@@ -63,6 +64,7 @@ export default function Home() {
             Documentation
           </a>
         </div>
+        <Button>Powered by HeroUI</Button>
       </main>
     </div>
   );

@@ -9,7 +9,7 @@ pnpm workspace monorepo (`pnpm-workspace.yaml`: `apps/*`) with two applications:
 - `apps/api` — NestJS backend (TypeScript). See `apps/api/CLAUDE.md`.
 - `apps/web` — Next.js frontend (TypeScript, App Router). See `apps/web/CLAUDE.md`.
 
-`apps/web` is still at its initial scaffold stage (default Next.js starter template). `apps/api` now has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma; see `apps/api/CLAUDE.md`. The two apps are not wired to each other yet.
+`apps/web` is still at the default Next.js starter template for its page content, now wired up with Tailwind CSS v4 and the HeroUI v3 component library (`@heroui/react`); see `apps/web/CLAUDE.md`. `apps/api` now has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma; see `apps/api/CLAUDE.md`. The two apps are not wired to each other yet.
 
 ## Commands
 
