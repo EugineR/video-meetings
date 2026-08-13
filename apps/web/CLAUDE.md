@@ -23,7 +23,7 @@ Next.js App Router app, wired up with Tailwind CSS v4 and HeroUI v3. No longer t
 
 - `src/app/layout.tsx` — root layout; `body` carries HeroUI's semantic `bg-background text-foreground` classes; page `metadata` (title/description) set for this app rather than the `create-next-app` defaults
 - `src/app/page.tsx` — home page (`/`), a client component (`'use client'`). On mount it checks `getStoredUser()` (`src/lib/auth.ts`); if there's no valid stored user it redirects (`router.replace`) to `/register`, otherwise it renders a HeroUI `Card` welcoming the user by email with a sign-out button (`clearAccessToken` + redirect to `/register`). Shows a HeroUI `Spinner` while the check is pending.
-- `src/app/register/page.tsx` — `/register`, a client component rendering a HeroUI `Card`/`Form` that posts an email/password to `POST /auth/register` via `registerUser` from `src/lib/api.ts`. On success it stores the returned `accessToken` (`storeAccessToken`, `src/lib/auth.ts`) and redirects to `/`; on failure (e.g. duplicate email → 409) it renders the API's error message inline.
+- `src/app/register/page.tsx` — `/register`, a client component rendering a HeroUI `Card`/`Form` that posts an email/password to `POST /auth/register` via `registerUser` from `src/lib/api.ts`. On success it stores the returned `accessToken` (`storeAccessToken`, `src/lib/auth.ts`) and redirects to `/`; on failure (e.g. duplicate email → 409) it renders the API's error message inline. Client-side validation distinguishes "email is required" from "invalid email format", enforces an 8-character password minimum, and the password field has a show/hide toggle; controls are sized to the 44px (mobile) / 40px (desktop) touch-target minimum.
 - `src/lib/api.ts` — thin `fetch` wrapper for calling `apps/api`: reads the base URL from `NEXT_PUBLIC_API_URL` (env var, see below), exposes `registerUser`, and throws `ApiError` (with the HTTP status and the API's `message`) on non-2xx responses.
 - `src/lib/auth.ts` — client-side-only auth state, backed by `localStorage` (key `accessToken`, no cookie/session — nothing server-side reads it yet, so there's no SSR/middleware auth gate, only the client-side check in `page.tsx`). `storeAccessToken`/`clearAccessToken` write/clear the token; `getStoredUser()` decodes the JWT's payload (base64, no signature verification — the API is the source of truth) and returns `{ email }`, or `null` if missing/expired (`exp` claim), self-clearing the stored token when expired.
 - `src/app/globals.css` — global styles. Starts with `@import 'tailwindcss';` then `@import '@heroui/styles';` (order matters); the old hand-rolled `--background`/`--foreground` light/dark vars were removed in favor of HeroUI's own theme variables (see below)
@@ -38,9 +38,18 @@ Next.js App Router app, wired up with Tailwind CSS v4 and HeroUI v3. No longer t
 - Packages: `@heroui/react`, `@heroui/styles`, `tailwind-variants`, plus `tailwindcss`/`@tailwindcss/postcss`/`postcss` for the Tailwind v4 base it builds on.
 - No provider component is needed (unlike HeroUI v2's `HeroUIProvider`).
 - Components use compound composition (e.g. `Card.Header`) and `onPress` instead of `onClick`; import from `@heroui/react`.
-- Theming is CSS-variable/`oklch`-based via `@heroui/styles`, switching on `[data-theme='dark']`/`[data-theme='light']` rather than `prefers-color-scheme`. No theme switcher is wired up yet — the app currently renders HeroUI's default light theme (`:root`'s values apply with no `data-theme` attribute set).
+- Theming is CSS-variable/`oklch`-based via `@heroui/styles`, switching on `[data-theme='dark']`/`[data-theme='light']` rather than `prefers-color-scheme`. No theme switcher is wired up yet — the app currently renders HeroUI's default light theme (`:root`'s values apply with no `data-theme` attribute set), except `src/app/globals.css` darkens HeroUI's default `--accent`/`--muted` tokens to meet WCAG AA contrast (4.5:1) — HeroUI's originals fell short for button text on `--accent` and placeholder text on `--muted`.
 
 ESLint config (`eslint.config.mjs`) composes `eslint-config-next`'s `core-web-vitals` and `typescript` rule sets via the flat-config `defineConfig` helper.
+
+## Testing UI changes
+
+Any UI change (new component, styling change, layout change, etc.) in this app is not considered complete until it has been visually verified using both of the following, in the same turn as the change:
+
+- The `ui-ux-pro-max` skill — to check the change against design/UX guidelines (styles, color, typography, layout, accessibility, etc.).
+- The Playwright MCP server (`mcp__playwright__*` tools) — not the `claude-in-chrome` extension — to actually load the page in a browser, interact with it, and check console/network output as needed.
+
+Do not report a UI task as done without having run both checks.
 
 ## Documentation
 
