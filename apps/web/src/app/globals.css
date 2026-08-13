@@ -1,6 +1,13 @@
 @import 'tailwindcss';
 @import '@heroui/styles';
 
+:root {
+  /* HeroUI's default --accent/--muted fall short of WCAG AA (4.5:1): white button
+     text on --accent measures ~3.6:1, and --muted-on-field placeholders ~4.1:1. */
+  --accent: oklch(0.55 0.195 253.83);
+  --muted: oklch(0.5 0.0138 285.94);
+}
+
 html {
   height: 100%;
 }
