@@ -48,7 +48,7 @@ Run from the repo root. Scripts use `pnpm -r` (all workspace packages) or `pnpm 
 | `pnpm dev` / `pnpm dev:api` / `pnpm dev:web`       | Run dev server(s)                                   |
 | `pnpm build` / `pnpm build:api` / `pnpm build:web` | Build                                               |
 | `pnpm lint` / `pnpm lint:api` / `pnpm lint:web`    | Lint                                                |
-| `pnpm test` / `pnpm test:api`                      | Run tests (only `api` has a test suite)             |
+| `pnpm test` / `pnpm test:api`                      | Run unit tests (only `api` has a test suite)        |
 | `pnpm format` / `pnpm format:check`                | Prettier across `apps/**/*.{ts,tsx,js,jsx,json,md}` |
 
 ### apps/api (NestJS)
@@ -60,8 +60,8 @@ Run from `apps/api/` (or via `pnpm --filter api <script>` from the repo root):
 - `pnpm start:debug` — watch mode with `--inspect-brk`
 - `pnpm build` — Nest build to `dist/`
 - `pnpm start:prod` — run the built `dist/main.js`
-- `pnpm test` / `pnpm test:watch` / `pnpm test:cov` — unit tests
-- `pnpm test:e2e` — e2e tests (requires `docker compose up -d postgres`)
+- `pnpm test` / `pnpm test:watch` / `pnpm test:cov` — unit tests (none exist yet — see `apps/api/CLAUDE.md`)
+- `pnpm test:e2e` — e2e tests, covering `auth` and `meetings` (requires `docker compose up -d postgres`)
 - `pnpm prisma:generate` — regenerate the Prisma Client
 - `pnpm prisma:migrate` — create/apply a Prisma migration
 
