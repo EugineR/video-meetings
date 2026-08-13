@@ -20,6 +20,8 @@ export default function Home() {
       router.replace('/login');
       return;
     }
+    // localStorage is only available client-side, so this must run in an effect rather than during render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUser(storedUser);
 
     getMeetings()

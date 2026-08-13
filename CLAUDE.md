@@ -44,3 +44,4 @@ Do not let these files describe a structure that no longer matches the code.
 
 - Group related changes into one logical commit instead of committing after every small step. For example, when adding several skills, stage and commit them together once the set is complete — don't create a separate commit per skill.
 - Do not `git push` unless the user explicitly asks for it in that turn. Committing locally does not imply permission to push; a prior push request does not carry over to later, unrelated changes.
+- Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test`, blocking the commit on lint errors or test failures.

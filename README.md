@@ -79,6 +79,10 @@ No test suite is configured for this app.
 
 Root `.prettierrc` sets `singleQuote: true, trailingComma: "all"` and applies repo-wide (each app also carries its own copy of the same config).
 
+## Git hooks
+
+[Husky](https://typicode.github.io/husky/) is installed (`prepare` script, runs automatically on `pnpm install`). A `pre-commit` hook (`.husky/pre-commit`) runs `pnpm lint && pnpm test` before every commit, blocking it on lint errors or test failures.
+
 ## Development with Claude Code
 
 This repo carries `CLAUDE.md` guidance files (root and per-app) plus vendored skills under `.claude/skills` for working with [Claude Code](https://claude.ai/code).
