@@ -67,7 +67,7 @@ ESLint (`eslint.config.mjs`) uses `typescript-eslint` recommendedTypeChecked + `
 - Schema: `prisma/schema.prisma` — `User` (mapped to `users`) and `Meeting` (mapped to `meetings`, `ownerId` FK to `User` with `onDelete: Cascade`, `participants` stored as a native Postgres `String[]` column rather than a separate join table). Migrations live in `prisma/migrations/`.
 - CLI config: `prisma.config.ts` (reads `DATABASE_URL` via `dotenv/config`) — used by `prisma migrate`/`prisma generate`, separate from the app's own `ConfigModule`-based runtime connection in `PrismaService`.
 - Generated client: `generated/prisma`-style output is not used here — the schema uses the classic `prisma-client-js` generator, so the client is generated into `node_modules/@prisma/client` and imported as `import { PrismaClient } from '@prisma/client'`.
-- Required env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (Postgres connection string — must match the credentials in the root `docker-compose.yml`/`​.env.example`) and `JWT_SECRET`.
+- Required env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (Postgres connection string — must match the credentials in the root `docker-compose.yml`/`​.env.example`) and `JWT_SECRET`. `PORT` (default `3001` in `.env`/`.env.example`) sets the HTTP listen port in `src/main.ts` — it must differ from `apps/web`'s port (3000) since both apps are run together via `pnpm dev`.
 
 ## Documentation
 
