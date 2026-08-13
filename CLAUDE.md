@@ -42,7 +42,12 @@ Do not let these files describe a structure that no longer matches the code.
 
 ## Testing UI changes
 
-Always use the Playwright MCP server (`mcp__playwright__*` tools) to verify UI changes in a browser — not the `claude-in-chrome` extension. Navigate to the relevant page, interact with it, and check console/network output as needed before reporting a UI change as done.
+Any UI change (new component, styling change, layout change, etc.) is not considered complete until it has been visually verified using both of the following, in the same turn as the change:
+
+- The `ui-ux-pro-max` skill — to check the change against design/UX guidelines (styles, color, typography, layout, accessibility, etc.).
+- The Playwright MCP server (`mcp__playwright__*` tools) — not the `claude-in-chrome` extension — to actually load the page in a browser, interact with it, and check console/network output as needed.
+
+Do not report a UI task as done without having run both checks.
 
 ## Git workflow
 
