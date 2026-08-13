@@ -5,7 +5,7 @@ pnpm workspace monorepo with two applications:
 - `apps/api` — NestJS backend (TypeScript)
 - `apps/web` — Next.js frontend (TypeScript, App Router)
 
-`apps/web` is still at its initial scaffold stage (default Next.js starter template). `apps/api` has an auth module (email/password register & login, JWT issuance) backed by Postgres via Prisma. The two apps are not wired to each other yet.
+`apps/web` is still at its initial scaffold stage (default Next.js starter template). `apps/api` has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma. The two apps are not wired to each other yet.
 
 ## Requirements
 

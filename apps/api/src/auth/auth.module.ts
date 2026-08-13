@@ -5,6 +5,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { RegisterUserHandler } from './commands/handlers/register-user.handler';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { LoginUserHandler } from './queries/handlers/login-user.handler';
 import { TokenService } from './token.service';
 
@@ -24,6 +25,7 @@ const QueryHandlers = [LoginUserHandler];
     }),
   ],
   controllers: [AuthController],
-  providers: [TokenService, ...CommandHandlers, ...QueryHandlers],
+  providers: [TokenService, JwtAuthGuard, ...CommandHandlers, ...QueryHandlers],
+  exports: [JwtModule, JwtAuthGuard],
 })
 export class AuthModule {}
