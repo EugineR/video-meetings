@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import {
   Button,
   Card,
-  Description,
   FieldError,
   Form,
   Input,
@@ -14,14 +13,14 @@ import {
   Link,
   TextField,
 } from '@heroui/react';
-import { ApiError, registerUser } from '@/lib/api';
+import { ApiError, loginUser } from '@/lib/api';
 import { storeAccessToken } from '@/lib/auth';
 import { EyeIcon, EyeOffIcon } from '@/components/icons';
 import { AppHeader } from '@/components/layout/AppHeader';
 
 const EMAIL_PATTERN = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
 
-export default function RegisterPage() {
+export default function LoginPage() {
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +36,7 @@ export default function RegisterPage() {
 
     setIsPending(true);
     try {
-      const { accessToken } = await registerUser(email, password);
+      const { accessToken } = await loginUser(email, password);
       storeAccessToken(accessToken);
       router.push('/');
     } catch (err) {
@@ -57,9 +56,9 @@ export default function RegisterPage() {
       <div className="flex flex-1 items-center justify-center px-4 py-12">
         <Card className="w-full max-w-md">
           <Card.Header>
-            <Card.Title>Create your account</Card.Title>
+            <Card.Title>Welcome back</Card.Title>
             <Card.Description>
-              Enter your email and a password to get started.
+              Enter your email and password to sign in.
             </Card.Description>
           </Card.Header>
 
@@ -89,19 +88,14 @@ export default function RegisterPage() {
 
                 <TextField
                   isRequired
-                  minLength={8}
                   name="password"
                   type="password"
-                  validate={(value) =>
-                    value.length >= 8
-                      ? null
-                      : 'Password must be at least 8 characters'
-                  }
+                  validate={(value) => (value ? null : 'Password is required')}
                 >
                   <Label>Password</Label>
                   <InputGroup className="h-11 md:h-10" variant="secondary">
                     <InputGroup.Input
-                      autoComplete="new-password"
+                      autoComplete="current-password"
                       placeholder="••••••••"
                       type={isPasswordVisible ? 'text' : 'password'}
                     />
@@ -124,7 +118,6 @@ export default function RegisterPage() {
                       </Button>
                     </InputGroup.Suffix>
                   </InputGroup>
-                  <Description>Must be at least 8 characters.</Description>
                   <FieldError />
                 </TextField>
 
@@ -143,10 +136,11 @@ export default function RegisterPage() {
                 size="lg"
                 type="submit"
               >
-                {isPending ? 'Creating account…' : 'Create account'}
+                {isPending ? 'Signing in…' : 'Sign in'}
               </Button>
               <p className="text-center text-sm text-muted">
-                Already have an account? <Link href="/login">Sign in</Link>
+                Don&apos;t have an account?{' '}
+                <Link href="/register">Create one</Link>
               </p>
             </Card.Footer>
           </Form>

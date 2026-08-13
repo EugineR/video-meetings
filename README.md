@@ -5,7 +5,7 @@ pnpm workspace monorepo with two applications:
 - `apps/api` — NestJS backend (TypeScript)
 - `apps/web` — Next.js frontend (TypeScript, App Router)
 
-`apps/web` is wired up with Tailwind CSS v4 and the [HeroUI v3](https://heroui.com) component library, with a `/register` page that calls the API and a home page (`/`) that redirects unauthenticated visitors to `/register`. `apps/api` has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` — this is currently the only inter-app wiring.
+`apps/web` is wired up with Tailwind CSS v4 and the [HeroUI v3](https://heroui.com) component library, with `/register` and `/login` pages that call the API and a home page (`/`) that redirects unauthenticated visitors to `/login`; once signed in, the home page lists the user's meetings (all of them, plus the 3 most recent). `apps/api` has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` — this is currently the only inter-app wiring.
 
 ## Requirements
 

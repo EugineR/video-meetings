@@ -28,6 +28,10 @@ export function clearAccessToken(): void {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
 }
 
+export function getAccessToken(): string | null {
+  return localStorage.getItem(ACCESS_TOKEN_KEY);
+}
+
 export function getStoredUser(): StoredUser | null {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
   if (!token) return null;

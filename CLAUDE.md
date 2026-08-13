@@ -9,7 +9,7 @@ pnpm workspace monorepo (`pnpm-workspace.yaml`: `apps/*`) with two applications:
 - `apps/api` — NestJS backend (TypeScript). See `apps/api/CLAUDE.md`.
 - `apps/web` — Next.js frontend (TypeScript, App Router). See `apps/web/CLAUDE.md`.
 
-`apps/web` is wired up with Tailwind CSS v4 and the HeroUI v3 component library (`@heroui/react`), with a `/register` page that calls the API and a home page (`/`) that redirects unauthenticated visitors to `/register` (client-side, via a `localStorage`-stored JWT — see `apps/web/CLAUDE.md`). `apps/api` now has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma; see `apps/api/CLAUDE.md`. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` (see `apps/web/CLAUDE.md`) — this is currently the only inter-app wiring.
+`apps/web` is wired up with Tailwind CSS v4 and the HeroUI v3 component library (`@heroui/react`), with `/register` and `/login` pages that call the API and a home page (`/`) that redirects unauthenticated visitors to `/login` (client-side, via a `localStorage`-stored JWT — see `apps/web/CLAUDE.md`); once signed in, the home page lists the user's meetings (all of them, plus the 3 most recent) fetched from the API. `apps/api` now has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma; see `apps/api/CLAUDE.md`. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` (see `apps/web/CLAUDE.md`) — this is currently the only inter-app wiring.
 
 ## Commands
 
