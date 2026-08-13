@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CqrsModule } from '@nestjs/cqrs';
 import { JwtModule } from '@nestjs/jwt';
-import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { RegisterUserHandler } from './commands/handlers/register-user.handler';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -15,7 +14,6 @@ const QueryHandlers = [LoginUserHandler];
 @Module({
   imports: [
     CqrsModule,
-    UsersModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({

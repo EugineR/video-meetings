@@ -1,7 +1,8 @@
 import { UnauthorizedException } from '@nestjs/common';
-import { IQueryHandler, QueryHandler } from '@nestjs/cqrs';
+import { IQueryHandler, QueryBus, QueryHandler } from '@nestjs/cqrs';
+import { User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import { UsersRepository } from '../../../users/users.repository';
+import { FindUserByEmailQuery } from '../../../users/queries/find-user-by-email.query';
 import { AccessTokenResponse } from '../../interfaces/access-token-response.interface';
 import { TokenService } from '../../token.service';
 import { LoginUserQuery } from '../login-user.query';
@@ -12,12 +13,14 @@ export class LoginUserHandler implements IQueryHandler<
   AccessTokenResponse
 > {
   constructor(
-    private readonly usersRepository: UsersRepository,
+    private readonly queryBus: QueryBus,
     private readonly tokenService: TokenService,
   ) {}
 
   async execute(query: LoginUserQuery): Promise<AccessTokenResponse> {
-    const user = await this.usersRepository.findByEmail(query.email);
+    const user = await this.queryBus.execute<FindUserByEmailQuery, User | null>(
+      new FindUserByEmailQuery(query.email),
+    );
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
     }
