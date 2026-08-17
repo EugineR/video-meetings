@@ -5,7 +5,7 @@ pnpm workspace monorepo with two applications:
 - `apps/api` — NestJS backend (TypeScript)
 - `apps/web` — Next.js frontend (TypeScript, App Router)
 
-`apps/web` is wired up with Tailwind CSS v4 and the [HeroUI v3](https://heroui.com) component library, with `/register` and `/login` pages that call the API and a home page (`/`) that redirects unauthenticated visitors to `/login`; once signed in, the home page lists the user's meetings (all of them, plus the 3 most recent). `apps/api` has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings), backed by Postgres via Prisma. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` — this is currently the only inter-app wiring.
+`apps/web` is wired up with Tailwind CSS v4 and the [HeroUI v3](https://heroui.com) component library, with `/register` and `/login` pages that call the API and a home page (`/`) that redirects unauthenticated visitors to `/login`; once signed in, the home page lists the user's meetings (all of them, plus the 3 most recent), each row showing an "Upload" button (no recording yet) or a "Recording" badge and opening `/meetings/{id}` on click. That page shows the meeting's details plus its recording: an upload area (drag & drop or file picker, with progress and cancel) when there is none, or a player with filename/size/date/status and Replace/Delete actions when there is. `apps/api` has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings, plus upload/stream/delete a recording file per meeting), backed by Postgres via Prisma and local-disk file storage. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` — this is currently the only inter-app wiring.
 
 ## Requirements
 
@@ -34,6 +34,10 @@ Connection settings are read from environment variables (see `.env.example`): `P
 docker compose up -d postgres
 pnpm --filter api prisma:migrate
 ```
+
+### Recording storage
+
+Uploaded meeting recordings are stored on `apps/api`'s local filesystem under `UPLOADS_DIR` (default `uploads/`, relative to `apps/api/`; gitignored/dockerignored, created on demand). Configure `UPLOADS_DIR`, `MAX_UPLOAD_SIZE_BYTES` and `ALLOWED_RECORDING_MIME_TYPES` in `apps/api/.env` (see `apps/api/.env.example`).
 
 ### apps/web ↔ apps/api
 

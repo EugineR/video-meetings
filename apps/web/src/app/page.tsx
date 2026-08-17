@@ -1,17 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, Spinner } from '@heroui/react';
 import { clearAccessToken, getStoredUser, type StoredUser } from '@/lib/auth';
-import { ApiError, getMeetings, type Meeting } from '@/lib/api';
+import { ApiError, getMeetings, type MeetingListItem } from '@/lib/api';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { MeetingRow } from '@/components/meetings/MeetingRow';
 
 export default function Home() {
   const router = useRouter();
   const [user, setUser] = useState<StoredUser | null>(null);
-  const [meetings, setMeetings] = useState<Meeting[] | null>(null);
+  const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
   const [meetingsError, setMeetingsError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,6 +39,18 @@ export default function Home() {
     clearAccessToken();
     router.replace('/login');
   };
+
+  const handleRecordingUploaded = useCallback((meetingId: string) => {
+    setMeetings((current) =>
+      current
+        ? current.map((meeting) =>
+            meeting.id === meetingId
+              ? { ...meeting, hasRecording: true }
+              : meeting,
+          )
+        : current,
+    );
+  }, []);
 
   if (!user) {
     return (
@@ -71,9 +83,10 @@ export default function Home() {
                 <ul className="flex flex-col gap-2">
                   {recentMeetings.map((meeting) => (
                     <MeetingRow
+                      highlighted
                       key={meeting.id}
                       meeting={meeting}
-                      highlighted
+                      onUploaded={handleRecordingUploaded}
                     />
                   ))}
                 </ul>
@@ -104,7 +117,11 @@ export default function Home() {
               ) : (
                 <ul className="flex flex-col gap-2">
                   {meetings.map((meeting) => (
-                    <MeetingRow key={meeting.id} meeting={meeting} />
+                    <MeetingRow
+                      key={meeting.id}
+                      meeting={meeting}
+                      onUploaded={handleRecordingUploaded}
+                    />
                   ))}
                 </ul>
               )}

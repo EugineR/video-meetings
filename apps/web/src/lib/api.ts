@@ -34,6 +34,10 @@ export interface MeetingDetail extends Meeting {
   recording: Recording | null;
 }
 
+export interface MeetingListItem extends Meeting {
+  hasRecording: boolean;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -108,8 +112,8 @@ export function loginUser(
   return postJson<AccessTokenResponse>('/auth/login', { email, password });
 }
 
-export function getMeetings(): Promise<Meeting[]> {
-  return getJson<Meeting[]>('/meetings');
+export function getMeetings(): Promise<MeetingListItem[]> {
+  return getJson<MeetingListItem[]>('/meetings');
 }
 
 export function getMeeting(id: string): Promise<MeetingDetail> {
