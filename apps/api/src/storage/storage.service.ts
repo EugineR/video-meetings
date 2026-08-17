@@ -24,14 +24,21 @@ export class StorageService {
   }
 
   async save(meetingId: string, file: StorageFileInput): Promise<string> {
-    const dir = join(this.uploadsDir, meetingId);
+    const dir = this.resolveMeetingDir(meetingId);
     await mkdir(dir, { recursive: true });
-    const storagePath = join(
-      dir,
-      `${randomUUID()}${extname(file.originalFilename)}`,
-    );
+    const storagePath = join(dir, this.generateFilename(file.originalFilename));
     await writeFile(storagePath, file.buffer);
     return storagePath;
+  }
+
+  /** The `{UPLOADS_DIR}/{meetingId}` directory a recording for this meeting is stored under. */
+  resolveMeetingDir(meetingId: string): string {
+    return join(this.uploadsDir, meetingId);
+  }
+
+  /** A fresh `{uuid}{ext}` filename, extension derived from the given original filename. */
+  generateFilename(originalFilename: string): string {
+    return `${randomUUID()}${extname(originalFilename)}`;
   }
 
   createReadStream(storagePath: string, range?: StorageByteRange): ReadStream {
