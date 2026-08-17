@@ -3,3 +3,6 @@ export { EyeOffIcon } from './EyeOffIcon';
 export { VideoCameraIcon } from './VideoCameraIcon';
 export { CalendarIcon } from './CalendarIcon';
 export { UsersIcon } from './UsersIcon';
+export { UploadIcon } from './UploadIcon';
+export { TrashIcon } from './TrashIcon';
+export { XMarkIcon } from './XMarkIcon';

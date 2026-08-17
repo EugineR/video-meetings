@@ -419,4 +419,240 @@ describe('Meetings Recording (e2e)', () => {
         .expect(401);
     });
   });
+
+  describe('GET /meetings/:id/recording/content', () => {
+    it('streams bytes identical to the uploaded file, with the correct Content-Type', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+      const fileContents = Buffer.from('the exact recorded bytes');
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', fileContents, {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      const response = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recording/content`)
+        .set('Authorization', `Bearer ${token}`)
+        .responseType('blob')
+        .expect(200);
+
+      expect(response.headers['content-type']).toBe('video/mp4');
+      expect(Buffer.from(response.body as Buffer).equals(fileContents)).toBe(
+        true,
+      );
+    });
+
+    it('authenticates via a ?token= query param (for <video> src)', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recording/content?token=${token}`)
+        .expect(200);
+    });
+
+    it('rejects a ?token= query param on a route that is not @AllowQueryToken()', async () => {
+      // The query-param fallback is opt-in per route (JwtAuthGuard +
+      // @AllowQueryToken()) specifically so a token leaked via a recording
+      // URL can't also authenticate the rest of the API.
+      const token = await registerAndLogin(app, 'owner@example.com');
+
+      await request(app.getHttpServer())
+        .get(`/meetings?token=${token}`)
+        .expect(401);
+    });
+
+    it('responds 206 to a request carrying a Range header', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+      const fileContents = Buffer.from('0123456789');
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', fileContents, {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      const response = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recording/content`)
+        .set('Authorization', `Bearer ${token}`)
+        .set('Range', 'bytes=2-5')
+        .responseType('blob')
+        .expect(206);
+
+      expect(response.headers['content-range']).toBe('bytes 2-5/10');
+      expect(response.headers['content-length']).toBe('4');
+      expect(Buffer.from(response.body as Buffer).toString()).toBe('2345');
+    });
+
+    it('returns 404 when there is no recording', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recording/content`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+    });
+
+    it("returns 404 for another user's meeting", async () => {
+      const ownerToken = await registerAndLogin(app, 'owner@example.com');
+      const otherToken = await registerAndLogin(app, 'other@example.com');
+      const meetingId = await createMeeting(app, ownerToken);
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recording/content`)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(404);
+    });
+
+    it('rejects an unauthenticated request (401)', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recording/content`)
+        .expect(401);
+    });
+  });
+
+  describe('recording fields on the meeting read endpoints', () => {
+    it('GET /meetings/:id returns recording: null without a recording, then the metadata after upload', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      const beforeResponse = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect((beforeResponse.body as { recording: unknown }).recording).toBe(
+        null,
+      );
+
+      const uploadResponse = await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+      const uploaded = uploadResponse.body as RecordingResponseBody;
+
+      const afterResponse = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const recording = (
+        afterResponse.body as { recording: RecordingResponseBody }
+      ).recording;
+      expect(recording.id).toBe(uploaded.id);
+      expect(recording.originalFilename).toBe('clip.mp4');
+      expect(recording.sizeBytes).toBe('4');
+    });
+
+    it('GET /meetings returns hasRecording: true only for meetings with a recording', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const withRecordingId = await createMeeting(app, token);
+      const withoutRecordingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${withRecordingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      const response = await request(app.getHttpServer())
+        .get('/meetings')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const body = response.body as Array<{
+        id: string;
+        hasRecording: boolean;
+      }>;
+      expect(body.find((m) => m.id === withRecordingId)?.hasRecording).toBe(
+        true,
+      );
+      expect(body.find((m) => m.id === withoutRecordingId)?.hasRecording).toBe(
+        false,
+      );
+    });
+  });
+
+  describe('cascade delete', () => {
+    it('deletes the meeting_recordings row when the meeting is deleted', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      await prisma.meeting.delete({ where: { id: meetingId } });
+
+      const recording = await prisma.meetingRecording.findUnique({
+        where: { meetingId },
+      });
+      expect(recording).toBeNull();
+    });
+
+    it('deletes the meeting_recordings row when the owning user is deleted', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      const meeting = await prisma.meeting.findUniqueOrThrow({
+        where: { id: meetingId },
+      });
+      await prisma.user.delete({ where: { id: meeting.ownerId } });
+
+      const recording = await prisma.meetingRecording.findUnique({
+        where: { meetingId },
+      });
+      expect(recording).toBeNull();
+    });
+  });
 });

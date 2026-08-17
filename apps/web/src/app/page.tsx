@@ -1,28 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useState } from 'react';
 import { Card, Spinner } from '@heroui/react';
-import { clearAccessToken, getStoredUser, type StoredUser } from '@/lib/auth';
-import { ApiError, getMeetings, type Meeting } from '@/lib/api';
+import { useAuthenticatedUser } from '@/lib/useAuthenticatedUser';
+import { ApiError, getMeetings, type MeetingListItem } from '@/lib/api';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { MeetingRow } from '@/components/meetings/MeetingRow';
 
 export default function Home() {
-  const router = useRouter();
-  const [user, setUser] = useState<StoredUser | null>(null);
-  const [meetings, setMeetings] = useState<Meeting[] | null>(null);
+  const { user, signOut } = useAuthenticatedUser();
+  const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
   const [meetingsError, setMeetingsError] = useState<string | null>(null);
 
   useEffect(() => {
-    const storedUser = getStoredUser();
-    if (!storedUser) {
-      router.replace('/login');
+    if (!user) {
       return;
     }
-    // localStorage is only available client-side, so this must run in an effect rather than during render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setUser(storedUser);
 
     getMeetings()
       .then(setMeetings)
@@ -33,12 +26,19 @@ export default function Home() {
             : 'Could not load meetings. Please try again.',
         );
       });
-  }, [router]);
+  }, [user]);
 
-  const handleSignOut = () => {
-    clearAccessToken();
-    router.replace('/login');
-  };
+  const handleRecordingUploaded = useCallback((meetingId: string) => {
+    setMeetings((current) =>
+      current
+        ? current.map((meeting) =>
+            meeting.id === meetingId
+              ? { ...meeting, hasRecording: true }
+              : meeting,
+          )
+        : current,
+    );
+  }, []);
 
   if (!user) {
     return (
@@ -56,7 +56,7 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen flex-col bg-linear-to-br from-accent/10 via-background to-background">
-      <AppHeader email={user.email} onSignOut={handleSignOut} />
+      <AppHeader email={user.email} onSignOut={signOut} />
       <div className="flex justify-center px-4 py-12">
         <div className="flex w-full max-w-2xl flex-col gap-6">
           {recentMeetings.length > 0 ? (
@@ -71,9 +71,10 @@ export default function Home() {
                 <ul className="flex flex-col gap-2">
                   {recentMeetings.map((meeting) => (
                     <MeetingRow
+                      highlighted
                       key={meeting.id}
                       meeting={meeting}
-                      highlighted
+                      onUploaded={handleRecordingUploaded}
                     />
                   ))}
                 </ul>
@@ -104,7 +105,11 @@ export default function Home() {
               ) : (
                 <ul className="flex flex-col gap-2">
                   {meetings.map((meeting) => (
-                    <MeetingRow key={meeting.id} meeting={meeting} />
+                    <MeetingRow
+                      key={meeting.id}
+                      meeting={meeting}
+                      onUploaded={handleRecordingUploaded}
+                    />
                   ))}
                 </ul>
               )}

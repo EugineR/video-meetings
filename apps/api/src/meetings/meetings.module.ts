@@ -13,6 +13,7 @@ import { MeetingsController } from './meetings.controller';
 import { MeetingsRepository } from './meetings.repository';
 import { GetMeetingByIdHandler } from './queries/handlers/get-meeting-by-id.handler';
 import { GetMeetingsHandler } from './queries/handlers/get-meetings.handler';
+import { GetRecordingHandler } from './queries/handlers/get-recording.handler';
 import {
   assertKnownRecordingMimeTypes,
   isAllowedRecordingFile,
@@ -25,7 +26,11 @@ const CommandHandlers = [
   UploadRecordingHandler,
   DeleteRecordingHandler,
 ];
-const QueryHandlers = [GetMeetingsHandler, GetMeetingByIdHandler];
+const QueryHandlers = [
+  GetMeetingsHandler,
+  GetMeetingByIdHandler,
+  GetRecordingHandler,
+];
 
 @Module({
   imports: [
