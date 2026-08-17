@@ -75,3 +75,7 @@ ESLint (`eslint.config.mjs`) uses `typescript-eslint` recommendedTypeChecked + `
 ## Documentation
 
 When this app's architecture changes (new modules, external services, commands), update this file and the root `CLAUDE.md`/`README.md` so they stay accurate.
+
+
+## File upload 
+Use this research for it: @docs/research-meeting-recording-upload.md
