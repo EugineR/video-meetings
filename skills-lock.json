@@ -7,6 +7,12 @@
       "skillPath": "skills/git-commit/SKILL.md",
       "computedHash": "2607fc60629b82b257136dd2a7a373f0a4466c0b49df7746d845d59313c99b21"
     },
+    "github-flow": {
+      "source": "metalagman/agent-skills",
+      "sourceType": "github",
+      "skillPath": "github-flow/SKILL.md",
+      "computedHash": "8c7c158cff9ba40fa84a451bfa494ccda496af8813ac56fb9a2a5154a8dcd415"
+    },
     "heroui-react": {
       "source": "heroui-inc/heroui",
       "sourceType": "github",
