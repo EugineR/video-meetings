@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createReadStream, ReadStream } from 'node:fs';
-import { access, mkdir, rm, writeFile } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
+import { access, mkdir, rm, rmdir, writeFile } from 'node:fs/promises';
+import { dirname, extname, join, resolve } from 'node:path';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -40,6 +40,15 @@ export class StorageService {
 
   async delete(storagePath: string): Promise<void> {
     await rm(storagePath, { force: true });
+
+    try {
+      await rmdir(dirname(storagePath));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOTEMPTY' && code !== 'ENOENT') {
+        throw err;
+      }
+    }
   }
 
   async exists(storagePath: string): Promise<boolean> {

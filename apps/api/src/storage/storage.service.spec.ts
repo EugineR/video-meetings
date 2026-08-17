@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ConfigService } from '@nestjs/config';
 import { StorageService } from './storage.service';
 
@@ -68,6 +68,34 @@ describe('StorageService', () => {
     await service.delete(storagePath);
 
     await expect(service.exists(storagePath)).resolves.toBe(false);
+  });
+
+  it('delete() also removes the now-empty {meetingId} directory', async () => {
+    const storagePath = await service.save(randomUUID(), {
+      originalFilename: 'clip.mp4',
+      buffer: Buffer.from('data'),
+    });
+
+    await service.delete(storagePath);
+
+    expect(existsSync(dirname(storagePath))).toBe(false);
+  });
+
+  it('delete() leaves a sibling recording untouched when the meeting directory is not empty', async () => {
+    const meetingId = randomUUID();
+    const storagePathA = await service.save(meetingId, {
+      originalFilename: 'a.mp4',
+      buffer: Buffer.from('a'),
+    });
+    const storagePathB = await service.save(meetingId, {
+      originalFilename: 'b.mp4',
+      buffer: Buffer.from('b'),
+    });
+
+    await service.delete(storagePathA);
+
+    expect(existsSync(dirname(storagePathA))).toBe(true);
+    await expect(service.exists(storagePathB)).resolves.toBe(true);
   });
 
   it('exists() returns false for a path that was never written', async () => {
