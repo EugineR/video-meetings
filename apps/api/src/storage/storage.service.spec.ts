@@ -103,4 +103,52 @@ describe('StorageService', () => {
       service.exists(join(uploadsDir, 'nowhere', 'ghost.mp4')),
     ).resolves.toBe(false);
   });
+
+  it('resolveMeetingDir() rejects a non-UUID meetingId to prevent path traversal', () => {
+    expect(() => service.resolveMeetingDir('../../etc')).toThrow(
+      'Invalid meeting id',
+    );
+    expect(() => service.resolveMeetingDir('..\\..\\Temp')).toThrow(
+      'Invalid meeting id',
+    );
+  });
+
+  it('resolveMeetingDir() accepts a plain UUID', () => {
+    const meetingId = randomUUID();
+    expect(service.resolveMeetingDir(meetingId)).toBe(
+      join(uploadsDir, meetingId),
+    );
+  });
+
+  describe('pruneMeetingDir()', () => {
+    it('removes every file except the one to keep', async () => {
+      const meetingId = randomUUID();
+      const keepPath = await service.save(meetingId, {
+        originalFilename: 'keep.mp4',
+        buffer: Buffer.from('keep me'),
+      });
+      const stray1 = await service.save(meetingId, {
+        originalFilename: 'stray1.mp4',
+        buffer: Buffer.from('stray 1'),
+      });
+      const stray2 = await service.save(meetingId, {
+        originalFilename: 'stray2.mp4',
+        buffer: Buffer.from('stray 2'),
+      });
+
+      await service.pruneMeetingDir(meetingId, keepPath);
+
+      const remaining = await readdir(join(uploadsDir, meetingId));
+      expect(remaining).toEqual([keepPath.split(/[/\\]/).pop()]);
+      await expect(service.exists(stray1)).resolves.toBe(false);
+      await expect(service.exists(stray2)).resolves.toBe(false);
+      await expect(service.exists(keepPath)).resolves.toBe(true);
+    });
+
+    it('does nothing when the meeting directory does not exist', async () => {
+      await expect(
+        service.pruneMeetingDir(randomUUID(), 'irrelevant'),
+      ).resolves.toBeUndefined();
+    });
+  });
 });
