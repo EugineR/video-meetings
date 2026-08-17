@@ -465,6 +465,17 @@ describe('Meetings Recording (e2e)', () => {
         .expect(200);
     });
 
+    it('rejects a ?token= query param on a route that is not @AllowQueryToken()', async () => {
+      // The query-param fallback is opt-in per route (JwtAuthGuard +
+      // @AllowQueryToken()) specifically so a token leaked via a recording
+      // URL can't also authenticate the rest of the API.
+      const token = await registerAndLogin(app, 'owner@example.com');
+
+      await request(app.getHttpServer())
+        .get(`/meetings?token=${token}`)
+        .expect(401);
+    });
+
     it('responds 206 to a request carrying a Range header', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);

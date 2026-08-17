@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Chip } from '@heroui/react';
 import type { MeetingListItem } from '@/lib/api';
+import { formatDateTime } from '@/lib/format';
 import {
   CalendarIcon,
   UploadIcon,
@@ -11,11 +12,6 @@ import {
   VideoCameraIcon,
 } from '@/components/icons';
 import { UploadRecordingModal } from './UploadRecordingModal';
-
-const dateFormatter = new Intl.DateTimeFormat('en-US', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-});
 
 interface MeetingRowProps {
   meeting: MeetingListItem;
@@ -47,7 +43,7 @@ export function MeetingRow({
         <p className="font-medium">{meeting.title}</p>
         <p className="mt-1 flex items-center gap-1.5 text-sm text-muted">
           <CalendarIcon aria-hidden="true" className="size-4 shrink-0" />
-          {dateFormatter.format(new Date(meeting.date))}
+          {formatDateTime(meeting.date)}
         </p>
         {meeting.participants.length > 0 ? (
           <p className="mt-1 flex items-center gap-1.5 text-sm text-muted">

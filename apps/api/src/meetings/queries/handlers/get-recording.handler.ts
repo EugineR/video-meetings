@@ -4,7 +4,6 @@ import { StorageService } from '../../../storage/storage.service';
 import { RecordingContent } from '../../interfaces/recording-content.interface';
 import { MeetingsRepository } from '../../meetings.repository';
 import { parseRange } from '../../range-parser';
-import { RecordingsRepository } from '../../recordings.repository';
 import { GetRecordingQuery } from '../get-recording.query';
 
 @QueryHandler(GetRecordingQuery)
@@ -14,12 +13,11 @@ export class GetRecordingHandler implements IQueryHandler<
 > {
   constructor(
     private readonly meetingsRepository: MeetingsRepository,
-    private readonly recordingsRepository: RecordingsRepository,
     private readonly storageService: StorageService,
   ) {}
 
   async execute(query: GetRecordingQuery): Promise<RecordingContent> {
-    const meeting = await this.meetingsRepository.findByIdAndOwner(
+    const meeting = await this.meetingsRepository.findByIdAndOwnerWithRecording(
       query.meetingId,
       query.ownerId,
     );
@@ -27,9 +25,7 @@ export class GetRecordingHandler implements IQueryHandler<
       throw new NotFoundException('Meeting not found');
     }
 
-    const recording = await this.recordingsRepository.findByMeetingId(
-      query.meetingId,
-    );
+    const recording = meeting.recording;
     if (!recording) {
       throw new NotFoundException('Recording not found');
     }

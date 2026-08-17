@@ -29,7 +29,12 @@ export class MeetingsRepository {
     });
   }
 
-  findByIdAndOwner(
+  /** Ownership/existence check only — use `findByIdAndOwnerWithRecording` when the recording relation is actually needed. */
+  findByIdAndOwner(id: string, ownerId: string): Promise<Meeting | null> {
+    return this.prisma.meeting.findFirst({ where: { id, ownerId } });
+  }
+
+  findByIdAndOwnerWithRecording(
     id: string,
     ownerId: string,
   ): Promise<MeetingWithRecording | null> {

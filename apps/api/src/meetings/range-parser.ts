@@ -1,7 +1,4 @@
-export interface ByteRange {
-  start: number;
-  end: number;
-}
+import { StorageByteRange } from '../storage/storage.service';
 
 /**
  * Parses a single-range `Range: bytes=start-end` header (the only form browsers send when
@@ -11,7 +8,7 @@ export interface ByteRange {
 export function parseRange(
   rangeHeader: string | undefined,
   totalSize: number,
-): ByteRange | null {
+): StorageByteRange | null {
   if (!rangeHeader) {
     return null;
   }

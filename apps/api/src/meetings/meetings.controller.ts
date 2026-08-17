@@ -19,6 +19,7 @@ import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Meeting } from '@prisma/client';
 import type { Response } from 'express';
+import { AllowQueryToken } from '../auth/decorators/allow-query-token.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
@@ -67,6 +68,7 @@ export class MeetingsController {
   }
 
   @Get(':id/recording/content')
+  @AllowQueryToken()
   async getRecordingContent(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,

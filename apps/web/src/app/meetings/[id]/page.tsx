@@ -1,44 +1,34 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { Card, Spinner } from '@heroui/react';
-import { clearAccessToken, getStoredUser, type StoredUser } from '@/lib/auth';
+import { useAuthenticatedUser } from '@/lib/useAuthenticatedUser';
 import {
   ApiError,
   getMeeting,
   type MeetingDetail,
   type Recording,
 } from '@/lib/api';
+import { formatDateTime } from '@/lib/format';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { CalendarIcon, UsersIcon } from '@/components/icons';
 import { RecordingCard } from '@/components/meetings/RecordingCard';
 import { RecordingUploader } from '@/components/meetings/RecordingUploader';
 
-const dateFormatter = new Intl.DateTimeFormat('en-US', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-});
-
 export default function MeetingDetailPage() {
-  const router = useRouter();
   const params = useParams<{ id: string }>();
   const meetingId = params.id;
 
-  const [user, setUser] = useState<StoredUser | null>(null);
+  const { user, signOut } = useAuthenticatedUser();
   const [meeting, setMeeting] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isReplacing, setIsReplacing] = useState(false);
 
   useEffect(() => {
-    const storedUser = getStoredUser();
-    if (!storedUser) {
-      router.replace('/login');
+    if (!user) {
       return;
     }
-    // localStorage is only available client-side, so this must run in an effect rather than during render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setUser(storedUser);
 
     getMeeting(meetingId)
       .then(setMeeting)
@@ -49,12 +39,7 @@ export default function MeetingDetailPage() {
             : 'Could not load the meeting. Please try again.',
         );
       });
-  }, [meetingId, router]);
-
-  const handleSignOut = () => {
-    clearAccessToken();
-    router.replace('/login');
-  };
+  }, [meetingId, user]);
 
   const handleUploaded = useCallback((recording: Recording) => {
     setIsReplacing(false);
@@ -77,7 +62,7 @@ export default function MeetingDetailPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-linear-to-br from-accent/10 via-background to-background">
-      <AppHeader email={user.email} onSignOut={handleSignOut} />
+      <AppHeader email={user.email} onSignOut={signOut} />
       <div className="flex justify-center px-4 py-12">
         <div className="flex w-full max-w-2xl flex-col gap-6">
           {error ? (
@@ -104,7 +89,7 @@ export default function MeetingDetailPage() {
                       aria-hidden="true"
                       className="size-4 shrink-0"
                     />
-                    {dateFormatter.format(new Date(meeting.date))}
+                    {formatDateTime(meeting.date)}
                   </p>
                   {meeting.participants.length > 0 ? (
                     <p className="flex items-center gap-1.5 text-sm text-muted">

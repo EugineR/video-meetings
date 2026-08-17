@@ -78,12 +78,16 @@ export function RecordingUploader({
       });
   };
 
+  const isUploading = progress !== null;
+
   const handleFileInputChange = (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = event.target.files?.[0];
     event.target.value = '';
-    if (file) {
+    // Guards against a second file slipping in (e.g. a fast repeat pick)
+    // while the first upload's request is still in flight.
+    if (file && !isUploading) {
       startUpload(file);
     }
   };
@@ -91,13 +95,14 @@ export function RecordingUploader({
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
+    if (isUploading) {
+      return;
+    }
     const file = event.dataTransfer.files?.[0];
     if (file) {
       startUpload(file);
     }
   };
-
-  const isUploading = progress !== null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -110,7 +115,9 @@ export function RecordingUploader({
         onDragLeave={() => setIsDragging(false)}
         onDragOver={(event) => {
           event.preventDefault();
-          setIsDragging(true);
+          if (!isUploading) {
+            setIsDragging(true);
+          }
         }}
         onDrop={handleDrop}
       >
@@ -156,6 +163,7 @@ export function RecordingUploader({
         <input
           accept={ALLOWED_MIME_TYPES.join(',')}
           className="hidden"
+          disabled={isUploading}
           onChange={handleFileInputChange}
           ref={inputRef}
           type="file"

@@ -8,13 +8,9 @@ import {
   getRecordingContentUrl,
   type Recording,
 } from '@/lib/api';
+import { formatDateTime } from '@/lib/format';
 import { TrashIcon } from '@/components/icons';
 import { RecordingStatusChip } from './RecordingStatusChip';
-
-const dateFormatter = new Intl.DateTimeFormat('en-US', {
-  dateStyle: 'medium',
-  timeStyle: 'short',
-});
 
 function formatFileSize(sizeBytes: string): string {
   const bytes = Number(sizeBytes);
@@ -78,7 +74,7 @@ export function RecordingCard({
           <p className="truncate font-medium">{recording.originalFilename}</p>
           <p className="text-sm text-muted">
             {formatFileSize(recording.sizeBytes)} · Uploaded{' '}
-            {dateFormatter.format(new Date(recording.createdAt))}
+            {formatDateTime(recording.createdAt)}
           </p>
         </div>
         <RecordingStatusChip status={recording.status} />

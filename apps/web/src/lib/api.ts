@@ -73,6 +73,11 @@ async function handleResponse<TResponse>(
     throw new ApiError(extractErrorMessage(payload), response.status);
   }
 
+  // 204 No Content (e.g. DELETE routes) has no body to parse.
+  if (response.status === 204) {
+    return undefined as TResponse;
+  }
+
   return response.json() as Promise<TResponse>;
 }
 
@@ -209,8 +214,5 @@ export async function deleteMeetingRecording(meetingId: string): Promise<void> {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
 
-  if (!response.ok) {
-    const payload: unknown = await response.json().catch(() => null);
-    throw new ApiError(extractErrorMessage(payload), response.status);
-  }
+  await handleResponse<void>(response);
 }
