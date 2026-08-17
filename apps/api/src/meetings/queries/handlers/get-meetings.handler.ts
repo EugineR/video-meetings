@@ -1,16 +1,22 @@
 import { IQueryHandler, QueryHandler } from '@nestjs/cqrs';
-import { Meeting } from '@prisma/client';
+import {
+  MeetingListItemResponse,
+  toMeetingListItemResponse,
+} from '../../interfaces/meeting-list-item-response.interface';
 import { MeetingsRepository } from '../../meetings.repository';
 import { GetMeetingsQuery } from '../get-meetings.query';
 
 @QueryHandler(GetMeetingsQuery)
 export class GetMeetingsHandler implements IQueryHandler<
   GetMeetingsQuery,
-  Meeting[]
+  MeetingListItemResponse[]
 > {
   constructor(private readonly meetingsRepository: MeetingsRepository) {}
 
-  execute(query: GetMeetingsQuery): Promise<Meeting[]> {
-    return this.meetingsRepository.findAllByOwner(query.ownerId);
+  async execute(query: GetMeetingsQuery): Promise<MeetingListItemResponse[]> {
+    const meetings = await this.meetingsRepository.findAllByOwner(
+      query.ownerId,
+    );
+    return meetings.map(toMeetingListItemResponse);
   }
 }

@@ -1,17 +1,20 @@
 import { NotFoundException } from '@nestjs/common';
 import { IQueryHandler, QueryHandler } from '@nestjs/cqrs';
-import { Meeting } from '@prisma/client';
+import {
+  MeetingDetailResponse,
+  toMeetingDetailResponse,
+} from '../../interfaces/meeting-detail-response.interface';
 import { MeetingsRepository } from '../../meetings.repository';
 import { GetMeetingByIdQuery } from '../get-meeting-by-id.query';
 
 @QueryHandler(GetMeetingByIdQuery)
 export class GetMeetingByIdHandler implements IQueryHandler<
   GetMeetingByIdQuery,
-  Meeting
+  MeetingDetailResponse
 > {
   constructor(private readonly meetingsRepository: MeetingsRepository) {}
 
-  async execute(query: GetMeetingByIdQuery): Promise<Meeting> {
+  async execute(query: GetMeetingByIdQuery): Promise<MeetingDetailResponse> {
     const meeting = await this.meetingsRepository.findByIdAndOwner(
       query.id,
       query.ownerId,
@@ -20,6 +23,6 @@ export class GetMeetingByIdHandler implements IQueryHandler<
       throw new NotFoundException('Meeting not found');
     }
 
-    return meeting;
+    return toMeetingDetailResponse(meeting);
   }
 }

@@ -4,10 +4,13 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
   Post,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -15,6 +18,7 @@ import {
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Meeting } from '@prisma/client';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
@@ -22,9 +26,13 @@ import { CreateMeetingCommand } from './commands/create-meeting.command';
 import { DeleteRecordingCommand } from './commands/delete-recording.command';
 import { UploadRecordingCommand } from './commands/upload-recording.command';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
+import { MeetingDetailResponse } from './interfaces/meeting-detail-response.interface';
+import { MeetingListItemResponse } from './interfaces/meeting-list-item-response.interface';
+import { RecordingContent } from './interfaces/recording-content.interface';
 import { RecordingResponse } from './interfaces/recording-response.interface';
 import { GetMeetingByIdQuery } from './queries/get-meeting-by-id.query';
 import { GetMeetingsQuery } from './queries/get-meetings.query';
+import { GetRecordingQuery } from './queries/get-recording.query';
 
 @UseGuards(JwtAuthGuard)
 @Controller('meetings')
@@ -46,7 +54,7 @@ export class MeetingsController {
   }
 
   @Get()
-  findAll(@CurrentUser() user: JwtPayload): Promise<Meeting[]> {
+  findAll(@CurrentUser() user: JwtPayload): Promise<MeetingListItemResponse[]> {
     return this.queryBus.execute(new GetMeetingsQuery(user.sub));
   }
 
@@ -54,8 +62,37 @@ export class MeetingsController {
   findOne(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
-  ): Promise<Meeting> {
+  ): Promise<MeetingDetailResponse> {
     return this.queryBus.execute(new GetMeetingByIdQuery(id, user.sub));
+  }
+
+  @Get(':id/recording/content')
+  async getRecordingContent(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Headers('range') range: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const content: RecordingContent = await this.queryBus.execute(
+      new GetRecordingQuery(id, user.sub, range),
+    );
+
+    res.set({
+      'Content-Type': content.mimeType,
+      'Accept-Ranges': 'bytes',
+    });
+
+    if (content.range) {
+      res.status(HttpStatus.PARTIAL_CONTENT);
+      res.set({
+        'Content-Range': `bytes ${content.range.start}-${content.range.end}/${content.totalSize}`,
+        'Content-Length': String(content.range.end - content.range.start + 1),
+      });
+    } else {
+      res.set({ 'Content-Length': String(content.totalSize) });
+    }
+
+    return new StreamableFile(content.stream);
   }
 
   @Post(':id/recording')

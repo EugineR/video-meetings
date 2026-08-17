@@ -32,6 +32,15 @@ export class JwtAuthGuard implements CanActivate {
 
   private extractToken(request: Request): string | undefined {
     const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
+    if (type === 'Bearer' && token) {
+      return token;
+    }
+
+    // Fallback for requests that can't set an Authorization header — e.g. a
+    // <video>/<audio> element's `src`, which the recording content route
+    // needs to support. Query-param tokens carry the same expiry/signature
+    // as header ones; nothing here weakens what a valid token can do.
+    const queryToken = request.query.token;
+    return typeof queryToken === 'string' ? queryToken : undefined;
   }
 }
