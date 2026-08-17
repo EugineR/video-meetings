@@ -59,5 +59,8 @@ __pycache__/
 # Prisma generated client
 apps/api/generated/
 
+# Uploaded recording files (local UPLOADS_DIR)
+apps/api/uploads/
+
 # Claude Code local settings
 .claude/settings.local.json

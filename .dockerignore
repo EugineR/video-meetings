@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# Env
+.env
+.env*.local
+.env.development
+.env.production
+.env.test
+
+# Testing / coverage
+coverage/
+.playwright-mcp/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+
+# Uploaded recording files (local UPLOADS_DIR)
+apps/api/uploads/
