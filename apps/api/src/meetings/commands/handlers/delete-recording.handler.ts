@@ -25,14 +25,11 @@ export class DeleteRecordingHandler implements ICommandHandler<
       throw new NotFoundException('Meeting not found');
     }
 
-    const recording = await this.recordingsRepository.findByMeetingId(
-      command.meetingId,
-    );
+    const recording = await this.recordingsRepository.delete(command.meetingId);
     if (!recording) {
       throw new NotFoundException('Recording not found');
     }
 
-    await this.recordingsRepository.delete(command.meetingId);
     await this.storageService.delete(recording.storagePath);
   }
 }

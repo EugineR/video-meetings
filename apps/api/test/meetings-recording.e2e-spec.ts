@@ -196,6 +196,23 @@ describe('Meetings Recording (e2e)', () => {
       expect(existsSync(join(uploadsDir, meetingId))).toBe(false);
     });
 
+    it('rejects a path-traversal meeting id (400) and writes nothing outside the uploads dir', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+
+      await request(app.getHttpServer())
+        .post('/meetings/..%5C..%5Ctraversal-escape/recording')
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(400);
+
+      expect(existsSync(join(uploadsDir, '..', 'traversal-escape'))).toBe(
+        false,
+      );
+    });
+
     it('rejects a disallowed MIME type (415) and writes nothing to disk', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
@@ -321,6 +338,32 @@ describe('Meetings Recording (e2e)', () => {
         .delete(`/meetings/${meetingId}/recording`)
         .set('Authorization', `Bearer ${token}`)
         .expect(204);
+
+      await request(app.getHttpServer())
+        .delete(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+    });
+
+    it('returns 404 (not 500) when the recording row was already removed out-of-band', async () => {
+      // Simulates the losing side of a race between two concurrent DELETE
+      // requests: by the time this handler's own delete() runs, the row is
+      // already gone (Prisma throws P2025), which RecordingsRepository.delete()
+      // must translate into a plain "not found" rather than letting it
+      // surface as an unhandled 500.
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      await prisma.meetingRecording.delete({ where: { meetingId } });
 
       await request(app.getHttpServer())
         .delete(`/meetings/${meetingId}/recording`)

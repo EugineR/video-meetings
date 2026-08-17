@@ -34,10 +34,6 @@ export class UploadRecordingHandler implements ICommandHandler<
       throw new NotFoundException('Meeting not found');
     }
 
-    const existing = await this.recordingsRepository.findByMeetingId(
-      command.meetingId,
-    );
-
     const recording = await this.recordingsRepository.createOrReplace({
       meetingId: command.meetingId,
       originalFilename: command.file.originalname,
@@ -47,9 +43,13 @@ export class UploadRecordingHandler implements ICommandHandler<
       status: RecordingStatus.UPLOADED,
     });
 
-    if (existing) {
-      await this.storageService.delete(existing.storagePath);
-    }
+    // Based on the actual directory contents after the DB upsert commits
+    // (not a pre-upsert snapshot), so a losing concurrent upload's file is
+    // still cleaned up even though this handler never read its metadata.
+    await this.storageService.pruneMeetingDir(
+      command.meetingId,
+      recording.storagePath,
+    );
 
     return toRecordingResponse(recording);
   }

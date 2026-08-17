@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { MeetingRecording, RecordingStatus } from '@prisma/client';
+import { MeetingRecording, Prisma, RecordingStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+/** Prisma's "record to update/delete not found" error code. */
+const PRISMA_NOT_FOUND_CODE = 'P2025';
 
 export interface CreateOrReplaceRecordingInput {
   meetingId: string;
@@ -37,7 +40,25 @@ export class RecordingsRepository {
     return this.prisma.meetingRecording.findUnique({ where: { meetingId } });
   }
 
-  delete(meetingId: string): Promise<MeetingRecording> {
-    return this.prisma.meetingRecording.delete({ where: { meetingId } });
+  /**
+   * Deletes the recording row for a meeting, returning `null` (instead of
+   * throwing) if it was already gone — e.g. a concurrent delete request won
+   * the race — so callers can treat that as a normal "not found" rather than
+   * an unhandled Prisma error.
+   */
+  async delete(meetingId: string): Promise<MeetingRecording | null> {
+    try {
+      return await this.prisma.meetingRecording.delete({
+        where: { meetingId },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === PRISMA_NOT_FOUND_CODE
+      ) {
+        return null;
+      }
+      throw err;
+    }
   }
 }
