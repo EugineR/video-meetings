@@ -1,6 +1,6 @@
 ---
-name: plan
-description: Breaks a PRD into implementation phases. Use when there is a completed PRD and you need to create a development plan with independent phases.
+name: plan-phase
+description: Breaks a PRD into implementation phases. Use when there is a completed PRD and you need to create a development plan-phase with independent phases.
 ---
 
 # Plan Generator
@@ -36,6 +36,7 @@ Create an implementation plan and save it to docs/plan-$ARGUMENTS.md (translate 
 - The first phase should provide the minimum working path (Tracer Bullet).
 - No more than five tasks per phase.
 - Backend and frontend work for the same feature must be in separate phases.
+- Each phase must include planned tests covering the functionality implemented in that phase.
 
 ## Rules
 - Read the PRD carefully. The plan must cover all acceptance criteria.
