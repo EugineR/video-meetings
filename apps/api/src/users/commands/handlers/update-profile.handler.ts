@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 import {
   ProfileResponse,
@@ -18,6 +19,10 @@ export class UpdateProfileHandler implements ICommandHandler<
       command.userId,
       command.name,
     );
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
     return toProfileResponse(user);
   }
 }
