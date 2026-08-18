@@ -15,6 +15,17 @@ For each phase, create a milestone and issues in GitHub using the gh CLI.
 2. For each phase, create a milestone: `gh api repos/:owner/:repo/milestones -f title="Phase N: name"`
 3. Parse the phase's `**Affects:**` line (e.g. `backend, database` or `frontend`) into one label per listed area. Before creating issues, make sure each of these labels exists in the repo, creating any that are missing: `gh label create "backend" --color "..." [--force]` (skip areas that already exist as labels).
 4. For each task in the phase, create an issue with both a type label and one label per area from that phase's `Affects` line: `gh issue create --title "..." --body "..." --label "<type>" --label "<area-1>" [--label "<area-2>" ...] --milestone "..."`
+5. Finally, close every finished milestone — an open milestone whose issues are all closed, i.e. `open_issues == 0` **and** `closed_issues > 0` (the second condition keeps a freshly created or still-empty milestone open):
+
+   ```bash
+   gh api "repos/:owner/:repo/milestones?state=open" \
+     --jq '.[] | select(.open_issues == 0 and .closed_issues > 0) | .number' |
+     while read -r n; do
+       gh api -X PATCH "repos/:owner/:repo/milestones/$n" -f state=closed --jq '"closed #\(.number) \(.title)"'
+     done
+   ```
+
+   Report which milestones were closed. Never close a milestone that still has open issues.
 
 ## Issue Format
 
