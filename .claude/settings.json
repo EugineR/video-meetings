@@ -1,6 +1,14 @@
 {
   "enabledMcpjsonServers": ["playwright"],
   "hooks": {
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "node .claude/hooks/stop.js"
+        }]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|NotebookEdit",

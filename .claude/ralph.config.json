@@ -1,0 +1,7 @@
+{
+  "milestone": "",
+  "maxIterations": 1,
+  "maxTurns": 50,
+  "branch": "feature/phase-5",
+  "prompt": "Read .claude/ralph.md and follow the rules from that file. Take the next open issue from milestone '{milestone}' and implement it in {branch}. Don't create create a PR - just close the issue"
+}
