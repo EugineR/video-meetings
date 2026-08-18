@@ -121,6 +121,56 @@ describe('Users profile (e2e)', () => {
       expect((getResponse.body as ProfileResponseBody).name).toBeNull();
     });
 
+    it('clears the stored name when name is explicitly null', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+
+      await request(app.getHttpServer())
+        .patch('/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Jane Doe' })
+        .expect(200);
+
+      const patchResponse = await request(app.getHttpServer())
+        .patch('/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: null })
+        .expect(200);
+
+      expect((patchResponse.body as ProfileResponseBody).name).toBeNull();
+
+      const getResponse = await request(app.getHttpServer())
+        .get('/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect((getResponse.body as ProfileResponseBody).name).toBeNull();
+    });
+
+    it('leaves the stored name untouched when name is omitted', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+
+      await request(app.getHttpServer())
+        .patch('/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Jane Doe' })
+        .expect(200);
+
+      const patchResponse = await request(app.getHttpServer())
+        .patch('/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({})
+        .expect(200);
+
+      expect((patchResponse.body as ProfileResponseBody).name).toBe('Jane Doe');
+
+      const getResponse = await request(app.getHttpServer())
+        .get('/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect((getResponse.body as ProfileResponseBody).name).toBe('Jane Doe');
+    });
+
     it('rejects a name over 100 characters and leaves the stored name unchanged', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
 
