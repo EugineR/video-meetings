@@ -1,6 +1,6 @@
 # Plan: Meeting Recording File Upload
 
-**PRD:** docs/prd-meeting-recording-upload.md
+**PRD:** docs/meeting-recording-upload/prd.md
 **Date:** 2026-08-17
 
 ## Implementation Phases

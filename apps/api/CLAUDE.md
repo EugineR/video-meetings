@@ -88,4 +88,4 @@ When this app's architecture changes (new modules, external services, commands),
 
 ## File upload
 
-Use this research for it: @docs/research-meeting-recording-upload.md
+Use this research for it: @docs/meeting-recording-upload/research.md

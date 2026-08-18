@@ -7,9 +7,9 @@ description: I create a PRD document for a feature using the standard project st
 
 Create a PRD (Product Requirements Document) for the following feature: $ARGUMENTS
 
-Save the result to the file 'docs/prd-$ARGUMENTS.md' (use the English translation and kebab-case)
+Save the result to the file 'docs/{feature}/prd.md', where {feature} is $ARGUMENTS in English, kebab-case (for example: `docs/user-profile-page-and-editing/prd.md`).
 
-If there is no /docs folder, create one.
+Documentation in /docs is grouped per feature: one folder per feature, holding `prd.md`, `plan.md` and any research notes. Create the /docs folder and the feature folder if they don't exist.
 
 ## Language
 

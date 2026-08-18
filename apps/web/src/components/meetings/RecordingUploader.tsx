@@ -13,7 +13,7 @@ import { UploadIcon, XMarkIcon } from '@/components/icons';
 /**
  * Mirrors apps/api/.env's ALLOWED_RECORDING_MIME_TYPES / MAX_UPLOAD_SIZE_BYTES
  * defaults. This is a client-side UX check only — the API enforces the real
- * limits and is the source of truth (see docs/prd-meeting-recording-upload.md).
+ * limits and is the source of truth (see docs/meeting-recording-upload/prd.md).
  */
 const ALLOWED_MIME_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
 const ALLOWED_EXTENSIONS_LABEL = 'MP4, WebM, MOV';

@@ -1,7 +1,7 @@
 # Research: Meeting Recording File Upload — Technical Implementation
 
-**Plan:** docs/plan-meeting-recording-upload.md
-**PRD:** docs/prd-meeting-recording-upload.md
+**Plan:** docs/meeting-recording-upload/plan.md
+**PRD:** docs/meeting-recording-upload/prd.md
 **Date:** 2026-08-17
 
 This document resolves the technical "how" behind the plan's phases — concrete library APIs, verified against the versions actually installed in this repo (not just docs), plus the design decisions the PRD/plan deliberately left open.

@@ -40,6 +40,8 @@ Whenever a change alters the project's architecture — new modules/services, ch
 
 Do not let these files describe a structure that no longer matches the code.
 
+Feature documentation lives in `docs/`, one folder per feature named after it in kebab-case (`docs/meeting-recording-upload/`), holding `prd.md`, `plan.md` and any research notes (`research.md`). Add new PRDs, plans and research to the matching feature folder rather than to `docs/` directly.
+
 ## Git workflow
 
 - Group related changes into one logical commit instead of committing after every small step. For example, when adding several skills, stage and commit them together once the set is complete — don't create a separate commit per skill.
