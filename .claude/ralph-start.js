@@ -692,7 +692,16 @@ async function reviewPhase(phase, cfg, opts, budget) {
     );
 
     const stillOpen = openIssues(phase.milestone);
-    if (stillOpen.length === 0) return;
+    if (stillOpen.length === 0) {
+      // Вердикт без заведённых issue означает, что ревью нашло блокирующее, но не
+      // оставило следа, по которому цикл мог бы это починить. Вливать нельзя.
+      if (verdict === 'BLOCKED') {
+        throw new Stop(
+          `ревью вынесло BLOCKED, но не завело ни одного issue — фаза «${phase.milestone}» не влита, смотрите ${LOG_FILE}`,
+        );
+      }
+      return;
+    }
 
     log(
       `  ревью завело ${stillOpen.length} follow-up issue — возвращаюсь к реализации`,
