@@ -28,6 +28,7 @@ const BASELINE_REVIEW_TOKENS = 4_000_000;
 
 let stopRequested = false;
 let currentChild = null;
+let currentKill = null;
 
 class Stop extends Error {}
 
@@ -109,12 +110,21 @@ const refExists = (ref) =>
 const isAncestor = (a, b) =>
   gitTry('merge-base', '--is-ancestor', a, b).code === 0;
 
-/** Wraps a .cmd shim (claude, pnpm) for spawn. Only safe for simple arguments. */
+/**
+ * Wraps a .cmd shim (claude, pnpm) for spawn. cmd.exe receives one command line, so
+ * every argument is quoted here: config values such as implModel reach this point, and
+ * an unquoted & in one of them would be read by the shell.
+ */
 function shimSpawnArgs(file, args) {
   if (!IS_WIN) return [file, args, {}];
+  const safe = new RegExp('^[A-Za-z0-9._:/@=-]+$');
+  const quoted = args.map((a) => {
+    const text = String(a);
+    return safe.test(text) ? text : '"' + text.split('"').join('""') + '"';
+  });
   return [
     process.env.ComSpec || 'cmd.exe',
-    ['/d', '/s', '/c', `"${file}" ${args.join(' ')}`],
+    ['/d', '/s', '/c', `"${file}" ${quoted.join(' ')}`],
     { windowsVerbatimArguments: true },
   ];
 }
@@ -268,10 +278,10 @@ function findPr(head, state) {
  * stay in the backlog for a separate pass without ever blocking the current phase.
  */
 function ensureNiceToHaveLabel(name) {
-  const existing = ghTry('label', 'list', '--json', 'name').stdout;
+  const existing = ghTry('label', 'list', '--limit', '200', '--json', 'name').stdout;
   const names = JSON.parse(existing || '[]').map((l) => l.name);
   if (names.includes(name)) return;
-  ghTry(
+  const created = ghTry(
     'label',
     'create',
     name,
@@ -280,7 +290,11 @@ function ensureNiceToHaveLabel(name) {
     '--color',
     'C5DEF5',
   );
-  log(`  created label "${name}" for non-blocking review findings`);
+  if (created.code === 0) {
+    log(`  created label "${name}" for non-blocking review findings`);
+  } else {
+    log(`  ! could not create label "${name}": ${created.stderr.slice(0, 120)}`);
+  }
 }
 
 // ─── session runner ────────────────────────────────────────────────────────────
@@ -314,7 +328,29 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
       stdio: ['pipe', 'pipe', 'inherit'],
       ...extra,
     });
-    currentChild = child;
+    child.stdout.setEncoding('utf8'); // a multi-byte character split across chunks
+    currentChild = child; //             would otherwise corrupt a stream-json line
+
+    let settled = false;
+    let killed = false;
+    // On Windows the child is a cmd.exe shim: killing it leaves the real claude
+    // process running against the same working tree, so kill the tree.
+    const killTree = () => {
+      if (killed) return;
+      killed = true;
+      try {
+        if (IS_WIN && child.pid) {
+          spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+            stdio: 'ignore',
+          });
+        } else {
+          child.kill('SIGKILL');
+        }
+      } catch {
+        /* already gone */
+      }
+    };
+    currentKill = killTree;
 
     const started = Date.now();
     const st = {
@@ -335,15 +371,26 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
     let lastPrintAt = Date.now();
     let buffer = '';
 
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearInterval(watchdog);
+      currentChild = null;
+      currentKill = null;
+      st.durationMs = Date.now() - started;
+      resolve(st);
+    };
+
     const watchdog = setInterval(() => {
       const idleSec = (Date.now() - lastEventAt) / 1000;
       if (idleSec > stallSeconds * 3) {
-        log(`  ! no events for ${Math.round(idleSec)}s - session killed`);
-        st.terminalReason = 'stalled';
-        try {
-          child.kill();
-        } catch {
-          /* already gone */
+        if (!killed) {
+          log(`  ! no events for ${Math.round(idleSec)}s - session killed`);
+          st.terminalReason = 'stalled';
+          st.exitCode = st.exitCode === undefined ? -1 : st.exitCode;
+          killTree();
+          // If close never arrives after the kill, give up on it rather than spin.
+          setTimeout(finish, 15000);
         }
       } else if (idleSec > stallSeconds && !stallWarned) {
         stallWarned = true;
@@ -352,6 +399,18 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
         );
       }
     }, 5000);
+
+    // Without these listeners a spawn failure or an EPIPE on a dead child throws as
+    // an uncaught exception and the promise never resolves.
+    child.on('error', (err) => {
+      log(`  ! could not run the session: ${err.message}`);
+      st.terminalReason = 'spawn failed';
+      st.exitCode = -1;
+      finish();
+    });
+    child.stdin.on('error', () => {
+      /* the child died before reading the prompt; close will report it */
+    });
 
     child.stdin.write(prompt);
     child.stdin.end();
@@ -403,13 +462,37 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
     });
 
     child.on('close', (code) => {
-      clearInterval(watchdog);
-      currentChild = null;
-      st.exitCode = code;
-      st.durationMs = Date.now() - started;
-      resolve(st);
+      if (st.exitCode === undefined || st.terminalReason !== 'stalled')
+        st.exitCode = code;
+      finish();
     });
   });
+}
+
+/**
+ * Anything short of a clean completion must not be read as a verdict: an empty or
+ * truncated reply would otherwise be indistinguishable from an approval.
+ */
+function sessionOutcome(st) {
+  if (st.exitCode !== 0) return `exit code ${st.exitCode}`;
+  if (st.isError) return 'the session reported an error';
+  if (st.terminalReason && st.terminalReason !== 'completed')
+    return st.terminalReason;
+  if (!st.resultText.trim()) return 'no result event';
+  return null;
+}
+
+/**
+ * Fail-closed: only an explicit APPROVED approves. Reviewers decorate the token
+ * (`**BLOCKED**`, `## BLOCKED`), so it is matched as a standalone word anywhere, and
+ * the last one wins because the instruction is to end the reply with it.
+ */
+function readVerdict(text) {
+  const tokens = String(text)
+    .toUpperCase()
+    .match(new RegExp('\b(APPROVED|BLOCKED)\b', 'g'));
+  if (!tokens || tokens.length === 0) return 'an unreadable verdict';
+  return tokens[tokens.length - 1];
 }
 
 function recordStats(kind, phase, issueNumber, st) {
@@ -472,7 +555,12 @@ async function handleRateLimit(st, cfg, opts) {
       `rate limit hit (${info.rateLimitType}), stopping as configured`,
     );
   }
-  const resetAt = (info.resetsAt || 0) * 1000;
+  if (!info.resetsAt) {
+    throw new Stop(
+      `rate limit hit (${info.rateLimitType}) with no reset time reported - re-run once it clears`,
+    );
+  }
+  const resetAt = info.resetsAt * 1000;
   const waitMs = Math.max(0, resetAt - Date.now()) + 15000;
   log(
     `... ${info.rateLimitType} limit exhausted, waiting for reset at ${new Date(resetAt).toTimeString().slice(0, 8)} (${fmtDuration(waitMs)})`,
@@ -566,11 +654,14 @@ function phaseIsMerged(phase, cfg, base) {
 
   const local = refExists(`refs/heads/${phase.branch}`);
   const remote = refExists(`refs/remotes/origin/${phase.branch}`);
-  if (!local && !remote) return true; // nothing to merge: the phase branch does not exist
+  // No branch is not evidence of completion - the phase may simply never have run.
+  if (!local && !remote) return false;
 
   const trunk = refExists(`refs/heads/${cfg.featureBranch}`)
     ? cfg.featureBranch
-    : `origin/${base}`;
+    : refExists(`refs/remotes/origin/${cfg.featureBranch}`)
+      ? `origin/${cfg.featureBranch}`
+      : `origin/${base}`;
   const tip = local ? phase.branch : `origin/${phase.branch}`;
   return isAncestor(tip, trunk);
 }
@@ -594,7 +685,7 @@ function runGreenGate() {
 
 /** Runs implementation sessions until the milestone has no open issues left. */
 async function drainIssues(phase, cfg, opts, budget) {
-  const attempts = new Map();
+  const attempts = budget.attempts;
   let open = openIssues(phase.milestone);
 
   while (open.length > 0) {
@@ -644,12 +735,14 @@ async function drainIssues(phase, cfg, opts, budget) {
     }
     await handleRateLimit(st, cfg, opts);
 
+    const before = new Set(open.map((i) => i.number));
     open = openIssues(phase.milestone);
-    const closed = !open.some((i) => i.number === issue.number);
+    const stillOpen = new Set(open.map((i) => i.number));
+    budget.issuesClosed += [...before].filter((n) => !stillOpen.has(n)).length;
+    const closed = !stillOpen.has(issue.number);
     const summary = `${st.turns} turns . ${fmtTokens(st.inputTokens)} in . ${fmtTokens(st.outputTokens)} out . ${fmtDuration(st.durationMs)} . ${st.terminalReason || 'no result event'} . run total ${fmtTokens(budget.runTokens)}`;
 
     if (closed) {
-      budget.issuesClosed++;
       attempts.set(issue.number, 0);
       log(`+ issue #${issue.number} closed . ${summary}`);
       continue;
@@ -705,20 +798,25 @@ async function reviewPhase(phase, cfg, opts, budget) {
     }
     await handleRateLimit(st, cfg, opts);
 
-    const verdict = /(^|\n)\s*BLOCKED/i.test(st.resultText)
-      ? 'BLOCKED'
-      : 'APPROVED';
+    const outcome = sessionOutcome(st);
+    if (outcome) {
+      throw new Stop(
+        `the review session did not complete (${outcome}), phase "${phase.milestone}" is not merged`,
+      );
+    }
+
+    const verdict = readVerdict(st.resultText);
     log(
       `  review: ${verdict} . ${st.turns} turns . ${fmtTokens(st.inputTokens)} in . ${fmtDuration(st.durationMs)}`,
     );
 
     const stillOpen = openIssues(phase.milestone);
     if (stillOpen.length === 0) {
-      // A verdict with no filed issue means the review found something blocking but
-      // left no trace the loop could act on. Merging anyway would bury it.
-      if (verdict === 'BLOCKED') {
+      // Only an explicit APPROVED merges. A BLOCKED verdict with no filed issue, or a
+      // reply no verdict could be read from, leaves nothing the loop could act on.
+      if (verdict !== 'APPROVED') {
         throw new Stop(
-          `review returned BLOCKED but filed no issue, phase "${phase.milestone}" is not merged - see ${LOG_FILE}`,
+          `review returned ${verdict} and filed no issue, phase "${phase.milestone}" is not merged - see ${LOG_FILE}`,
         );
       }
       return;
@@ -732,6 +830,11 @@ async function reviewPhase(phase, cfg, opts, budget) {
 }
 
 async function runPhase(phase, cfg, opts, base, budget) {
+  if (issuesOf(phase.milestone, 'all').length === 0) {
+    throw new Stop(
+      `milestone "${phase.milestone}" has no issues - create the backlog first (the /issues skill)`,
+    );
+  }
   const openBefore = openIssues(phase.milestone);
   if (openBefore.length === 0 && phaseIsMerged(phase, cfg, base)) {
     log(
@@ -740,6 +843,7 @@ async function runPhase(phase, cfg, opts, base, budget) {
     return false;
   }
 
+  budget.attempts = new Map();
   budget.phaseTokens = 0;
   budget.phaseLimit =
     cfg.issueBudgetTokens * Math.max(1, openBefore.length) +
@@ -765,6 +869,13 @@ async function runPhase(phase, cfg, opts, base, budget) {
 
   // The phase goes into the feature branch as its own merge commit and gets a tag:
   // that pair is the rollback point for as long as the feature is not in the trunk.
+  const leftovers = git('status', '--porcelain').stdout;
+  if (leftovers) {
+    throw new Stop(
+      `the working tree is not clean after phase "${phase.milestone}", refusing to merge:
+${leftovers}`,
+    );
+  }
   git('switch', cfg.featureBranch);
   const merge = gitTry(
     'merge',
@@ -794,7 +905,10 @@ async function runPhase(phase, cfg, opts, base, budget) {
 
 function maybeOpenFeaturePr(cfg, allPhases, base) {
   const unfinished = allPhases.filter(
-    (p) => openIssues(p.milestone).length > 0 || !phaseIsMerged(p, cfg, base),
+    (p) =>
+      issuesOf(p.milestone, 'all').length === 0 ||
+      openIssues(p.milestone).length > 0 ||
+      !phaseIsMerged(p, cfg, base),
   );
   if (unfinished.length > 0) {
     log(
@@ -953,13 +1067,7 @@ async function main() {
   process.on('SIGINT', () => {
     if (stopRequested) {
       log('!! Ctrl-C again - killing the session now');
-      if (currentChild) {
-        try {
-          currentChild.kill();
-        } catch {
-          /* already gone */
-        }
-      }
+      if (currentKill) currentKill();
       process.exit(130);
     }
     stopRequested = true;
@@ -975,6 +1083,7 @@ async function main() {
     phaseTokens: 0,
     phaseLimit: Infinity,
     perIssue: new Map(),
+    attempts: new Map(),
   };
   const startedAt = Date.now();
   let executed = 0;

@@ -101,6 +101,7 @@ git tag -l "ralph/phase-*"                              # rollback points
 | `--issues N`       | stop after N closed issues, even mid-phase                               |
 | `--branch <name>`  | override the phase branch; only together with `--only`                   |
 | `--stop-on-limit`  | stop when the rate limit is hit instead of waiting for the reset         |
+| `--config <path>`  | use a different phase catalogue                                          |
 
 With no flags every unfinished phase in the config runs.
 
@@ -127,7 +128,10 @@ closed issues are skipped, the branch is reused, no pull request is duplicated.
 | `issue #N is not progressing`                | check the last sessions in `ralph.log` and the issue comments; usually the task is ambiguous |
 | `issue #N is over budget`                    | the issue is too large — split it in two                                                     |
 | `did not pass review`                        | the phase branch is not merged and follow-up issues are filed; read them and decide          |
-| `review returned BLOCKED but filed no issue` | the reviewer flagged something without leaving a trace; read its output in `ralph.log`       |
+| `review returned ... and filed no issue`     | the reviewer blocked, or its verdict was unreadable, and left nothing to act on; read `ralph.log` |
+| `the review session did not complete`        | the reviewer crashed, stalled or ran out of turns; its verdict is not trusted, so re-run     |
+| `milestone ... has no issues`                | the backlog for that phase was never created; run the `/issues` skill first                 |
+| `the working tree is not clean after phase`  | a session left changes behind; commit or discard them, then re-run                          |
 | `hit a missing permission`                   | add it to `permissions.allow` in `.claude/settings.json` and re-run                          |
 | `conflicts with master`                      | resolve the conflict on the feature branch by hand, then re-run                              |
 | `pnpm test is red`                           | run `pnpm lint && pnpm test` locally, fix, re-run                                            |

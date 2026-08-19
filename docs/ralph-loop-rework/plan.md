@@ -630,24 +630,29 @@ endless polishing while still not losing the observation.
 The `nice-to-have` backlog is worked off later in a run of its own: collect the issues
 into a milestone and add it to the phase catalogue.
 
-**A verdict with no filed issue is a stop.** If the review ends with `BLOCKED` but files
-nothing, the loop has no trace to act on, so the phase is not merged.
+**The gate is fail-closed.** Only an explicit `APPROVED` from a cleanly completed review
+merges a phase. A reviewer that crashed, stalled, ran out of turns, produced no result
+event, or returned a verdict that could not be read is treated as blocking — otherwise a
+broken reviewer would silently ship an unreviewed phase. `BLOCKED` with no filed issue is
+likewise a stop, since the loop would have nothing to act on.
 
 ---
 
 ## 9. Stop conditions — all explicit
 
-The loop halts with a clear message and leaves the phase branch unmerged in eight cases.
+The loop halts with a clear message and leaves the phase branch unmerged in ten cases.
 There is no silent exit — the "it died and nobody noticed" scenario becomes impossible.
 
 1. An issue did not progress after `maxIssueAttempts` attempts.
 2. An issue went over `issueBudgetTokens`.
 3. A phase went over its derived budget (§6.4).
-4. `maxReviewRounds` were exhausted, or a `BLOCKED` verdict filed no issue.
+4. `maxReviewRounds` were exhausted; the review session did not complete cleanly; or its verdict was anything other than `APPROVED` while it filed no issue.
 5. A non-empty `permission_denials`.
 6. A conflict on `git merge` / `git pull`.
 7. `pnpm lint` or `pnpm test` is red before the merge.
 8. Merging the phase branch into the feature branch failed.
+9. The milestone of a phase has no issues at all — the backlog was never created.
+10. The working tree was left dirty by a session, before the phase merge.
 
 The rate limit is **not** on this list: with `onRateLimit: "wait"` it causes a pause until
 the window resets, not a stop (§6.5).

@@ -6,11 +6,12 @@
     "allow": [
       "Edit(*)",
       "Write(*)",
-      "Bash(npm run test)",
-      "Bash(npm run test:e2e)",
+      "Bash(pnpm *)",
+      "Bash(npx prisma *)",
       "Bash(git *)",
       "Bash(gh *)",
-      "Bash(npx prisma *)"
+      "Skill(git-commit)",
+      "Skill(code-review)"
     ]
   },
   "hooks": {
