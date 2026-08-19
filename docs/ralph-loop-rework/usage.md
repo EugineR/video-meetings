@@ -30,9 +30,24 @@ docker compose up -d postgres     # e2e tests hit a real database
 gh auth status                    # the orchestrator talks to GitHub through gh
 ```
 
-`.claude/ralph.config.json` must list the phases (`milestone` + `branch`) and name the
-feature branch, and GitHub must have the matching milestones with issues. The backlog is
-created by the `/issues` skill from `docs/<feature>/plan.md`.
+`.claude/ralph.config.json` names the feature and its branch; the phases themselves are
+not listed there. They are **discovered from GitHub**: every milestone whose description
+carries a `Feature: <key>` line belongs to the feature, and its position comes from the
+`Phase N` prefix of its title.
+
+```json
+{
+  "feature": "user-profile-page-and-editing",
+  "featureBranch": "feature/user-profile",
+  "featureTitle": "User profile page and editing"
+}
+```
+
+Phase branches are derived, not configured: `feature/user-profile-phase-2`. The backlog
+and the markers are created by the `/issues` skill from `docs/<feature>/plan.md`.
+
+`--dry-run` prints exactly which milestones were picked up, so the discovery is always
+inspectable before anything runs.
 
 ---
 
@@ -69,13 +84,13 @@ Phases that are already done are skipped and do not count against `--phases`.
 ### 3. Watch
 
 ```
-[14:23:05] > Phase 2 "Password change API" . branch feature/profile-edit-phase-2 . 5 open issue(s) . budget 42.00M
+[14:23:05] > Phase 2 "Password change API" . branch feature/user-profile-phase-2 . 5 open issue(s) . budget 42.00M
 [14:23:05] > issue #31 "Add ChangePasswordCommand" . attempt 1/2 . sonnet . maxTurns 100
 [14:23:41]   . 6 turns . 210k in . 1.8k out . Bash: pnpm --filter api test
 [14:26:30] + issue #31 closed . 24 turns . 1.9M in . 3m25s . completed . run total 1.9M
 [14:41:02] > phase review . round 1/3 . opus
 [14:44:10]   review: APPROVED . 31 turns . 2.4M in . 3m08s
-[14:46:55] + phase 2 merged into feature/user-profile . tag ralph/phase-2 . 13.1M for the phase
+[14:46:55] + phase 2 merged into feature/user-profile . tag ralph/user-profile/phase-2 . 13.1M
 ```
 
 If a session goes more than two minutes without an event you get a warning. If the
@@ -86,7 +101,7 @@ silence drags on, the session is killed and retried.
 ```bash
 git log --first-parent --oneline feature/user-profile   # phases
 git log --oneline feature/user-profile                  # issues inside phases
-git tag -l "ralph/phase-*"                              # rollback points
+git tag -l "ralph/user-profile/*"                       # rollback points
 ```
 
 ---
@@ -101,7 +116,7 @@ git tag -l "ralph/phase-*"                              # rollback points
 | `--issues N`       | stop after N closed issues, even mid-phase                               |
 | `--branch <name>`  | override the phase branch; only together with `--only`                   |
 | `--stop-on-limit`  | stop when the rate limit is hit instead of waiting for the reset         |
-| `--config <path>`  | use a different phase catalogue                                          |
+| `--config <path>`  | use the config of a different feature                                    |
 
 With no flags every unfinished phase in the config runs.
 
@@ -131,6 +146,8 @@ closed issues are skipped, the branch is reused, no pull request is duplicated.
 | `review returned ... and filed no issue`     | the reviewer blocked, or its verdict was unreadable, and left nothing to act on; read `ralph.log` |
 | `the review session did not complete`        | the reviewer crashed, stalled or ran out of turns; its verdict is not trusted, so re-run     |
 | `milestone ... has no issues`                | the backlog for that phase was never created; run the `/issues` skill first                 |
+| `no milestone carries Feature: ...`          | the feature key in the config matches nothing on GitHub; check it against the milestones    |
+| `title does not start with Phase N:`         | a milestone carries the feature marker but cannot be ordered; fix its title                 |
 | `the working tree is not clean after phase`  | a session left changes behind; commit or discard them, then re-run                          |
 | `hit a missing permission`                   | add it to `permissions.allow` in `.claude/settings.json` and re-run                          |
 | `conflicts with master`                      | resolve the conflict on the feature branch by hand, then re-run                              |
@@ -163,7 +180,7 @@ branch:
 
 ```bash
 git switch feature/user-profile
-git reset --hard ralph/phase-4        # back to the state right after phase 4
+git reset --hard ralph/user-profile/phase-4   # back to the state right after phase 4
 git push --force-with-lease           # if the branch is already pushed
 ```
 

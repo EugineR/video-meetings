@@ -340,10 +340,10 @@ gets a retry — exactly the scenario that worked for #30.
 
 ### 5.4 Run control: which phases to execute
 
-`cfg.phases` is a **catalogue** of every phase of the feature, not the programme for a
-given run. What actually executes is set by command-line flags. Editing the config to
-limit a run is neither necessary nor advisable: that is how the catalogue was once
-trimmed from 8 phases to 1 (§2.3).
+The discovered phase list is the **catalogue** of the feature, not the programme for a
+given run. What actually executes is set by command-line flags. Since the catalogue now
+lives on GitHub rather than in a config file, the failure of §2.3 — a catalogue trimmed
+from 8 phases to 1 to limit a run, and left that way — cannot repeat.
 
 ```
 node .claude/ralph-start.js [options]
@@ -356,7 +356,7 @@ node .claude/ralph-start.js [options]
 --dry-run         print the plan and a cost estimate, start nothing
 --stop-on-limit   stop on a rate limit instead of waiting (overrides onRateLimit)
 --branch <name>   override the phase branch; only together with --only (§5.5)
---config <path>   a different phase catalogue
+--config <path>   the config of a different feature
 ```
 
 The "leave some limit spare" workflow:
@@ -385,20 +385,37 @@ before starting.
 normal resumable state (§5.3), but the phase will not close until the remaining issues
 are done. For "stop after this phase" the right flag is `--phases`.
 
-### 5.5 Phase branches: who names them
+### 5.5 Phase discovery and branch names
 
-**The branch name is still yours**, given by the `branch` field of the phase:
+Phases are **not listed in the config**. The config names the feature and its branch:
 
 ```json
 {
-  "milestone": "Phase 2: Password change API",
-  "branch": "feature/profile-edit-phase-2"
+  "feature": "user-profile-page-and-editing",
+  "featureBranch": "feature/user-profile",
+  "featureTitle": "User profile page and editing"
 }
 ```
 
-Deriving the name from the milestone title is deliberately not done: the branch name ends
-up in the pull request, in the merge commit and in history for good, so a human should
-choose it rather than a slugifier.
+The phases are discovered from GitHub: a milestone belongs to the feature when its
+description carries a `Feature: <key>` line, and its position comes from the `Phase N`
+prefix of its title. The key is the feature's folder name under `docs/`. Titles alone
+would not do — this repository already has two milestones called "Phase 1: ...", from
+different features. The marker is written by the `/issues` skill when it creates the
+backlog.
+
+Phase branch names are derived: `<featureBranch>-phase-<N>`. An earlier draft insisted a
+human should name them, because the name lands in history for good. That argument does
+not survive the branching model of §4: a phase branch never reaches `master`, and what
+history keeps is the merge commit message, which carries the milestone title. So the name
+is bookkeeping, and bookkeeping should be derived.
+
+Phase tags are scoped the same way — `ralph/<feature-branch-without-the-prefix>/phase-N` —
+so two features cannot collide on `ralph/phase-1`.
+
+`--dry-run` prints exactly which milestones were picked up, so discovery is inspectable
+before anything runs. A milestone carrying the marker without a `Phase N:` prefix stops
+the loop rather than being silently dropped.
 
 What changed is not who names the branch but **what the orchestrator does with it**:
 
@@ -552,7 +569,7 @@ and is not recommended.
 
 ```json
 {
-  "active": true,
+  "feature": "user-profile-page-and-editing",
   "featureBranch": "feature/user-profile",
   "featureTitle": "User profile page and editing",
   "niceToHaveLabel": "nice-to-have",
@@ -564,14 +581,14 @@ and is not recommended.
   "issueBudgetTokens": 6000000,
   "reviewBudgetTokens": 4000000,
   "stallSeconds": 120,
-  "onRateLimit": "wait",
-  "phases": []
+  "onRateLimit": "wait"
 }
 ```
 
 Rationale:
 
 - **`featureBranch` / `featureTitle`** — the long-lived branch and the title of the final pull request.
+- There is no `active` flag any more. It existed only to keep the Stop hook from firing; with the hook gone the loop runs when, and only when, the command is typed, and `.claude/ralph.stop` stops one that is already running.
 - **`niceToHaveLabel`** — the label for non-blocking review findings (§8.1). The orchestrator creates it if it is missing.
 - **`implModel: "sonnet"`** — roughly 2.2× cheaper on the bulk of the work (3.94M on opus against 1.81M on sonnet for comparable tasks). Set it **explicitly** so the interactive default is never inherited.
 - **`reviewModel: "opus"`** — worth it for review, which happens once per phase.
@@ -579,7 +596,7 @@ Rationale:
 - **`issueBudgetTokens: 6M`** — 3× the median issue session (1.8M, §3). An early anomaly signal, recalibrated from `ralph.stats.jsonl`.
 - **`reviewBudgetTokens: 4M`** — review runs on opus, where comparable work cost 3.94M.
 - **`onRateLimit: "wait"`** — pause until the five-hour window resets and continue. For a feature of many phases this is the only way to reach the end; waiting is free. Use `"stop"` to keep a run inside one window.
-- **`phases`** — the catalogue of every phase, each a `{ milestone, branch }` pair; the branch name is yours (§5.5). **Do not touch it to limit a run.** The number of phases is unbounded.
+- **`feature`** — the feature key: the folder name under `docs/`, matched against the `Feature:` line of milestone descriptions (§5.5). Phases are not listed; they are discovered.
 
 There is no global `maxSessions` / `maxInputTokens` / `maxCostUsd` — see §6.1. The phase
 ceiling is derived from its issue count (§6.4), and a run-level ceiling is unnecessary
@@ -593,7 +610,7 @@ because spend is bounded structurally (§6.2).
 - Do not bring the Stop hook back into the control flow.
 - Do not give the orchestrator permission to merge into `master` — the only gate is human.
 - Do not merge a phase with `--ff`: without a merge commit the rollback point disappears.
-- Do not edit `phases` to limit a run — `--phases` / `--only` exist for that (§5.4).
+- Do not limit a run by touching GitHub milestones — `--phases` / `--only` exist for that (§5.4).
 
 ---
 

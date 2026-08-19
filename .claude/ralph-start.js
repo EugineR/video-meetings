@@ -139,16 +139,19 @@ Ralph Loop - autonomous loop over issues and phases.
 
   --dry-run          print the run plan and a cost estimate, start no sessions
   --phases N         run at most N phases (only phases actually executed count)
-  --only <n|name>    run exactly one phase: its number in the config, or a
-                     substring of its milestone title
+  --only <n|name>    run exactly one phase: its phase number, or a substring of
+                     its milestone title
   --issues N         stop after N closed issues, even mid-phase
   --branch <name>    override the phase branch; only together with --only
   --stop-on-limit    stop when the rate limit is hit instead of waiting for reset
-  --config <path>    a different phase catalogue (default ${CONFIG_DEFAULT})
+  --config <path>    a config for a different feature (default ${CONFIG_DEFAULT})
 
-Phases accumulate on the feature branch, each as a merge commit with a tag - those
-tags are the rollback points. Nothing is merged into the default branch: once every
-phase is done the loop opens a single pull request and stops.
+Phases are discovered from GitHub milestones carrying a "Feature: <key>" line, ordered
+by their "Phase N" title prefix. Each phase branch is derived as <featureBranch>-phase-N.
+
+Phases accumulate on the feature branch, each as a merge commit with a tag - those tags
+are the rollback points. Nothing is merged into the default branch: once every phase is
+done the loop opens a single pull request and stops.
 
 To stop: Ctrl-C (graceful), Ctrl-C twice (immediate), or create ${STOP_FILE}.
 `);
@@ -214,11 +217,10 @@ function parseArgs(argv) {
 function loadConfig(file) {
   if (!fs.existsSync(file)) fail(`Config not found: ${file}`);
   const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!Array.isArray(cfg.phases) || cfg.phases.length === 0)
-    fail(`${file} lists no phases`);
+  if (!cfg.feature) fail(`${file} has no feature key`);
   if (!cfg.featureBranch) fail(`${file} has no featureBranch`);
   return {
-    active: cfg.active !== false,
+    feature: cfg.feature,
     featureBranch: cfg.featureBranch,
     featureTitle: cfg.featureTitle || cfg.featureBranch,
     niceToHaveLabel: cfg.niceToHaveLabel || 'nice-to-have',
@@ -233,8 +235,57 @@ function loadConfig(file) {
     onRateLimit: cfg.onRateLimit || 'wait',
     implPrompt: cfg.implPrompt,
     reviewPrompt: cfg.reviewPrompt,
-    phases: cfg.phases,
   };
+}
+
+/**
+ * Phases are read off GitHub rather than listed by hand: a milestone belongs to the
+ * feature when its description carries a "Feature: <key>" line, and its position comes
+ * from the "Phase N" prefix of its title. Titles alone are not enough - two features in
+ * this repository both have a "Phase 1:".
+ */
+function discoverPhases(cfg) {
+  const all = JSON.parse(
+    gh('api', 'repos/:owner/:repo/milestones?state=all&per_page=100').stdout ||
+      '[]',
+  );
+  const belongsToFeature = (description) =>
+    String(description || '')
+      .split('\n')
+      .some((line) => line.trim() === `Feature: ${cfg.feature}`);
+  const phases = [];
+
+  for (const m of all) {
+    if (!belongsToFeature(m.description)) continue;
+    const numbered = new RegExp('^Phase\\s+(\\d+)\\s*:', 'i').exec(m.title);
+    if (!numbered) {
+      fail(
+        `milestone "${m.title}" is marked as feature "${cfg.feature}" but its title does not start with "Phase N:"`,
+      );
+    }
+    phases.push({
+      index: Number(numbered[1]),
+      milestone: m.title,
+      branch: `${cfg.featureBranch}-phase-${numbered[1]}`,
+    });
+  }
+
+  if (phases.length === 0) {
+    fail(
+      `no milestone carries "Feature: ${cfg.feature}" - create the backlog with the /issues skill, or fix the feature key in the config`,
+    );
+  }
+
+  phases.sort((a, b) => a.index - b.index);
+  const seen = new Set();
+  for (const phase of phases) {
+    if (seen.has(phase.index))
+      fail(
+        `two milestones both claim to be phase ${phase.index} of "${cfg.feature}"`,
+      );
+    seen.add(phase.index);
+  }
+  return phases;
 }
 
 // ─── GitHub ────────────────────────────────────────────────────────────────────
@@ -278,7 +329,14 @@ function findPr(head, state) {
  * stay in the backlog for a separate pass without ever blocking the current phase.
  */
 function ensureNiceToHaveLabel(name) {
-  const existing = ghTry('label', 'list', '--limit', '200', '--json', 'name').stdout;
+  const existing = ghTry(
+    'label',
+    'list',
+    '--limit',
+    '200',
+    '--json',
+    'name',
+  ).stdout;
   const names = JSON.parse(existing || '[]').map((l) => l.name);
   if (names.includes(name)) return;
   const created = ghTry(
@@ -293,7 +351,9 @@ function ensureNiceToHaveLabel(name) {
   if (created.code === 0) {
     log(`  created label "${name}" for non-blocking review findings`);
   } else {
-    log(`  ! could not create label "${name}": ${created.stderr.slice(0, 120)}`);
+    log(
+      `  ! could not create label "${name}": ${created.stderr.slice(0, 120)}`,
+    );
   }
 }
 
@@ -575,7 +635,13 @@ function checkInterrupt() {
 
 // ─── branches ──────────────────────────────────────────────────────────────────
 
-const phaseTag = (phase) => `ralph/phase-${phase.index}`;
+/** Scoped by feature branch: two features would otherwise share `ralph/phase-1`. */
+const phaseTag = (phase, cfg) => {
+  const scope = cfg.featureBranch.startsWith('feature/')
+    ? cfg.featureBranch.slice('feature/'.length)
+    : cfg.featureBranch;
+  return `ralph/${scope}/phase-${phase.index}`;
+};
 
 /** Long-lived feature branch: created from the default branch, kept in sync with it. */
 function prepareFeatureBranch(cfg, base) {
@@ -650,7 +716,7 @@ function preparePhaseBranch(phase, cfg) {
  * are recognised instead of being replayed.
  */
 function phaseIsMerged(phase, cfg, base) {
-  if (refExists(`refs/tags/${phaseTag(phase)}`)) return true;
+  if (refExists(`refs/tags/${phaseTag(phase, cfg)}`)) return true;
 
   const local = refExists(`refs/heads/${phase.branch}`);
   const remote = refExists(`refs/remotes/origin/${phase.branch}`);
@@ -891,12 +957,12 @@ ${leftovers}`,
       `merging ${phase.branch} into ${cfg.featureBranch} failed, resolve it manually and re-run`,
     );
   }
-  git('tag', '-f', phaseTag(phase));
+  git('tag', '-f', phaseTag(phase, cfg));
   git('push', '-u', 'origin', cfg.featureBranch);
-  git('push', '-f', 'origin', phaseTag(phase));
+  git('push', '-f', 'origin', phaseTag(phase, cfg));
 
   log(
-    `+ phase ${phase.index} merged into ${cfg.featureBranch} . tag ${phaseTag(phase)} . ${fmtTokens(budget.phaseTokens)} for the phase`,
+    `+ phase ${phase.index} merged into ${cfg.featureBranch} . tag ${phaseTag(phase, cfg)} . ${fmtTokens(budget.phaseTokens)} for the phase`,
   );
   return true;
 }
@@ -977,7 +1043,7 @@ function printPlan(phases, cfg, base) {
   let planned = 0;
 
   console.log(
-    `\nFeature branch: ${cfg.featureBranch} -> pull request into ${base} (you merge it)\n` +
+    `\nFeature "${cfg.feature}" on ${cfg.featureBranch} -> pull request into ${base} (you merge it)\n` +
       `Estimate: ${fmtTokens(perIssue)} per issue${baseline ? ' (baseline, no stats yet)' : ` (median from ${STATS_FILE})`}\n`,
   );
 
@@ -1007,8 +1073,7 @@ function printPlan(phases, cfg, base) {
 
 // ─── main ──────────────────────────────────────────────────────────────────────
 
-function selectPhases(cfg, opts) {
-  const all = cfg.phases.map((p, i) => ({ ...p, index: i + 1 }));
+function selectPhases(all, opts) {
   if (!opts.only) return all;
 
   const asNumber = Number(opts.only);
@@ -1037,8 +1102,6 @@ async function main() {
 
   if (fs.existsSync(STOP_FILE))
     fail(`Found ${STOP_FILE} - remove it to start the loop`);
-  if (!cfg.active && !opts.dryRun)
-    fail(`active: false in ${opts.config} - the loop is switched off`);
   if (!cfg.implPrompt || !cfg.reviewPrompt)
     fail(`${opts.config} has no implPrompt / reviewPrompt`);
 
@@ -1052,8 +1115,8 @@ async function main() {
   ).stdout;
   if (!base) fail('Could not resolve the default branch through gh');
 
-  const allPhases = cfg.phases.map((p, i) => ({ ...p, index: i + 1 }));
-  const phases = selectPhases(cfg, opts);
+  const allPhases = discoverPhases(cfg);
+  const phases = selectPhases(allPhases, opts);
 
   if (opts.dryRun) {
     printPlan(phases, cfg, base);
@@ -1089,7 +1152,7 @@ async function main() {
   let executed = 0;
 
   log(
-    `> Ralph Loop . feature branch ${cfg.featureBranch} . trunk ${base} . models ${cfg.implModel}/${cfg.reviewModel} . maxTurns ${cfg.maxTurns}`,
+    `> Ralph Loop . feature "${cfg.feature}" . branch ${cfg.featureBranch} . trunk ${base} . models ${cfg.implModel}/${cfg.reviewModel} . maxTurns ${cfg.maxTurns}`,
   );
   ensureNiceToHaveLabel(cfg.niceToHaveLabel);
 
