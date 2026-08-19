@@ -62,7 +62,3 @@ Any UI change (new component, styling change, layout change, etc.) in this app i
 - The Playwright MCP server (`mcp__playwright__*` tools) — not the `claude-in-chrome` extension — to actually load the page in a browser, interact with it, and check console/network output as needed.
 
 Do not report a UI task as done without having run both checks.
-
-## Documentation
-
-When this app's architecture changes (new routes, external services, commands), update this file and the root `CLAUDE.md`/`README.md` so they stay accurate.
