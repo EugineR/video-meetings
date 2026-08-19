@@ -47,3 +47,9 @@ Feature documentation lives in `docs/`, one folder per feature named after it in
 - Group related changes into one logical commit instead of committing after every small step. For example, when adding several skills, stage and commit them together once the set is complete — don't create a separate commit per skill.
 - Do not `git push` unless the user explicitly asks for it in that turn. Committing locally does not imply permission to push; a prior push request does not carry over to later, unrelated changes.
 - Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test`, blocking the commit on lint errors or test failures.
+
+## Ralph loop
+
+`node .claude/ralph-start.js` drives an autonomous loop over a feature backlog: one Claude session per GitHub issue, one branch and one PR per phase, each phase merged into `master` with a merge commit so `git log --first-parent` reads as a list of phases. Phases are catalogued in `.claude/ralph.config.json`; which of them a given run executes is chosen with flags (`--dry-run`, `--phases N`, `--only`), never by editing the catalogue. Per-session rules for the implementing agent live in `.claude/ralph.md`.
+
+The orchestrator owns the loop end to end — there is deliberately no Stop hook involved. Design rationale is in `docs/ralph-loop-rework/plan.md`, the developer guide in `docs/ralph-loop-rework/usage.md`. Runtime state (`ralph.log`, `ralph.stats.jsonl`, `ralph.stop`) is gitignored.
