@@ -1,395 +1,393 @@
-# Ralph Loop — переработка
+# Ralph Loop — rework
 
-Спецификация переработки автономного цикла Ralph. Составлена после разбора прогона
-18 августа 2026, в котором цикл остановился на середине фазы, не создав PR.
+Specification for reworking the autonomous Ralph loop. Written after investigating the
+run of 18 Aug 2026, in which the loop died halfway through a phase without opening a
+pull request.
 
-Ветка реализации: `chore/ralph-loop-rework` (от `master` @ `5d96876`).
+Implementation branch: `chore/ralph-loop-rework` (off `master` @ `5d96876`).
 
-Гайд по использованию для разработчика — [usage.md](./usage.md).
-
----
-
-## 1. Цель
-
-Три требования, которым должна удовлетворять итоговая схема:
-
-1. **В master только рабочий код.**
-2. **Возможность откатиться по фазам.**
-3. **Читаемая история: по issue понятно, какие изменения шли за какими.**
-
-Плюс сквозное требование, возникшее по факту: **предсказуемый расход токенов**. Ни одна
-сессия и ни одна фаза не должны жечь аномально много. При этом **число фаз в прогоне не
-ограничивается**, а упор в пятичасовое окно лимита — не авария, а повод подождать сброса
-и продолжить.
+Developer guide: [usage.md](./usage.md).
 
 ---
 
-## 2. Что сломано в текущей реализации
+## 1. Goal
 
-Разбор прогона 18 августа (фаза 1, issue #26–#30).
+Three requirements the resulting scheme has to satisfy:
 
-### 2.1 Цикл держится на Stop-хуке, который рекурсивно спавнит сам себя
+1. **Only working code in `master`** — and only code the author has approved.
+2. **Phases can be rolled back** while the feature is still in progress.
+3. **Readable history**: it must be clear from the issues which change followed which.
 
-`.claude/hooks/stop.js` вызывает `execSync('claude -p ...')` из обработчика Stop.
-Следствия:
+Plus one requirement that emerged from the facts: **predictable token spend**. No single
+session and no single phase may burn an anomalous amount. At the same time the **number
+of phases in a run is unbounded**, and hitting the five-hour rate limit is not a failure
+but a reason to wait for the reset and carry on.
 
-| Симптом                    | Механика                                                                                                                                                                                                               |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Цепочка умирает молча      | Сессия `9b062978` оборвалась по `--max-turns` ровно на `gh issue close 30`. Аварийный выход не вызывает Stop-хук → следующая итерация не запускается. Issue #30 остался открытым, фаза не завершилась, PR не создался. |
-| Вложенные процессы         | Каждый Stop-хук держит потомка синхронно. При `maxIterations: 10` это 10 процессов Claude друг в друге.                                                                                                                |
-| Утечка stdin в промпт      | `stdio: 'inherit'` отдаёт потомку stdin хука, где лежит JSON-payload Claude Code. В транскриптах вложенных сессий видно приклеенное к промпту `{"session_id":...}`.                                                    |
-| Хук стреляет в интерактиве | В `settings.json` у Stop-хука нет matcher, он срабатывает и в обычных сессиях. За время разбора хук дважды самопроизвольно запускал работу над issue.                                                                  |
+---
 
-### 2.2 Прогресс мерился счётчиком, а не результатом
+## 2. What was broken
 
-`counter.count++` инкрементировался независимо от того, сделала сессия что-нибудь.
-15:15–15:18 UTC: **11 сессий за 3 минуты**, каждая поднимала контекст, утыкалась в
-отсутствующее разрешение на `gh issue list`, останавливалась — и хук спавнил следующую.
-Остановил это только `maxIterations: 10` (1 старт + 10 итераций).
+Findings from the 18 Aug run (phase 1, issues #26–#30).
 
-Сессии: `34daaa8f`, `7a365417`, `cc5c6e68`, `4c5ac534`, `78d7e23f`, `c2eb183a`,
+### 2.1 The loop was driven by a Stop hook that recursively spawned itself
+
+`.claude/hooks/stop.js` called `execSync('claude -p ...')` from the Stop handler.
+Consequences:
+
+| Symptom                      | Mechanism                                                                                                                                                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The chain died silently      | Session `9b062978` was cut off by `--max-turns` exactly on `gh issue close 30`. An aborted session never fires Stop, so no next iteration started. Issue #30 stayed open, the phase never finished, no PR. |
+| Nested processes             | Every Stop hook held its child synchronously. At `maxIterations: 10` that is ten Claude processes inside one another.                                                                                      |
+| stdin leaked into the prompt | `stdio: 'inherit'` handed the child the hook's own stdin, which carries the Claude Code JSON payload. Nested transcripts show `{"session_id":...}` glued onto the prompt.                                  |
+| The hook fired interactively | The Stop hook had no matcher in `settings.json`, so it triggered in ordinary sessions too. During this investigation it started work on an issue twice by itself.                                          |
+
+### 2.2 Progress was measured by a counter, not by the result
+
+`counter.count++` incremented regardless of whether the session achieved anything.
+15:15–15:18 UTC: **11 sessions in three minutes**, each building up context, hitting a
+missing permission for `gh issue list`, stopping — and the hook spawning the next one.
+Only `maxIterations: 10` stopped it (one start plus ten iterations).
+
+Sessions: `34daaa8f`, `7a365417`, `cc5c6e68`, `4c5ac534`, `78d7e23f`, `c2eb183a`,
 `0a75faae`, `432b60ae`, `c85fdd00`, `2696d269`, `4fa0b897`.
 
-### 2.3 Прочие дефекты
+### 2.3 Other defects
 
-- **`counter.count = 0` при переходе к следующей фазе** → глобального потолка на прогон нет вообще.
-- **PR создавался в `main`**, дефолтная ветка репозитория — `master`.
-- **`git push` перед `gh pr create` отсутствовал** → PR фазы 1 получился бы пустым (ветка была `ahead 3`).
-- **Ревью-сессия искала «последний открытый PR» наугад**, без номера.
-- **Находки ревью постились комментариями и игнорировались** — гейта на них не было.
-- **`issues[0]`** — `gh issue list` отдаёт по убыванию номера, в лог печатался #30, пока модель работала над #26. Порядок TDD соблюдался случайно, потому что модель догадывалась сама.
-- **Промпт собирался интерполяцией в строку шелла.** В названии milestone есть `&` («read & display name») — экранирование держалось на удаче.
-- **`ralph.iterations.json` отслеживается в git** — runtime-состояние в репозитории.
-- **Конфиг локально урезан с 8 фаз до 1**, при том что все 8 milestone с issue заведены на GitHub.
-- **Противоречие в инструкциях:** `ralph.md` говорит «Don't create a PR — Stop Hook will do that», `config.prompt` — «Don't create create a PR — just close the issue» (плюс опечатка).
-
----
-
-## 3. Замеры расхода токенов
-
-Все сессии за 18 августа: **30 сессий, 25.9M входных токенов, 259k выходных.**
-
-### 3.1 Крупнейшие потребители
-
-| Сессия                       | Входных   | Модель   | Примечание                 |
-| ---------------------------- | --------- | -------- | -------------------------- |
-| `f0fe9f6c` (issue #26–28)    | 3.94M     | **opus** | самая дорогая сессия цикла |
-| `a5064c27` (разбор проблемы) | 2.70M     | opus     | интерактив                 |
-| `fd315837`                   | 2.47M     | sonnet   |                            |
-| `9b062978` (#30, обрыв)      | 2.24M     | sonnet   | **работу не закрыла**      |
-| `c05f1844`                   | 2.20M     | sonnet   |                            |
-| `35dad337` (**#29**)         | 1.81M     | sonnet   |                            |
-| **11 сессий-пустышек**       | **1.63M** | sonnet   | **работы ноль**            |
-| `5d34da7b` (#30, ретрай)     | 1.62M     | opus     |                            |
-
-### 3.2 Развенчание гипотезы «issue #29 съела 70% лимита»
-
-Окно 10:22–15:28 UTC (всё до и включая #29): **26 сессий, 21.6M входных токенов.**
-Доля самой #29 — **8.4%**. Контекст в ней рос с 34k до 82k за 28 обращений, утечек нет.
-Лимит был выбран накопительно, до её старта; #29 оказалась последней каплей.
-
-### 3.3 Чистые потери
-
-- **1.63M** — 11 сессий на правах доступа.
-- **+2.24M** — обрыв #30, потребовавший полного ретрая (3.86M вместо 1.8M на одну issue).
-
-### 3.4 Формула сжигания
-
-```
-входные токены ≈ число_турнов × средний_размер_контекста
-```
-
-Для #29: 28 × ~64k = 1.8M. Кэш-чтение дешевле обычного ввода, но в лимит идёт,
-и по объёму доминирует.
-
-**Отсюда:** `maxTurns: 500` (текущее значение) — это разрешение сжечь окно одной
-сессией. При 500 турнах контекст уйдёт за 200–300k, средний ~150k → до **~75M входных
-токенов в одной сессии**, в 3.5 раза больше всего дня. Фактическая потребность — 28–42 турна.
-
-### 3.5 Модель — крупнейший рычаг
-
-За день: **opus 8.4M против sonnet 17.7M**, при том что на opus прошло 4 сессии из 30.
-Прямое сравнение: issues #26–28 на opus — 3.94M, issue #29 на sonnet — 1.81M.
-
-**Важно:** `/model opus` сохранён как дефолт для новых сессий. `claude -p` без явного
-`--model` его наследует, то есть весь цикл пойдёт на opus. Это неосознанное удвоение расхода.
+- **`counter.count = 0` on moving to the next phase** — so there was no ceiling on a whole run at all.
+- **The PR targeted `main`**; the repository's default branch is `master`.
+- **No `git push` before `gh pr create`** — the phase 1 PR would have been empty (the branch was `ahead 3`).
+- **The review session hunted for "the latest open PR"** blindly, with no number.
+- **Review findings were posted as comments and ignored** — there was no gate on them.
+- **`issues[0]`** — `gh issue list` returns newest first, so the log printed #30 while the model worked on #26. The TDD order held by luck, because the model worked it out itself.
+- **The prompt was interpolated into a shell string.** The milestone title contains `&` ("read & display name"); the escaping survived by chance.
+- **`ralph.iterations.json` was tracked in git** — runtime state in the repository.
+- **The config had been trimmed from 8 phases to 1** locally, while all 8 milestones with issues existed on GitHub.
+- **Contradictory instructions:** `ralph.md` said "Don't create a PR — Stop Hook will do that", `config.prompt` said "Don't create create a PR — just close the issue" (typo included).
 
 ---
 
-## 4. Модель ветвления: фича-ветка с точками отката
+## 3. Token measurements
 
-**В `master` ничего не попадает автоматически.** Фазы копятся в долгой фича-ветке,
-каждая — отдельным merge-коммитом с тегом. Когда фазы кончаются, оркестратор открывает
-**один PR** и останавливается: мерж — решение человека.
+All sessions on 18 Aug: **30 sessions, 25.9M input tokens, 259k output.**
+
+### 3.1 Largest consumers
+
+| Session                         | Input     | Model    | Note                         |
+| ------------------------------- | --------- | -------- | ---------------------------- |
+| `f0fe9f6c` (issues #26–28)      | 3.94M     | **opus** | most expensive loop session  |
+| `a5064c27` (this investigation) | 2.70M     | opus     | interactive                  |
+| `fd315837`                      | 2.47M     | sonnet   |                              |
+| `9b062978` (#30, cut off)       | 2.24M     | sonnet   | **produced no closed issue** |
+| `c05f1844`                      | 2.20M     | sonnet   |                              |
+| `35dad337` (**#29**)            | 1.81M     | sonnet   |                              |
+| **11 empty sessions**           | **1.63M** | sonnet   | **zero work**                |
+| `5d34da7b` (#30, retry)         | 1.62M     | opus     |                              |
+
+### 3.2 Debunking "issue #29 ate 70% of the limit"
+
+Window 10:22–15:28 UTC, i.e. everything up to and including #29: **26 sessions, 21.6M
+input tokens.** #29's own share is **8.4%**. Its context grew from 34k to 82k over 28
+requests — no leak. The limit was consumed cumulatively before it even started; #29 was
+simply the session running when the number was noticed.
+
+### 3.3 Pure waste
+
+- **1.63M** — 11 sessions blocked on permissions.
+- **+2.24M** — the #30 cut-off, which forced a full retry (3.86M instead of 1.8M for one issue).
+
+### 3.4 The burn formula
+
+```
+input tokens ≈ number of turns × average context size
+```
+
+For #29: 28 × ~64k = 1.8M. Cache reads are cheaper than fresh input, but they count
+against the limit and dominate by volume.
+
+**Therefore:** `maxTurns: 500` (the value at the time) is permission for one session to
+drain the window. At 500 turns the context passes 200–300k, averaging ~150k — up to
+**~75M input tokens in a single session**, three and a half times the entire day. Actual
+demand is 28–42 turns.
+
+### 3.5 Model choice is the biggest lever
+
+For the day: **opus 8.4M against sonnet 17.7M**, with only 4 of 30 sessions on opus.
+Direct comparison: issues #26–28 on opus cost 3.94M, issue #29 on sonnet 1.81M.
+
+**Important:** `/model opus` is saved as the default for new sessions, and `claude -p`
+inherits it unless `--model` is passed. The whole loop would have run on opus — an
+unintended doubling of spend.
+
+---
+
+## 4. Branching model: a feature branch with rollback points
+
+**Nothing reaches `master` automatically.** Phases accumulate on a long-lived feature
+branch, each as its own merge commit with a tag. When the phases run out the orchestrator
+opens **one pull request** and stops: merging is a human decision.
 
 ```
 master
   ▲
-  │  PR (один, ревьюим вдвоём, мержим вручную merge-коммитом)
+  │  one PR — reviewed together, merged by hand with a merge commit
   │
-feature/user-profile          ← фича-ветка, живёт до конца фичи
-  ├─◄ merge --no-ff  feature/profile-edit-phase-2   тег ralph/phase-2
-  ├─◄ merge --no-ff  feature/profile-edit-phase-3   тег ralph/phase-3
-  └─◄ ...                                            внутри каждой — issue-коммиты
+feature/user-profile          ← the feature branch, alive until the feature is done
+  ├─◄ merge --no-ff  feature/profile-edit-phase-2   tag ralph/phase-2
+  ├─◄ merge --no-ff  feature/profile-edit-phase-3   tag ralph/phase-3
+  └─◄ ...                                            issue commits inside each
 ```
 
-### 4.1 Почему так
+### 4.1 Why this shape
 
-Требование «в master только рабочий код» на деле означает **«только код, который я
-одобрил»**. Автомерж фаз прямо в master это требование нарушает, каким бы хорошим ни
-было авто-ревью, — поэтому единственный гейт в схеме человеческий, и он один.
+"Only working code in `master`" really means **"only code I approved"**. Auto-merging
+phases straight into `master` breaks that requirement however good the automated review
+is — so the only gate in the scheme is human, and there is exactly one of it.
 
-Откат по фазам нужен **до** попадания в master: если через несколько фаз стало ясно, что
-что-то пошло не так раньше, нужно вернуться назад. После мержа в master фича — единое
-целое, и на какие фазы она была разбита, уже неважно. Поэтому точки отката живут на
-фича-ветке, а не в истории master:
+Rollback by phase is needed **before** the code reaches `master`: if several phases in it
+becomes clear something went wrong earlier, you need to step back. Once the feature is in
+`master` it is a single unit and its phase decomposition no longer matters. So the
+rollback points live on the feature branch rather than in `master`'s history:
 
 ```bash
 git switch feature/user-profile
-git reset --hard ralph/phase-4        # вернуться к состоянию после фазы 4
-git revert -m 1 <merge-коммит фазы>   # или откатить одну фазу, сохранив историю
+git reset --hard ralph/phase-4        # back to the state right after phase 4
+git revert -m 1 <phase merge commit>  # or drop one phase, keeping the history
 ```
 
-### 4.2 Что это стоит
+### 4.2 What it costs
 
-| | |
-| --- | --- |
-| Финальный PR | ~4000 строк — построчное ревью невозможно, нужен интеграционный подход (§4.3) |
-| Дрейф от master | фича-ветка живёт долго; `origin/master` вливается в неё на каждой границе фаз, конфликт останавливает цикл |
-| Миграции Prisma | накапливаются на ветке; порядок проверяется при каждом вливании master |
-| Фазы в master | после мержа отдельными единицами не видны — сознательная плата, откат по фазам нужен только до master |
+|                     |                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| The final PR        | ~4000 lines — line-by-line review is impossible, it needs an integration pass (§4.3)                           |
+| Drift from `master` | the feature branch lives long; `origin/master` is merged in at every phase boundary, conflicts stop the loop   |
+| Prisma migrations   | they accumulate on the branch; ordering is checked every time `master` is merged in                            |
+| Phases in `master`  | not visible as separate units after the merge — a deliberate price, since rollback is only needed pre-`master` |
 
-### 4.3 Как ревьюить финальный PR
+### 4.3 How to review the final PR
 
-Построчно — нереально, но это и не требуется: каждая фаза уже прошла авто-ревью на Opus
-перед вливанием, а блокирующие находки становились issue и чинились. Финальное ревью —
-интеграционное:
+Line by line is unrealistic, and it is not required: every phase already passed an
+automated Opus review before being merged, and blocking findings became issues and were
+fixed. The final review is an integration pass:
 
-- согласованность схемы Prisma и порядка миграций за все фазы;
-- цельность API-поверхности: не разъехались ли DTO между ранними и поздними фазами;
-- мёртвый код и абстракции «на будущее», не пригодившиеся;
-- актуальность `CLAUDE.md` и README;
-- сквозной прогон приложения руками.
+- coherence of the Prisma schema and migration ordering across all phases;
+- integrity of the API surface: did the DTOs drift between early and late phases;
+- dead code and "for later" abstractions that never got used;
+- whether `CLAUDE.md` and the README still match;
+- a manual end-to-end run of the application.
 
-Гранулярность при этом никуда не девается: `git log --first-parent feature/user-profile`
-показывает фазы, полный лог — issue внутри них.
+Granularity is not lost: `git log --first-parent feature/user-profile` lists the phases,
+the full log lists the issues inside them.
 
-### 4.4 Жёсткие правила
+### 4.4 Hard rules
 
-- **Оркестратор не пишет в `master`.** Ни `gh pr merge`, ни push в базовую ветку.
-- **Фазы вливаются `--no-ff`** — иначе не будет merge-коммита, а значит и точки отката.
-- **Никакого `--squash`** ни на одном уровне, включая финальный PR: иначе история по issue схлопнется.
-- **Ветка фазы режется от фича-ветки**, не от `master`.
+- **The orchestrator does not write to `master`.** No `gh pr merge`, no push to the trunk.
+- **Phases merge with `--no-ff`** — without a merge commit there is no rollback point.
+- **No `--squash` anywhere**, the final PR included: it would collapse the per-issue history.
+- **Phase branches are cut from the feature branch**, never from `master`.
 
 ---
-## 5. Алгоритм оркестратора
 
-Единственный процесс — `.claude/ralph-start.js`. **Stop-хук в схеме не участвует и
-удаляется из `settings.json`.** Управление перевёрнуто: внешний `while`-цикл сам
-запускает сессии и сам решает, что дальше.
+## 5. Orchestrator algorithm
+
+A single process, `.claude/ralph-start.js`. **The Stop hook is not part of the scheme and
+is removed from `settings.json`.** Control is inverted: an external `while` loop starts
+the sessions and decides what happens next.
 
 ```
 cfg  = .claude/ralph.config.json
 if (!cfg.active) exit
 base = gh repo view --json defaultBranchRef -q .defaultBranchRef.name     // "master"
-budget = { sessions: 0, inputTokens: 0, costUsd: 0 }
+budget = { runTokens: 0, runCost: 0, issuesClosed: 0 }
 
-ДЛЯ КАЖДОЙ phase В cfg.phases:
+FOR EACH phase IN cfg.phases:
 
-  ─── 0. Пропуск уже сделанного ─────────────────────────────────────
-  open = issues(phase.milestone, open, сортировка по ВОЗРАСТАНИЮ номера)
-  ЕСЛИ open пуст И PR фазы смержен  →  следующая фаза
+  ─── 0. Skip what is already done ──────────────────────────────────
+  open = issues(phase.milestone, open, sorted by ASCENDING number)
+  IF open is empty AND the phase is already merged  →  next phase
 
-  ─── 1. Ветки: фича-ветка и ветка фазы ─────────────────────────────
-  branch = --branch ?? phase.branch          // имя задаёте вы, см. §5.5
+  ─── 1. Branches: feature branch and phase branch ──────────────────
+  branch = --branch ?? phase.branch          // the name is yours, see §5.5
   git fetch origin --prune --tags
 
-  ЕСЛИ фича-ветки нет  →  создать от origin/<base>
-  ИНАЧЕ                →  switch, подтянуть origin/<фича-ветка> (--ff-only)
-  ЕСЛИ фича-ветка не содержит origin/<base>:
-      git merge origin/<base>                // подтянуть уехавший master
-      ЕСЛИ конфликт  →  СТОП «фича-ветка конфликтует с base»
+  IF the feature branch does not exist  →  create it from origin/<base>
+  ELSE                                  →  switch, fast-forward from origin/<feature>
+  IF the feature branch does not contain origin/<base>:
+      git merge origin/<base>                // pull in the trunk that moved on
+      IF conflict  →  STOP "feature branch conflicts with base"
 
-  ЕСЛИ ветки фазы нет  →  git switch -c branch <фича-ветка>
-  ИНАЧЕ                →  switch; если отстала — влить <фича-ветка>
+  IF the phase branch does not exist  →  git switch -c branch <feature branch>
+  ELSE                                →  switch; if behind, merge <feature branch> in
 
-  ─── 2. Цикл по issue ──────────────────────────────────────────────
-  ПОКА open непуст:
-      checkBudget()                          // см. §6, любой упор → СТОП
-      issue = open[0]                        // минимальный номер = порядок TDD
+  ─── 2. Issue loop ─────────────────────────────────────────────────
+  WHILE open is not empty:
+      checkBudget()                          // see §6, any breach → STOP
+      issue = open[0]                        // lowest number = TDD order
 
       result = runSession({
-          model:    cfg.implModel,           // sonnet, явно
+          model:    cfg.implModel,           // sonnet, explicitly
           maxTurns: cfg.maxTurns,
-          prompt:   implPrompt(phase, issue) // с ЯВНЫМ номером issue
+          prompt:   implPrompt(phase, issue) // with an EXPLICIT issue number
       })
       budget += result.usage                 // §6.6
 
-      ЕСЛИ result.permission_denials непуст  →  СТОП «нужно разрешение X»
-      ЕСЛИ result — ошибка rate limit        →  СТОП «лимит выбран»
+      IF result.permission_denials is not empty  →  STOP "missing permission X"
+      IF the rate limit was hit                  →  wait for reset (§6.5)
 
-      open = issues(phase.milestone, open)   // прогресс мерим по GitHub
-      ЕСЛИ issue закрылся:
+      open = issues(phase.milestone, open)   // progress is measured on GitHub
+      IF the issue closed:
           attempts[issue] = 0
-          log(phase, issue, 'closed', result)
-      ИНАЧЕ:
-          log(phase, issue, 'no progress', result)
-          ЕСЛИ ++attempts[issue] >= cfg.maxIssueAttempts  →  СТОП «issue #N не продвигается»
-          // иначе повтор с тем же issue — сессия подхватит состояние из git
+      ELSE:
+          IF ++attempts[issue] >= cfg.maxIssueAttempts  →  STOP "issue #N is not progressing"
+          // otherwise retry the same issue — the session picks its state up from git
 
-  ─── 3. Ревью фазы ─────────────────────────────────────────────────
+  ─── 3. Phase review ───────────────────────────────────────────────
   round = 0
-  ПОКА true:
-      ЕСЛИ ++round > cfg.maxReviewRounds  →  СТОП «фаза не проходит ревью»
-      сессия ревью на диапазоне <фича-ветка>...<ветка фазы>
-      // ревью заводит issue на блокирующее и завершает APPROVED / BLOCKED
-      ЕСЛИ открытых issue нет  →  выйти
-      ИНАЧЕ                    →  вернуться к шагу 2 (дочинить), затем ревью снова
+  WHILE true:
+      IF ++round > cfg.maxReviewRounds  →  STOP "phase did not pass review"
+      review session over the range <feature branch>...<phase branch>
+      // it files issues for blocking findings and ends with APPROVED / BLOCKED
+      IF no open issues:
+          IF the verdict was BLOCKED  →  STOP "BLOCKED with no issue filed"
+          ELSE                        →  leave the loop
+      ELSE  →  back to step 2 to fix them, then review again
 
-  ─── 4. Зелёный гейт ───────────────────────────────────────────────
-  pnpm lint && pnpm test        // единственная серверная проверка: CI на GitHub нет
-  ЕСЛИ провал  →  СТОП «тесты красные, ветка фазы не влита»
+  ─── 4. Green gate ─────────────────────────────────────────────────
+  pnpm lint && pnpm test        // the only server-side check: there is no CI on GitHub
+  IF it fails  →  STOP "tests are red, the phase branch is not merged"
 
-  ─── 5. Вливание фазы в фича-ветку ─────────────────────────────────
-  git switch <фича-ветка>
-  git merge --no-ff -m "merge(<ветка фазы>): <milestone>" <ветка фазы>
-  ЕСЛИ конфликт  →  merge --abort, СТОП
-  git tag -f ralph/phase-<N>              // ← точка отката
-  git push origin <фича-ветка> и тег
+  ─── 5. Merge the phase into the feature branch ────────────────────
+  git switch <feature branch>
+  git merge --no-ff -m "merge(<phase branch>): <milestone>" <phase branch>
+  IF conflict  →  merge --abort, STOP
+  git tag -f ralph/phase-<N>              // ← the rollback point
+  git push origin <feature branch> and the tag
 
 
-КОГДА ВСЕ ФАЗЫ КАТАЛОГА ВЛИТЫ:
-  gh pr create --base <base> --head <фича-ветка>      // один PR на фичу
-  СТОП. Оркестратор в <base> не пишет — мерж за человеком.
-
+ONCE EVERY PHASE IN THE CATALOGUE IS MERGED:
+  gh pr create --base <base> --head <feature branch>      // one PR for the feature
+  STOP. The orchestrator does not write to <base> — merging is the human's job.
 ```
 
-### 5.1 Что закрывает каждое решение
+### 5.1 What each decision fixes
 
-| Решение                                                               | Проблема из §2                                                                                                                                           |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Внешний `while` вместо Stop-хука                                      | обрыв по turns не убивает цепочку; нет вложенных процессов; хук не стреляет в интерактиве                                                                |
-| `spawn(cmd, [args])` асинхронно, `stdio: ['ignore','pipe','inherit']` | JSON-payload хука не утекает в промпт; `&` в milestone не ломает экранирование; поток парсится для живого вывода; процесс остаётся отзывчивым на сигналы |
-| `open[0]` по возрастанию + номер issue в промпте                      | порядок TDD перестаёт быть случайностью; сессия не тратит турны на поиск                                                                                 |
-| Прогресс по GitHub                                                    | сессия, упавшая на правах или залипшая, не считается итерацией                                                                                           |
-| `attempts >= 2 → СТОП`                                                | обрыв на `gh issue close` лечится ретраем автоматически, но бесконечный цикл невозможен                                                                  |
-| Ветка от `origin/<base>`                                              | фаза N+1 не наследует незамерженную фазу N                                                                                                               |
-| `git push` перед `gh pr create`                                       | PR не будет пустым                                                                                                                                       |
-| `gh pr list --head`                                                   | повторный прогон не падает на «PR already exists»                                                                                                        |
-| Диапазон диффа в ревью-промпте                                        | ревью смотрит ровно то, что добавила фаза, а не ищет PR наугад                                                                                            |
-| Follow-up issue → возврат к шагу 2                                    | находки ревью перестают быть комментариями, которые никто не читает                                                                                      |
-| `--no-ff` при вливании фазы + тег                                     | фаза остаётся отдельным merge-коммитом на фича-ветке — точка отката до master                                                                            |
-| оркестратор не пишет в `master`                                       | код попадает в основную ветку только через один PR, который мержит человек                                                                               |
+| Decision                                                | Problem from §2                                                                                       |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| External `while` instead of a Stop hook                 | a turn-limit abort no longer kills the chain; no nested processes; the hook cannot fire interactively |
+| Async `spawn` with args as an array, prompt over stdin  | no shell escaping, no stdin leak, and the process stays responsive to signals                         |
+| `open[0]` ascending plus the issue number in the prompt | TDD order stops being accidental; the session spends no turns hunting for the issue                   |
+| Progress measured on GitHub                             | a session that stalls or hits a permission wall no longer counts as an iteration                      |
+| `attempts >= 2 → STOP`                                  | the `gh issue close` cut-off heals itself through a retry, but an infinite loop is impossible         |
+| Phase branch cut from the feature branch                | phase N+1 builds on phase N without waiting for a merge                                               |
+| Diff range in the review prompt                         | the review looks at exactly what the phase added instead of guessing at a PR                          |
+| Follow-up issues → back to step 2                       | review findings stop being comments nobody reads                                                      |
+| `--no-ff` on the phase merge, plus a tag                | the phase stays a separate merge commit on the feature branch — a rollback point until `master`       |
+| The orchestrator never writes to `master`               | code reaches the trunk only through one pull request, merged by a human                               |
 
-### 5.2 Наблюдаемость: что видно в консоли
+### 5.2 Observability: what the console shows
 
-Сегодня `stdio: 'inherit'` вываливает сырой поток сессии, по которому не понять ни на
-какой issue идёт работа, ни сколько прошло, ни жив ли процесс. Оркестратор парсит
-`stream-json` и печатает собственные строки:
-
-```
-[14:23:05] ▶ Фаза 2 «Password change API» · ветка feature/profile-edit-phase-2 от master@5d96876 · 5 issue
-[14:23:05] ▶ issue #31 «Add ChangePasswordCommand» · попытка 1/2 · sonnet · maxTurns 100
-[14:23:41]   · 6 турнов · 210k вх · 1.8k вых · Bash: pnpm --filter api test
-[14:25:02]   · 18 турнов · 640k вх · 5.1k вых · Edit: apps/api/src/users/users.service.ts
-[14:26:30] ✓ issue #31 закрыт · 24 турна · 1.9M вх · 7.3k вых · 3м25с · completed
-[14:26:31] ▶ issue #32 …
-```
-
-Строки только добавляются, без перерисовки курсора: вывод остаётся читаемым при
-прокрутке назад и одинаково работает во всех терминалах. Тот же поток пишется в
-`ralph.log`.
-
-**Детектор зависания.** Если из потока сессии не пришло ни одного события дольше
-`stallSeconds` (по умолчанию 120), оркестратор печатает предупреждение с временем
-последнего события. Если тишина держится `stallSeconds × 3` — убивает сессию и
-засчитывает попытку. Это прямой ответ на «крутится или зависло»: молчание становится
-видимым и обрабатываемым состоянием, а не догадкой.
-
-**Что печатается на границах:** старт фазы (ветка, от чего создана, сколько issue),
-завершение issue (закрыт или нет, ресурсы, `terminal_reason`), создание PR (номер и
-ссылка), исход ревью (`APPROVED` / `BLOCKED` + номера follow-up), результат зелёного
-гейта, мерж. Каждый СТОП из §9 — с причиной и с описанием того, что осталось в
-рабочем состоянии.
-
-### 5.3 Прерывание и возобновление
-
-**Сегодня остановить цикл нельзя.** Stop-хук спавнит потомка через `execSync`; сам хук
-отваливается по своему таймауту, а сессия-потомок продолжает работать — это наблюдалось
-18 августа: сессии жили по 8–10 минут после смерти породившего их хука. Убить «родителя»
-не помогает, потому что настоящего родителя нет.
-
-**После переработки — помогает.** Один процесс-оркестратор, одна дочерняя сессия за раз,
-запуск через асинхронный `spawn`. Важно, что именно асинхронный: `spawnSync` блокирует
-event loop, и обработчик сигнала не отработал бы до конца сессии.
-
-| Способ                    | Поведение                                                                                           |
-| ------------------------- | --------------------------------------------------------------------------------------------------- |
-| Ctrl-C один раз           | мягкая остановка: текущая сессия доигрывает, следующая issue не берётся, печатается состояние       |
-| Ctrl-C дважды             | жёсткая: дочерняя сессия убивается немедленно                                                       |
-| файл `.claude/ralph.stop` | проверяется между сессиями — для случая, когда вас нет у терминала (ночной прогон, ожидание лимита) |
-
-**Прерывание безопасно и возобновляемо.** После остановки остаются:
-
-- коммиты, уже сделанные сессиями, — на ветке фазы;
-- закрытые issue — закрытыми;
-- ветка запушена или нет, PR создан или нет;
-- **ничего не смержено**, если фаза не дошла до шага 6.
-
-Повторный запуск подхватывает состояние: шаг 0 пропускает закрытые issue, шаг 1
-переиспользует существующую ветку фазы, шаг 3 идемпотентен по PR. Issue, прерванная
-посреди сессии, просто получает ретрай — ровно тот сценарий, который отработал с #30.
-
-### 5.4 Управление прогоном: какие фазы запускать
-
-`cfg.phases` — это **каталог** всех фаз фичи, а не программа текущего прогона. Что именно
-выполнять, задаётся аргументами запуска. Редактировать конфиг ради ограничения прогона не
-нужно и не следует: именно так конфиг и оказался урезан с 8 фаз до 1 (§2.3).
+Previously `stdio: 'inherit'` dumped the raw session stream, from which you could tell
+neither which issue was being worked on, nor how long it had been running, nor whether
+the process was alive. The orchestrator now parses `stream-json` and prints its own
+lines:
 
 ```
-node .claude/ralph-start.js [опции]
-
---phases N        выполнить максимум N фаз и остановиться (по умолчанию: все)
-                  считаются фактически выполненные фазы; уже закрытые пропускаются
-                  шагом 0 и в счёт не идут
---only <n|имя>    выполнить ровно одну фазу (аварийный люк, см. ниже)
---issues N        остановиться после N закрытых issue, даже если фаза не завершена
---dry-run         показать план и оценку расхода, ничего не запуская
---stop-on-limit   при упоре в rate limit остановиться, а не ждать (перекрывает onRateLimit)
---branch <имя>    переопределить ветку фазы; только вместе с --only (§5.5)
+[14:23:05] > Phase 2 "Password change API" . branch feature/profile-edit-phase-2 . 5 open issue(s)
+[14:23:05] > issue #31 "Add ChangePasswordCommand" . attempt 1/2 . sonnet . maxTurns 100
+[14:23:41]   . 6 turns . 210k in . 1.8k out . Bash: pnpm --filter api test
+[14:26:30] + issue #31 closed . 24 turns . 1.9M in . 3m25s . completed . run total 1.9M
 ```
 
-Типичный сценарий «оставить запас лимита»:
+Lines are appended only, with no cursor repainting, so the output stays readable when
+scrolled back and behaves the same in every terminal. The same stream goes to `ralph.log`.
+
+**Stall detector.** If no event arrives from the session for longer than `stallSeconds`
+(120 by default), the orchestrator prints a warning naming the last event. If the silence
+lasts `stallSeconds × 3` the session is killed and the attempt is counted. That is the
+direct answer to "is it working or is it stuck": silence becomes a visible, handled state
+rather than a guess.
+
+**Printed at boundaries:** phase start (branch, where it was cut from, issue count), issue
+completion (closed or not, resources, `terminal_reason`), review outcome (`APPROVED` /
+`BLOCKED` plus follow-up numbers), the green gate result, the phase merge and its tag.
+Every STOP from §9 prints its reason and what was left in a working state.
+
+### 5.3 Interruption and resumption
+
+**Previously the loop could not be stopped.** The Stop hook spawned its child through
+`execSync`; the hook itself timed out while the child session kept running — observed on
+18 Aug, where sessions lived 8–10 minutes after the hook that spawned them had died.
+Killing "the parent" achieved nothing, because there was no real parent.
+
+**Now it works.** One orchestrator process, one child session at a time, started through
+an asynchronous `spawn`. Asynchronous specifically: `spawnSync` blocks the event loop and
+the signal handler would not run until the session ended.
+
+| Way                       | Behaviour                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| Ctrl-C once               | graceful: the current session finishes, no further issue is picked up, state printed |
+| Ctrl-C twice              | hard: the child session is killed immediately                                        |
+| `.claude/ralph.stop` file | checked between sessions — for when you are away from the terminal                   |
+
+**Interrupting is safe and resumable.** What is left behind:
+
+- commits the sessions already made, on the phase branch;
+- closed issues stay closed;
+- **nothing is merged** if the phase did not reach step 5.
+
+Re-running picks the state up: step 0 skips closed issues, step 1 reuses the existing
+branch, and the final PR is created only once. An issue interrupted mid-session simply
+gets a retry — exactly the scenario that worked for #30.
+
+### 5.4 Run control: which phases to execute
+
+`cfg.phases` is a **catalogue** of every phase of the feature, not the programme for a
+given run. What actually executes is set by command-line flags. Editing the config to
+limit a run is neither necessary nor advisable: that is how the catalogue was once
+trimmed from 8 phases to 1 (§2.3).
+
+```
+node .claude/ralph-start.js [options]
+
+--phases N        run at most N phases and stop (default: all)
+                  only phases actually executed count; ones already finished are
+                  skipped by step 0 and do not count
+--only <n|name>   run exactly one phase (escape hatch, see below)
+--issues N        stop after N closed issues, even mid-phase
+--dry-run         print the plan and a cost estimate, start nothing
+--stop-on-limit   stop on a rate limit instead of waiting (overrides onRateLimit)
+--branch <name>   override the phase branch; only together with --only (§5.5)
+--config <path>   a different phase catalogue
+```
+
+The "leave some limit spare" workflow:
 
 ```
 $ node .claude/ralph-start.js --phases 2 --dry-run
-Фаза 2 «Password change API»               5 issue   ~11.5M вх   ≤ 13 сессий
-Фаза 3 «Avatar storage & upload/delete»    5 issue   ~11.5M вх   ≤ 13 сессий
-Итого: 2 фазы, 10 issue, ~23M входных токенов, максимум 26 сессий
+   5 issues  ~13.00M in  <= 13 sessions   Phase 2: Password change API
+   5 issues  ~13.00M in  <= 13 sessions   Phase 3: Avatar storage & upload/delete API
+Total: 2 phases, 10 issues, ~26.00M input tokens, at most 26 sessions
 
 $ node .claude/ralph-start.js --phases 2
 ```
 
-Оценка берётся из медианы по `ralph.log`; пока лога нет — из базовой линии §3
-(1.8M на issue, 4M на раунд ревью). Это и есть ответ на «вижу лимит, хочу потратить
-половину»: сначала `--dry-run`, потом решение.
+The estimate comes from the median in `ralph.stats.jsonl`; until there is one, from the
+§3 baseline (1.8M per issue, 4M per review round). **The running total is printed as it
+goes**, on every issue-completion line, so the remaining limit is visible without leaving
+the loop.
 
-**Текущий расход печатается по ходу** — накопительный итог по прогону в строке завершения
-каждой issue, так что остаток лимита виден без выхода из цикла.
+**There is deliberately no start-at-phase flag.** Which phases are finished follows
+unambiguously from GitHub (step 0), and a manual starting point can only lie. The one way
+to jump over an unfinished phase is `--only`, and it is an escape hatch: phases depend on
+each other, so if earlier phases still have open issues the orchestrator prints a warning
+before starting.
 
-**Точки старта нет намеренно.** Флага «начать с фазы N» не существует: какие фазы закрыты,
-однозначно выводится из GitHub (шаг 0), и ручная точка старта может только соврать.
-Единственный способ перепрыгнуть незакрытую фазу — `--only`, и это аварийный люк: фазы
-зависимы, поэтому если у более ранних фаз есть открытые issue, оркестратор печатает
-предупреждение перед стартом.
+**Caveat on `--issues N`.** Stopping mid-phase leaves the branch unmerged. That is a
+normal resumable state (§5.3), but the phase will not close until the remaining issues
+are done. For "stop after this phase" the right flag is `--phases`.
 
-**Оговорка по `--issues N`.** Остановка в середине фазы оставляет ветку незамерженной и
-без PR — это нормальное возобновляемое состояние (§5.3), но фаза не будет закрыта, пока
-не доработают оставшиеся issue. Для «останови после фазы» правильный флаг `--phases`.
+### 5.5 Phase branches: who names them
 
-### 5.5 Ветки фаз: кто задаёт имя
-
-**Имя ветки по-прежнему задаёте вы** — полем `branch` в описании фазы, как и раньше:
+**The branch name is still yours**, given by the `branch` field of the phase:
 
 ```json
 {
@@ -398,100 +396,101 @@ $ node .claude/ralph-start.js --phases 2
 }
 ```
 
-Автовывод имени из названия milestone сознательно не делается: имя ветки попадает в PR,
-в merge-коммит и в историю master навсегда, поэтому оно должно быть выбрано человеком,
-а не сгенерировано слугификацией заголовка.
+Deriving the name from the milestone title is deliberately not done: the branch name ends
+up in the pull request, in the merge commit and in history for good, so a human should
+choose it rather than a slugifier.
 
-Что изменилось — не «кто задаёт имя», а **что оркестратор с этой веткой делает**:
+What changed is not who names the branch but **what the orchestrator does with it**:
 
-| Ситуация                           | Поведение                                                                    |
-| ---------------------------------- | ---------------------------------------------------------------------------- |
-| Ветки нет                          | создаётся от фича-ветки — фаза N+1 видит результат фазы N                   |
-| Ветка есть (возобновление прогона) | переиспользуется; если фича-ветка ушла вперёд, вливается она                |
-| Влить `base` не удалось            | СТОП с сообщением, ветка не трогается                                        |
-| Фаза уже влита                     | шаг 0 пропускает фазу (тег или ветка — предок фича-ветки)                   |
+| Situation                        | Behaviour                                                          |
+| -------------------------------- | ------------------------------------------------------------------ |
+| The branch does not exist        | cut from the feature branch — phase N+1 sees the result of phase N |
+| The branch exists (resumed run)  | reused; if the feature branch moved ahead, it is merged in         |
+| Merging the feature branch fails | STOP with a message, the branch is left alone                      |
+| The phase is already merged      | step 0 skips it (tag present, or the branch is an ancestor)        |
 
-Раньше ветку создавала сама сессия («Check that the specified branch already exists —
-if not, create it» в `ralph.md`), и от чего она ответвится, зависело от того, где случайно
-оказался рабочий каталог. Теперь это делает оркестратор явно и от известной точки; из
-`ralph.md` соответствующее правило убирается (§8).
+Previously the session created the branch itself ("Check that the specified branch already
+exists — if not, create it" in `ralph.md`), and what it branched from depended on wherever
+the working directory happened to be. That rule is removed from `ralph.md` (§8).
 
-**Разовое переопределение:** `--branch <имя>` — только вместе с `--only`, иначе одно имя
-досталось бы нескольким фазам.
+**One-off override:** `--branch <name>`, only together with `--only`, otherwise one name
+would be handed to several phases.
 
-**После вливания** ветка фазы остаётся и локально, и в origin — оркестратор её не удаляет,
-чтобы тег и ветка вместе давали точку отката. Чистить вручную после мержа финального PR.
+**After a merge** the phase branch is kept both locally and on the remote — the
+orchestrator does not delete it, so that the branch and its tag together form the rollback
+point. Clean up by hand once the final PR is merged.
 
 ---
 
-## 6. Защита от сжигания токенов
+## 6. Protection against burning tokens
 
-Счётчик итераций ограничивает **число сессий**; токены жжёт **число турнов × размер
-контекста**. Нужны оба типа предохранителей.
+An iteration counter limits the **number of sessions**; tokens are burned by **turns ×
+context size**. Both kinds of safeguard are needed.
 
-### 6.1 Почему глобального бюджета на прогон нет
+### 6.1 Why there is no global run budget
 
-Первая редакция этого документа предлагала `maxCostUsd` / `maxInputTokens` на весь
-прогон. Это ошибка: такой лимит смешивает две разные задачи.
+The first draft of this document proposed `maxCostUsd` / `maxInputTokens` for a whole run.
+That was wrong: such a limit conflates two different jobs.
 
-- **Поймать аномалию** — «что-то жжёт ненормально много». Нормой можно считать только маленькую единицу работы (одна issue, одна фаза), где ожидаемая стоимость предсказуема.
-- **Ограничить кошелёк** — «сколько всего я готов потратить». Но кошелька в долларах нет, есть пятичасовое окно лимита. Любое выдуманное число — плохой прокси к нему.
+- **Catching an anomaly** — "something is burning an abnormal amount". The only unit where the expected cost is predictable is small: one issue, one phase.
+- **Capping the wallet** — "how much am I willing to spend in total". But there is no wallet in dollars, there is a five-hour window. Any invented number is a poor proxy for it.
 
-Глобальный потолок не решает ни одну: чтобы пропустить фичу из 20 фаз, его надо задрать
-так высоко, что внутри одной фазы он уже ничего не поймает. **Число фаз в прогоне должно
-быть неограниченным.**
+A global ceiling solves neither: to let a 20-phase feature through it has to be set so
+high that it catches nothing within a single phase. **The number of phases in a run must
+be unbounded.**
 
-### 6.2 Структурная граница расхода
+### 6.2 The structural bound
 
-Расход ограничен произведением потолков — само по себе, без денежного лимита:
-
-```
-на сессию  ≤ maxTurns                                   (100)
-на issue   ≤ maxIssueAttempts сессий                    (2)
-на фазу    ≤ число_issue × maxIssueAttempts + maxReviewRounds сессий
-```
-
-Для фазы из 5 issue это максимум 13 сессий. Бесконечного цикла не существует ни при
-каком числе фаз. Токенный бюджет поверх этого — **не предохранитель, а ранний сигнал**:
-«фаза идёт плохо, останови до того, как выберешь все 13 сессий».
-
-### 6.3 Слои защиты
-
-| Слой                    | Ограничивает                 | При упоре                                                           |
-| ----------------------- | ---------------------------- | ------------------------------------------------------------------- |
-| `maxTurns`              | одну сессию                  | сессия обрывается, оркестратор видит `terminal_reason`, идёт ретрай |
-| `maxIssueAttempts`      | попытки на один issue        | СТОП «issue #N не продвигается»                                     |
-| `maxReviewRounds`       | круги «ревью → фикс → ревью» | СТОП, PR оставлен открытым                                          |
-| `issueBudgetTokens`     | одну issue со всеми ретраями | СТОП «issue #N вышла за бюджет»                                     |
-| бюджет фазы (выводится) | одну фазу                    | СТОП «фаза вышла за бюджет», PR оставлен открытым                   |
-| `onRateLimit`           | внешнее ограничение          | пауза до сброса окна и продолжение — **не ретрай и не стоп**        |
-
-Плюс два мгновенных стопа вне счётчиков: непустой `permission_denials` и конфликт при `git merge`.
-
-### 6.4 Бюджет выводится, а не задаётся
+Spend is bounded by the product of the ceilings, on its own, without any money limit:
 
 ```
-бюджет_фазы = issueBudgetTokens × число_issue_в_фазе
-            + reviewBudgetTokens × maxReviewRounds
+per session  ≤ maxTurns                                   (100)
+per issue    ≤ maxIssueAttempts sessions                   (2)
+per phase    ≤ issues × maxIssueAttempts + maxReviewRounds sessions
 ```
 
-Фаза на 2 issue получает свой потолок, на 5 — свой, автоматически. Вручную настраивается
-только `issueBudgetTokens`, и он калибруется по факту: медиана issue-сессии по замерам
-§3 — **1.8M входных токенов**, порог аномалии — 3× от неё, **6M**. Значение уточняется
-после каждого прогона по данным `ralph.log`.
+For a five-issue phase that is at most 13 sessions. No infinite loop is possible for any
+number of phases. A token budget on top of that is **not a safeguard but an early
+warning**: "this phase is going badly, stop before it burns all 13 sessions."
 
-### 6.5 Rate limit: пауза, а не остановка
+### 6.3 Layers of protection
 
-Для больших фич ограничением становится не бюджет, а пятичасовое окно. Правильная
-реакция — **дождаться сброса окна и продолжить**: ожидание не стоит ни одного токена,
-и фича из 20 фаз просто едет через несколько окон, в том числе ночью. Это и есть
-сценарий, ради которого цикл существует.
+| Layer                | Bounds                       | On breach                                                              |
+| -------------------- | ---------------------------- | ---------------------------------------------------------------------- |
+| `maxTurns`           | one session                  | the session is cut off, `terminal_reason` is seen, a retry follows     |
+| `maxIssueAttempts`   | attempts on one issue        | STOP "issue #N is not progressing"                                     |
+| `maxReviewRounds`    | review → fix → review cycles | STOP, the phase branch is left unmerged                                |
+| `issueBudgetTokens`  | one issue including retries  | STOP "issue #N is over budget"                                         |
+| derived phase budget | one phase                    | STOP "phase is over budget", branch left unmerged                      |
+| `onRateLimit`        | the external limit           | pause until the window resets, then carry on — not a retry, not a stop |
 
-`onRateLimit: "wait"` (по умолчанию) либо `"stop"`, если прогон нужно держать в одном окне.
+Plus two immediate stops outside the counters: a non-empty `permission_denials`, and a
+git merge conflict.
 
-### 6.6 Откуда берётся телеметрия
+### 6.4 The budget is derived, not configured
 
-`claude -p --output-format json` возвращает (проверено):
+```
+phase budget = issueBudgetTokens × issues in the phase
+             + reviewBudgetTokens × maxReviewRounds
+```
+
+A two-issue phase gets its own ceiling, a five-issue phase another, automatically. The
+only hand-tuned number is `issueBudgetTokens`, calibrated from the facts: the median
+issue session in §3 is **1.8M input tokens**, so the anomaly threshold is 3× that, **6M**.
+Refine it after each run from `ralph.stats.jsonl`.
+
+### 6.5 Rate limit: pause, not stop
+
+For large features the binding constraint is not the budget but the five-hour window. The
+right reaction is to **wait for the reset and continue**: waiting costs no tokens, and a
+20-phase feature simply rides through several windows, overnight included. That is the
+scenario the loop exists for.
+
+`onRateLimit: "wait"` (the default) or `"stop"` if a run must stay inside one window.
+
+### 6.6 Where the telemetry comes from
+
+`claude -p --output-format json` returns (verified):
 
 ```json
 {
@@ -512,36 +511,51 @@ if not, create it» в `ralph.md`), и от чего она ответвится
 }
 ```
 
-Используем:
+The `stream-json` variant additionally emits a `rate_limit_event`:
 
-- **`usage`** — сумма `input_tokens + cache_creation + cache_read` идёт в `budget.inputTokens`.
-- **`total_cost_usd`** — в `budget.costUsd`. На подписке это эквивалентная API-стоимость, а не фактический счёт, но как мера сжигания точна.
-- **`permission_denials`** — непустой массив = сессия уткнулась в права. Убивает класс потерь на 1.63M одной проверкой.
-- **`terminal_reason` / `stop_reason`** — `completed` против обрыва. Диагностика без ручного парсинга `.jsonl`.
-- **`is_error` + `api_error_status`** — распознавание rate limit.
+```json
+{
+  "rate_limit_info": {
+    "status": "allowed",
+    "resetsAt": 1787150400,
+    "rateLimitType": "five_hour"
+  }
+}
+```
 
-### 6.7 Режим вывода
+What is used:
 
-Сессия запускается с `--output-format stream-json --verbose`. Оркестратор читает поток,
-ловит финальное событие `type: "result"` для телеметрии — и **из того же потока строит
-живой вывод прогресса** (§5.2).
+- **`usage`** — `input_tokens + cache_creation + cache_read` feeds the budget.
+- **`total_cost_usd`** — recorded per session. On a subscription this is the equivalent API cost rather than a bill, but as a measure of burn it is exact.
+- **`permission_denials`** — a non-empty array means the session hit a permission wall. One check kills the whole 1.63M waste class.
+- **`terminal_reason` / `stop_reason`** — `completed` versus an abort. Diagnosis without hand-parsing `.jsonl` transcripts.
+- **`rate_limit_info.resetsAt`** — the exact reset time, so the wait is precise instead of guessed from error codes.
 
-Сырой вывод сессии при этом в терминал не попадает, но замена не хуже, а информативнее:
-вместо неразмеченного потока видно фазу, issue, номер попытки, накопленные турны и
-токены, последний вызванный инструмент и время без событий. Именно этих данных не хватало,
-чтобы понять, идёт работа или всё встало.
+### 6.7 Output mode
 
-Альтернативы, если понадобится: `--output-format json` — совсем без живого вывода,
-телеметрия только по завершении сессии; `text` — как сегодня, без телеметрии и без
-детектора зависания, не рекомендуется.
+Sessions run with `--output-format stream-json --verbose`. The orchestrator reads the
+stream, catches the final `type: "result"` event for telemetry, and **builds the live
+progress view from the same stream** (§5.2).
+
+The raw session output no longer reaches the terminal, but the replacement is more
+informative, not less: the phase, the issue, the attempt number, accumulated turns and
+tokens, the last tool invoked and the time since the last event. Those are exactly the
+facts that were missing when trying to tell work from a hang.
+
+Alternatives if needed: `--output-format json` gives telemetry only at the end with no
+live view; `text` behaves like the old setup, with no telemetry and no stall detector,
+and is not recommended.
 
 ---
 
-## 7. Значения конфига
+## 7. Configuration values
 
 ```json
 {
   "active": true,
+  "featureBranch": "feature/user-profile",
+  "featureTitle": "User profile page and editing",
+  "niceToHaveLabel": "nice-to-have",
   "implModel": "sonnet",
   "reviewModel": "opus",
   "maxTurns": 100,
@@ -549,131 +563,150 @@ if not, create it» в `ralph.md`), и от чего она ответвится
   "maxReviewRounds": 3,
   "issueBudgetTokens": 6000000,
   "reviewBudgetTokens": 4000000,
+  "stallSeconds": 120,
   "onRateLimit": "wait",
-  "featureBranch": "feature/user-profile",
-  "featureTitle": "Профиль пользователя: страница и редактирование",
   "phases": []
 }
 ```
 
-Обоснование:
+Rationale:
 
-- **`implModel: "sonnet"`** — экономия ~2.2× на основной массе работы (3.94M на opus против 1.81M на sonnet за сопоставимую задачу). Задавать **явно**, чтобы не наследовать интерактивный дефолт.
-- **`reviewModel: "opus"`** — ревью того стоит, оно одно на фазу.
-- **`maxTurns: 100`** — двойной запас к фактическим 28–42. Ограничивает худший случай ~8M вместо ~75M на сессию.
-- **`issueBudgetTokens: 6M`** — 3× медианы issue-сессии (1.8M по замерам §3). Ранний сигнал аномалии на одной issue; калибруется по `ralph.log`.
-- **`reviewBudgetTokens: 4M`** — ревью идёт на opus, где сопоставимая работа стоила 3.94M.
-- **`onRateLimit: "wait"`** — пауза до сброса пятичасового окна и продолжение. Для фичи из многих фаз это единственный способ доехать до конца; ожидание бесплатно. `"stop"` — если прогон нужно уложить в одно окно.
-- **`featureBranch` / `featureTitle`** — долгая ветка фичи и заголовок финального PR.
-- **`phases`** — каталог всех фаз фичи, каждая — пара `{ milestone, branch }`; имя ветки задаёте вы (§5.5). Вернуть все 8 из версии в git и **не трогать ради ограничения прогона** — что запускать, задаётся аргументами (§5.4). Число фаз ничем не ограничено.
+- **`featureBranch` / `featureTitle`** — the long-lived branch and the title of the final pull request.
+- **`niceToHaveLabel`** — the label for non-blocking review findings (§8.1). The orchestrator creates it if it is missing.
+- **`implModel: "sonnet"`** — roughly 2.2× cheaper on the bulk of the work (3.94M on opus against 1.81M on sonnet for comparable tasks). Set it **explicitly** so the interactive default is never inherited.
+- **`reviewModel: "opus"`** — worth it for review, which happens once per phase.
+- **`maxTurns: 100`** — double the observed 28–42. Bounds the worst case at ~8M instead of ~75M per session.
+- **`issueBudgetTokens: 6M`** — 3× the median issue session (1.8M, §3). An early anomaly signal, recalibrated from `ralph.stats.jsonl`.
+- **`reviewBudgetTokens: 4M`** — review runs on opus, where comparable work cost 3.94M.
+- **`onRateLimit: "wait"`** — pause until the five-hour window resets and continue. For a feature of many phases this is the only way to reach the end; waiting is free. Use `"stop"` to keep a run inside one window.
+- **`phases`** — the catalogue of every phase, each a `{ milestone, branch }` pair; the branch name is yours (§5.5). **Do not touch it to limit a run.** The number of phases is unbounded.
 
-Глобальных `maxSessions` / `maxInputTokens` / `maxCostUsd` в конфиге нет — см. §6.1.
-Потолок фазы выводится из числа issue в ней (§6.4), потолок прогона не нужен, потому
-что расход ограничен структурно (§6.2).
+There is no global `maxSessions` / `maxInputTokens` / `maxCostUsd` — see §6.1. The phase
+ceiling is derived from its issue count (§6.4), and a run-level ceiling is unnecessary
+because spend is bounded structurally (§6.2).
 
-### 7.1 Чего не делать
+### 7.1 What not to do
 
-- Не поднимать `maxTurns` без пересчёта по формуле §3.4.
-- Не использовать `--squash` ни на одном уровне.
-- Не запускать `claude -p` без явного `--model`.
-- Не возвращать Stop-хук в схему управления циклом.
-- Не давать оркестратору право мержить в `master` — единственный гейт человеческий.
-- Не вливать фазу `--ff`: без merge-коммита исчезает точка отката.
-- Не редактировать `phases` в конфиге, чтобы ограничить прогон — для этого есть `--phases` / `--only` (§5.4).
-
----
-
-## 8. Чеклист реализации
-
-- [x] **`.claude/ralph-start.js`** — переписать под алгоритм §5: внешний `while`, асинхронный `spawn` массивом аргументов, `stdio: ['ignore','pipe','inherit']`, парсинг `stream-json`, живой вывод и детектор зависания (§5.2), обработка Ctrl-C и `ralph.stop` (§5.3), учёт бюджета и все слои защиты (§6.3), явные сообщения при каждом стопе.
-- [x] **`.claude/hooks/stop.js`** — удалён вместе с каталогом `hooks/`.
-- [x] **`.claude/settings.json`** — убрать блок `hooks.Stop`; оставить `PostToolUse` (prettier) и `permissions`.
-- [x] **`.claude/ralph.config.json`** — вернуть все 8 фаз, добавить поля §7.
-- [x] **`.claude/ralph.iterations.json`** — удалить из репозитория (`git rm --cached`) и добавить в `.gitignore`. Состояние прогона целиком выводится из GitHub, файл не нужен.
-- [x] **`.claude/ralph.md`** — убрать «Don't create a PR — Stop Hook will do that» и «After closing one Issue, immediately end the session / Stop Hook will automatically start a new session»; починить «Don't create create a PR»; добавить требование закрывать issue сразу после коммита; убрать «Check that the specified branch already exists — if not, create it»: ветку создаёт и переключает оркестратор (§5.5), сессия работает в уже подготовленной.
-- [x] **CLI оркестратора** — флаги `--phases`, `--only`, `--issues`, `--dry-run`, `--stop-on-limit` (§5.4); `--dry-run` считает оценку по `ralph.log` с откатом на базовую линию §3.
-- [x] **`.claude/ralph.log`** — копия консольного вывода, и **`.claude/ralph.stats.jsonl`** — по JSON-строке на сессию для оценок в `--dry-run`. Оба в `.gitignore`.
-- [x] **Ревью-промпт** — обязать завершаться `APPROVED` либо `BLOCKED` с заведением follow-up issue в milestone фазы.
-- [x] **Документация** — обновить корневой `CLAUDE.md`, если появляются новые команды или требования запуска.
+- Do not raise `maxTurns` without redoing the arithmetic in §3.4.
+- Do not use `--squash` at any level.
+- Do not run `claude -p` without an explicit `--model`.
+- Do not bring the Stop hook back into the control flow.
+- Do not give the orchestrator permission to merge into `master` — the only gate is human.
+- Do not merge a phase with `--ff`: without a merge commit the rollback point disappears.
+- Do not edit `phases` to limit a run — `--phases` / `--only` exist for that (§5.4).
 
 ---
 
-## 9. Условия остановки — все явные
+## 8. Review findings
 
-Цикл встаёт с внятным сообщением и оставляет PR открытым в восьми случаях. Ни одного
-тихого выхода — сценарий «умерло, и никто не понял» становится невозможным.
+Two mechanisms, with different behaviour.
 
-1. Issue не продвинулся после `maxIssueAttempts` попыток.
-2. Issue вышла за `issueBudgetTokens`.
-3. Фаза вышла за выведенный бюджет (§6.4).
-4. Исчерпаны `maxReviewRounds`.
-5. Непустой `permission_denials`.
-6. Конфликт при `git merge` / `git pull`.
-7. Красные `pnpm lint` / `pnpm test` перед мержем.
-8. Слияние ветки фазы в фича-ветку не прошло.
+**Per issue** — the implementing session runs `/code-review` on its own diff before
+committing and fixes what it finds, inside the same session (`.claude/ralph.md`).
 
-Rate limit в этот список **не входит**: при `onRateLimit: "wait"` он приводит к паузе
-до сброса окна, а не к остановке (§6.5).
+**Per phase** — a separate read-only Opus session over the `feature...phase` range. It
+does not touch the code; it files issues, and the fixes are made by fresh implementing
+sessions through the same TDD pipeline. Keeping judgement and editing apart matters: a
+reviewer that fixes tends to rationalise its own edits, and this way every fix goes
+through the same gate as any other issue.
 
----
+### 8.1 Blocking and nice-to-have
 
-## 10. Критерии приёмки
+The review sorts every finding into one of two buckets:
 
-- [ ] Прогон фазы целиком: все issue milestone закрыты, PR создан, отревьюен, смержен в `master` merge-коммитом.
-- [ ] `git log --first-parent --oneline master` показывает фазы; `git log --oneline master` — issue внутри них, в порядке реализации.
-- [ ] `git revert -m 1 <merge-коммит фазы>` откатывает ровно одну фазу.
-- [ ] Обрыв сессии по `--max-turns` приводит к ретраю, а не к остановке цикла.
-- [ ] Отсутствие нужного разрешения останавливает цикл на первой же сессии, а не на одиннадцатой.
-- [ ] `ralph.log` позволяет ответить «сколько стоила фаза» без парсинга транскриптов.
-- [ ] По консоли в любой момент видно фазу, issue, попытку, турны и время без событий.
-- [ ] Ctrl-C останавливает цикл; повторный запуск продолжает с той же точки, ничего не дублируя.
-- [ ] Зависшая сессия обнаруживается по `stallSeconds`, а не по наблюдению за терминалом.
-- [ ] `--phases 2` выполняет ровно две фазы и останавливается, не трогая остальные.
-- [ ] `--dry-run` показывает состав и оценку расхода, не запуская ни одной сессии.
-- [ ] Ветка фазы создаётся от фича-ветки; отставшая догоняет её или цикл встаёт с сообщением.
-- [ ] `git reset --hard ralph/phase-N` на фича-ветке возвращает состояние после фазы N.
-- [ ] За весь прогон в `master` не уходит ни одного коммита; финальный PR остаётся открытым.
+| Bucket           | Filed as                                           | Effect on the loop                               |
+| ---------------- | -------------------------------------------------- | ------------------------------------------------ |
+| **Blocking**     | an issue **in the phase milestone**                | the loop implements the fix and reviews again    |
+| **Non-blocking** | an issue labelled `nice-to-have`, **no milestone** | stays in the backlog, does not hold up the phase |
 
----
+Blocking means: a bug, a security or data-integrity problem, a missing acceptance
+criterion, or a design decision later phases would have to work around. Everything else —
+naming, small refactors, extra test cases, documentation polish — is nice-to-have.
 
-## 11. Открытые вопросы
+Because `openIssues()` filters by milestone, a `nice-to-have` issue with no milestone is
+invisible to the loop by construction. That is what keeps the loop from sliding into
+endless polishing while still not losing the observation.
 
-- **Миграции Prisma.** Фазы 3–4 добавят колонку под аватар. При варианте А конфликты видны сразу при мерже фазы, отдельного механизма не требуется — но проверять порядок миграций после каждого мержа стоит.
-- **Калибровка `issueBudgetTokens`.** Стартовое значение 6M взято как 3× медианы по фазе 1. После первых прогонов свериться с `ralph.log`: если фактические issue-сессии стабильно укладываются заметно ниже, порог стоит опустить — он тем полезнее, чем ближе к реальности.
-- **Размер фазы** определяется гранулярностью отката и читаемостью ревью (§4), а **не** токенным бюджетом. Подгонять фазы под потолок не требуется: потолок сам подстраивается под число issue в фазе.
-- **Финальное сводное ревью** после фазы 8 — не PR, а `git diff 5d96876..master`. Решить, оформлять ли его отдельным issue для трассируемости.
+The `nice-to-have` backlog is worked off later in a run of its own: collect the issues
+into a milestone and add it to the phase catalogue.
+
+**A verdict with no filed issue is a stop.** If the review ends with `BLOCKED` but files
+nothing, the loop has no trace to act on, so the phase is not merged.
 
 ---
 
-## 12. Ограничения: несколько фич одновременно
+## 9. Stop conditions — all explicit
 
-Текущая переработка рассчитана на **одну фичу за раз**. Кейс «два несвязанных цикла» не
-реализуется, но ограничения зафиксированы, чтобы решение принималось осознанно.
+The loop halts with a clear message and leaves the phase branch unmerged in eight cases.
+There is no silent exit — the "it died and nobody noticed" scenario becomes impossible.
 
-### 12.1 Последовательно — работает почти сразу
+1. An issue did not progress after `maxIssueAttempts` attempts.
+2. An issue went over `issueBudgetTokens`.
+3. A phase went over its derived budget (§6.4).
+4. `maxReviewRounds` were exhausted, or a `BLOCKED` verdict filed no issue.
+5. A non-empty `permission_denials`.
+6. A conflict on `git merge` / `git pull`.
+7. `pnpm lint` or `pnpm test` is red before the merge.
+8. Merging the phase branch into the feature branch failed.
 
-Достаточно одного флага `--config <путь>`: каталог фаз становится файлом на фичу
-(`.claude/ralph.profile-edit.json`, `.claude/ralph.notifications.json`), всё остальное
-не меняется. Прогнать одну фичу, затем другую — безопасно и не требует ничего нового
-в архитектуре.
+The rate limit is **not** on this list: with `onRateLimit: "wait"` it causes a pause until
+the window resets, not a stop (§6.5).
 
-### 12.2 Параллельно — четыре жёстких ограничения
+---
 
-| Ограничение                | Суть                                                                                                                                    |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Один рабочий каталог**   | Оркестратор делает `git switch`. Два цикла в одном клоне дерутся за HEAD и индекс — данные будут перемешаны. Нужен `git worktree` на фичу. |
-| **Общая база Postgres**    | `pnpm test` в `apps/api` гоняет e2e против реальной БД. Два параллельных прогона тестов ломают друг другу данные. Нужна БД на прогон.       |
-| **Общий rate limit**       | Пятичасовое окно одно на аккаунт. Два цикла не удваивают пропускную способность — они делят то же окно и выбирают его вдвое быстрее.        |
-| **Одиночные файлы состояния** | `ralph.log` и `ralph.stop` — глобальные. Понадобится идентификатор прогона в имени.                                                     |
+## 10. Acceptance criteria
 
-### 12.3 Вывод
+- [ ] A whole phase runs through: every milestone issue closed, the phase reviewed and merged into the feature branch as a tagged merge commit.
+- [ ] `git log --first-parent --oneline feature/user-profile` lists the phases; `git log --oneline` lists the issues inside them, in implementation order.
+- [ ] `git reset --hard ralph/phase-N` on the feature branch restores the state right after phase N.
+- [ ] Over a whole run not one commit reaches `master`; the final pull request stays open.
+- [ ] A session cut off by `--max-turns` leads to a retry, not to the loop stopping.
+- [ ] A missing permission stops the loop on the first session, not the eleventh.
+- [ ] A stalled session is detected by `stallSeconds`, not by watching the terminal.
+- [ ] The console always shows the phase, the issue, the attempt, the turns and the time since the last event.
+- [ ] Ctrl-C stops the loop; re-running continues from the same point without duplicating anything.
+- [ ] `--phases 2` runs exactly two phases and stops, leaving the rest alone.
+- [ ] `--dry-run` prints the composition and the estimate without starting a session.
+- [ ] Non-blocking review findings end up as `nice-to-have` issues with no milestone and are not picked up by the loop.
 
-Главное ограничение — третье: **параллельность не даёт выигрыша**, потому что упирается
-в тот же лимит, но требует worktree, отдельной БД и разведения файлов состояния. Плюс
-обе фичи мержат фазы в один master: пока PR одной в полёте, ветка другой устаревает, и
-конфликты придётся разбирать руками.
+---
 
-Поэтому рекомендуемый путь на будущее — **последовательные прогоны с `--config`**,
-а не параллельные циклы. Если параллельность всё же понадобится, минимальный набор:
-`git worktree` на фичу, отдельная схема Postgres на прогон, суффикс прогона в
-`ralph.log` / `ralph.stop`.
+## 11. Open questions
+
+- **Prisma migrations.** Phases 3–4 add an avatar column. They accumulate on a long-lived branch, so the ordering has to be checked every time `master` is merged in.
+- **Calibrating `issueBudgetTokens`.** The starting 6M is 3× the phase 1 median. After the first runs, compare against `ralph.stats.jsonl`: if real sessions land consistently lower, lower the threshold — it is more useful the closer it sits to reality.
+- **Phase size** is decided by rollback granularity and review size (§4), **not** by the token budget. There is no need to fit phases to a ceiling: the ceiling adapts to the issue count.
+- **Working off the `nice-to-have` backlog** — whether to gather it per feature or globally is still open.
+
+---
+
+## 12. Limits: several features at once
+
+This rework assumes **one feature at a time**. The "two unrelated loops" case is not
+implemented, but the constraints are recorded so the decision can be made knowingly.
+
+### 12.1 Sequentially — works almost as is
+
+One flag is enough: `--config <path>`, making the phase catalogue a per-feature file
+(`.claude/ralph.profile-edit.json`, `.claude/ralph.notifications.json`). Nothing else
+changes. Running one feature and then the other is safe and needs no new architecture.
+
+### 12.2 In parallel — four hard constraints
+
+| Constraint             | Substance                                                                                                                                     |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **One working tree**   | The orchestrator runs `git switch`. Two loops in one clone fight over HEAD and the index. It would need a `git worktree` per feature.         |
+| **Shared Postgres**    | `pnpm test` in `apps/api` runs e2e against a real database. Two concurrent test runs corrupt each other's data. A database per run is needed. |
+| **Shared rate limit**  | The five-hour window is per account. Two loops do not double throughput — they split the same window and exhaust it twice as fast.            |
+| **Single state files** | `ralph.log` and `ralph.stop` are global. They would need a run identifier in the name.                                                        |
+
+### 12.3 Conclusion
+
+The third constraint decides it: **parallelism buys nothing**, because it hits the same
+limit while demanding worktrees, a separate database and split state files. On top of
+that both features merge into the same `master`, so while one pull request is in flight
+the other branch goes stale and the conflicts land on a human.
+
+The recommended path is therefore **sequential runs with `--config`**, not parallel loops.
+Should parallelism ever be needed, the minimum is: a `git worktree` per feature, a
+separate Postgres schema per run, and a run suffix on `ralph.log` / `ralph.stop`.

@@ -1,7 +1,8 @@
 {
   "active": true,
   "featureBranch": "feature/user-profile",
-  "featureTitle": "Профиль пользователя: страница и редактирование",
+  "featureTitle": "User profile page and editing",
+  "niceToHaveLabel": "nice-to-have",
   "implModel": "sonnet",
   "reviewModel": "opus",
   "maxTurns": 100,
@@ -12,7 +13,7 @@
   "stallSeconds": 120,
   "onRateLimit": "wait",
   "implPrompt": "Read .claude/ralph.md and follow the rules in that file. Implement GitHub issue #{issue} (\"{title}\") from milestone '{milestone}'. You are already on branch {branch}: work there, do not create or switch branches. When the work is done and all tests pass, commit it and close issue #{issue}. Do not open a pull request and do not start another issue.",
-  "reviewPrompt": "Review the work of milestone '{milestone}'. The diff to review is the output of `git diff {range}` — the phase branch {branch} against the feature branch {featureBranch}. Read the PRD and phase plan under docs/ for the feature, then check the diff for correctness, architecture, security, performance and test coverage. For every blocking problem create one GitHub issue in milestone '{milestone}' describing the fix, then end your reply with a line containing only BLOCKED. If nothing is blocking, summarise your non-blocking observations in your reply and end it with a line containing only APPROVED. Do not commit, push, merge or open a pull request.",
+  "reviewPrompt": "Review the work of milestone '{milestone}'. The diff to review is the output of `git diff {range}` - the phase branch {branch} against the feature branch {featureBranch}. Read the PRD and phase plan under docs/ for the feature, then check the diff for correctness, architecture, security, performance and test coverage.\n\nSort every finding into one of two buckets.\n\nBLOCKING - the phase must not ship with it: a bug, a security or data-integrity problem, a missing acceptance criterion, or a design decision that later phases would have to work around. File one GitHub issue per blocking finding in milestone '{milestone}', so the loop implements the fix, and end your reply with a line containing only BLOCKED.\n\nNON-BLOCKING - worth doing but not now: naming, small refactors, extra test cases, documentation polish. File one GitHub issue per finding with the label '{niceToHaveLabel}' and NO milestone, so it stays in the backlog for a separate pass and does not hold up this phase.\n\nWhen nothing is blocking, end your reply with a line containing only APPROVED - even if you filed nice-to-have issues. Be strict about the split: treating polish as blocking sends the loop into endless rework. Do not commit, push, merge or open a pull request.",
   "phases": [
     {
       "milestone": "Phase 1: Profile read & display name API (Tracer Bullet)",
