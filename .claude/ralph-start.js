@@ -117,7 +117,7 @@ const isAncestor = (a, b) =>
  */
 function shimSpawnArgs(file, args) {
   if (!IS_WIN) return [file, args, {}];
-  const safe = new RegExp('^[A-Za-z0-9._:/@=-]+$');
+  const safe = new RegExp('^[A-Za-z0-9_.:/@=-]+$');
   const quoted = args.map((a) => {
     const text = String(a);
     return safe.test(text) ? text : '"' + text.split('"').join('""') + '"';
@@ -232,6 +232,16 @@ function loadConfig(file) {
     issueBudgetTokens: cfg.issueBudgetTokens || 6_000_000,
     reviewBudgetTokens: cfg.reviewBudgetTokens || 4_000_000,
     stallSeconds: cfg.stallSeconds || 120,
+    allowedTools: cfg.allowedTools || [
+      'Bash',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'Skill',
+      'TodoWrite',
+    ],
     onRateLimit: cfg.onRateLimit || 'wait',
     implPrompt: cfg.implPrompt,
     reviewPrompt: cfg.reviewPrompt,
@@ -371,7 +381,7 @@ function describeTool(part) {
  * Runs one `claude -p` session. The prompt goes through stdin, so no shell escaping
  * is involved and the hook-payload leak of the old Stop hook cannot recur.
  */
-function runSession({ model, maxTurns, prompt, stallSeconds }) {
+function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
   return new Promise((resolve) => {
     const args = [
       '-p',
@@ -382,6 +392,12 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
       model,
       '--max-turns',
       String(maxTurns),
+      // A session runs unattended, so a permission prompt simply kills it. The
+      // allow-list in settings.json cannot cover this: Claude Code requires every
+      // component of a compound command to be permitted, and no list anticipates the
+      // shapes a session produces - the first live run died on `echo "---UPSTREAM---"`.
+      '--allowedTools',
+      ...allowedTools,
     ];
     const [file, spawnArgs, extra] = shimSpawnArgs('claude', args);
     const child = spawn(file, spawnArgs, {
@@ -777,6 +793,7 @@ async function drainIssues(phase, cfg, opts, budget) {
       model: cfg.implModel,
       maxTurns: cfg.maxTurns,
       stallSeconds: cfg.stallSeconds,
+      allowedTools: cfg.allowedTools,
       prompt: fillPrompt(cfg.implPrompt, {
         milestone: phase.milestone,
         branch: phase.branch,
@@ -844,6 +861,7 @@ async function reviewPhase(phase, cfg, opts, budget) {
       model: cfg.reviewModel,
       maxTurns: cfg.maxTurns,
       stallSeconds: cfg.stallSeconds,
+      allowedTools: cfg.allowedTools,
       prompt: fillPrompt(cfg.reviewPrompt, {
         milestone: phase.milestone,
         branch: phase.branch,
