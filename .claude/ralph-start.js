@@ -117,7 +117,7 @@ const isAncestor = (a, b) =>
  */
 function shimSpawnArgs(file, args) {
   if (!IS_WIN) return [file, args, {}];
-  const safe = new RegExp('^[A-Za-z0-9._:/@=-]+$');
+  const safe = new RegExp('^[A-Za-z0-9_.:/@=-]+$');
   const quoted = args.map((a) => {
     const text = String(a);
     return safe.test(text) ? text : '"' + text.split('"').join('""') + '"';
@@ -229,9 +229,20 @@ function loadConfig(file) {
     maxTurns: cfg.maxTurns || 100,
     maxIssueAttempts: cfg.maxIssueAttempts || 2,
     maxReviewRounds: cfg.maxReviewRounds || 3,
+    maxRateLimitRetries: cfg.maxRateLimitRetries || 3,
     issueBudgetTokens: cfg.issueBudgetTokens || 6_000_000,
     reviewBudgetTokens: cfg.reviewBudgetTokens || 4_000_000,
     stallSeconds: cfg.stallSeconds || 120,
+    allowedTools: cfg.allowedTools || [
+      'Bash',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'Skill',
+      'TodoWrite',
+    ],
     onRateLimit: cfg.onRateLimit || 'wait',
     implPrompt: cfg.implPrompt,
     reviewPrompt: cfg.reviewPrompt,
@@ -371,7 +382,7 @@ function describeTool(part) {
  * Runs one `claude -p` session. The prompt goes through stdin, so no shell escaping
  * is involved and the hook-payload leak of the old Stop hook cannot recur.
  */
-function runSession({ model, maxTurns, prompt, stallSeconds }) {
+function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
   return new Promise((resolve) => {
     const args = [
       '-p',
@@ -382,6 +393,12 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
       model,
       '--max-turns',
       String(maxTurns),
+      // A session runs unattended, so a permission prompt simply kills it. The
+      // allow-list in settings.json cannot cover this: Claude Code requires every
+      // component of a compound command to be permitted, and no list anticipates the
+      // shapes a session produces - the first live run died on `echo "---UPSTREAM---"`.
+      '--allowedTools',
+      ...allowedTools,
     ];
     const [file, spawnArgs, extra] = shimSpawnArgs('claude', args);
     const child = spawn(file, spawnArgs, {
@@ -533,6 +550,33 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
  * Anything short of a clean completion must not be read as a verdict: an empty or
  * truncated reply would otherwise be indistinguishable from an approval.
  */
+/**
+ * True when the rate limit, not the task, ended the session. handleRateLimit has
+ * already waited for the reset by the time this is consulted.
+ */
+const deniedTools = (st) =>
+  [...new Set(st.denials.map((d) => d.tool_name))].join(', ');
+
+/**
+ * A denial only matters when the session could not carry on without the tool. Sessions
+ * routinely reach for an alternative - the phase 2 review was refused PowerShell, ran
+ * the same command through Bash and finished its work - and killing those throws away a
+ * healthy session. An incomplete session is caught by sessionOutcome; one that gave up
+ * without closing its issue is caught by the attempt counter.
+ */
+function reportDenials(st, what) {
+  if (st.denials.length === 0) return;
+  log(
+    `  ! ${what} was denied ${deniedTools(st)} and worked around it - add it to allowedTools if this repeats`,
+  );
+}
+
+function abortedByRateLimit(st) {
+  const info = st.rateLimit;
+  if (!info || info.status === 'allowed') return false;
+  return st.terminalReason !== 'completed';
+}
+
 function sessionOutcome(st) {
   if (st.exitCode !== 0) return `exit code ${st.exitCode}`;
   if (st.isError) return 'the session reported an error';
@@ -548,9 +592,11 @@ function sessionOutcome(st) {
  * the last one wins because the instruction is to end the reply with it.
  */
 function readVerdict(text) {
+  // Written as a literal on purpose: '\b' inside a quoted string is a backspace
+  // character, not a word boundary, and that silently matched nothing at all.
   const tokens = String(text)
     .toUpperCase()
-    .match(new RegExp('\b(APPROVED|BLOCKED)\b', 'g'));
+    .match(/\b(APPROVED|BLOCKED)\b/g);
   if (!tokens || tokens.length === 0) return 'an unreadable verdict';
   return tokens[tokens.length - 1];
 }
@@ -777,6 +823,7 @@ async function drainIssues(phase, cfg, opts, budget) {
       model: cfg.implModel,
       maxTurns: cfg.maxTurns,
       stallSeconds: cfg.stallSeconds,
+      allowedTools: cfg.allowedTools,
       prompt: fillPrompt(cfg.implPrompt, {
         milestone: phase.milestone,
         branch: phase.branch,
@@ -793,12 +840,13 @@ async function drainIssues(phase, cfg, opts, budget) {
       (budget.perIssue.get(issue.number) || 0) + st.inputTokens;
     budget.perIssue.set(issue.number, issueTokens);
 
-    if (st.denials.length > 0) {
+    const outcome = sessionOutcome(st);
+    if (st.denials.length > 0 && outcome && !abortedByRateLimit(st)) {
       throw new Stop(
-        `session hit a missing permission: ${JSON.stringify(st.denials).slice(0, 300)}\n` +
-          '  add it to permissions.allow in .claude/settings.json and re-run',
+        `session was denied ${deniedTools(st)} and did not complete (${outcome}) - add it to allowedTools in ${CONFIG_DEFAULT} and re-run`,
       );
     }
+    reportDenials(st, 'session');
     await handleRateLimit(st, cfg, opts);
 
     const before = new Set(open.map((i) => i.number));
@@ -811,6 +859,24 @@ async function drainIssues(phase, cfg, opts, budget) {
     if (closed) {
       attempts.set(issue.number, 0);
       log(`+ issue #${issue.number} closed . ${summary}`);
+      continue;
+    }
+
+    // A session the rate limit cut off did not fail at the task, it never got to
+    // finish it. Charging it an attempt means a limit arriving twice looks exactly
+    // like an issue that cannot be implemented.
+    if (abortedByRateLimit(st)) {
+      const aborts = (budget.limitAborts.get(issue.number) || 0) + 1;
+      budget.limitAborts.set(issue.number, aborts);
+      if (aborts > cfg.maxRateLimitRetries) {
+        throw new Stop(
+          `issue #${issue.number} was cut off by the rate limit ${aborts} times, stopping instead of retrying further`,
+        );
+      }
+      attempts.set(issue.number, attempt - 1);
+      log(
+        `~ issue #${issue.number} cut off by the rate limit, retrying without charging an attempt (${aborts}/${cfg.maxRateLimitRetries}) . ${summary}`,
+      );
       continue;
     }
 
@@ -844,6 +910,7 @@ async function reviewPhase(phase, cfg, opts, budget) {
       model: cfg.reviewModel,
       maxTurns: cfg.maxTurns,
       stallSeconds: cfg.stallSeconds,
+      allowedTools: cfg.allowedTools,
       prompt: fillPrompt(cfg.reviewPrompt, {
         milestone: phase.milestone,
         branch: phase.branch,
@@ -857,11 +924,7 @@ async function reviewPhase(phase, cfg, opts, budget) {
     budget.runTokens += st.inputTokens;
     budget.runCost += st.cost;
 
-    if (st.denials.length > 0) {
-      throw new Stop(
-        `review hit a missing permission: ${JSON.stringify(st.denials).slice(0, 300)}`,
-      );
-    }
+    reportDenials(st, 'review');
     await handleRateLimit(st, cfg, opts);
 
     const outcome = sessionOutcome(st);
@@ -910,6 +973,7 @@ async function runPhase(phase, cfg, opts, base, budget) {
   }
 
   budget.attempts = new Map();
+  budget.limitAborts = new Map();
   budget.phaseTokens = 0;
   budget.phaseLimit =
     cfg.issueBudgetTokens * Math.max(1, openBefore.length) +
@@ -1123,6 +1187,16 @@ async function main() {
     return;
   }
 
+  // The orchestrator lives in .claude/, which is versioned per branch, and a finished
+  // run leaves the tree on a phase branch. Starting from there would silently execute
+  // that branch's older copy of this file and its config.
+  const current = git('rev-parse', '--abbrev-ref', 'HEAD').stdout;
+  if (current !== base) {
+    fail(
+      `Start the loop from ${base}, not ${current}. A previous run leaves the tree on its phase branch, and running from there would use that branch's copy of the orchestrator.`,
+    );
+  }
+
   const dirty = git('status', '--porcelain').stdout;
   if (dirty)
     fail(`Working tree is not clean - commit or stash first:\n${dirty}`);
@@ -1147,6 +1221,7 @@ async function main() {
     phaseLimit: Infinity,
     perIssue: new Map(),
     attempts: new Map(),
+    limitAborts: new Map(),
   };
   const startedAt = Date.now();
   let executed = 0;
