@@ -31,6 +31,13 @@ Requires Node >= 20; package manager is pinned via `packageManager: pnpm@11.20.0
 
 Root `.prettierrc` sets `singleQuote: true, trailingComma: "all"` and applies repo-wide (each app also carries its own copy of the same config).
 
+## Language
+
+Everything written into the repository is in English — code, comments, identifiers,
+commit messages, pull request bodies, documentation under `docs/`, and any console or log
+output a tool produces. The point is that anyone can pick the project up. A conversation
+with the author may happen in another language; that never changes what lands in the repo.
+
 ## Documentation
 
 Whenever a change alters the project's architecture — new modules/services, changed repository structure, new inter-app wiring, new external dependencies (database, queue, third-party API), or new required commands/env vars — update the relevant documentation in the same change:
