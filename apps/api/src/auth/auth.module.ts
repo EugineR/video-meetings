@@ -24,6 +24,6 @@ const QueryHandlers = [LoginUserHandler];
   ],
   controllers: [AuthController],
   providers: [TokenService, JwtAuthGuard, ...CommandHandlers, ...QueryHandlers],
-  exports: [JwtModule, JwtAuthGuard],
+  exports: [JwtModule, JwtAuthGuard, TokenService],
 })
 export class AuthModule {}
