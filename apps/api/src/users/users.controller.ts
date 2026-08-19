@@ -1,9 +1,21 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AccessTokenResponse } from '../auth/interfaces/access-token-response.interface';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { ChangePasswordCommand } from './commands/change-password.command';
 import { UpdateProfileCommand } from './commands/update-profile.command';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ProfileResponse } from './interfaces/profile-response.interface';
 import { GetProfileQuery } from './queries/get-profile.query';
@@ -32,6 +44,17 @@ export class UsersController {
 
     return this.commandBus.execute(
       new UpdateProfileCommand(user.sub, dto.name),
+    );
+  }
+
+  @Post('me/password')
+  @HttpCode(HttpStatus.OK)
+  changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ChangePasswordDto,
+  ): Promise<AccessTokenResponse> {
+    return this.commandBus.execute(
+      new ChangePasswordCommand(user.sub, dto.currentPassword, dto.newPassword),
     );
   }
 }
