@@ -564,9 +564,11 @@ function sessionOutcome(st) {
  * the last one wins because the instruction is to end the reply with it.
  */
 function readVerdict(text) {
+  // Written as a literal on purpose: '\b' inside a quoted string is a backspace
+  // character, not a word boundary, and that silently matched nothing at all.
   const tokens = String(text)
     .toUpperCase()
-    .match(new RegExp('\b(APPROVED|BLOCKED)\b', 'g'));
+    .match(/\b(APPROVED|BLOCKED)\b/g);
   if (!tokens || tokens.length === 0) return 'an unreadable verdict';
   return tokens[tokens.length - 1];
 }
