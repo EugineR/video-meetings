@@ -1,8 +1,9 @@
-| **name**        | read                                                |
-| --------------- | --------------------------------------------------- |
-| **description** | Read a file or part of a file efficiently without wasting tokens |
+---
+name: read
+description: Read a file or part of a file efficiently without wasting tokens. Use when only one function, class, model or field is needed rather than a whole file.
+---
 
-# **Read File**
+# Read File
 
 Read $ARGUMENTS efficiently:
 
