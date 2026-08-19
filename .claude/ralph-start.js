@@ -554,6 +554,23 @@ function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
  * True when the rate limit, not the task, ended the session. handleRateLimit has
  * already waited for the reset by the time this is consulted.
  */
+const deniedTools = (st) =>
+  [...new Set(st.denials.map((d) => d.tool_name))].join(', ');
+
+/**
+ * A denial only matters when the session could not carry on without the tool. Sessions
+ * routinely reach for an alternative - the phase 2 review was refused PowerShell, ran
+ * the same command through Bash and finished its work - and killing those throws away a
+ * healthy session. An incomplete session is caught by sessionOutcome; one that gave up
+ * without closing its issue is caught by the attempt counter.
+ */
+function reportDenials(st, what) {
+  if (st.denials.length === 0) return;
+  log(
+    `  ! ${what} was denied ${deniedTools(st)} and worked around it - add it to allowedTools if this repeats`,
+  );
+}
+
 function abortedByRateLimit(st) {
   const info = st.rateLimit;
   if (!info || info.status === 'allowed') return false;
@@ -823,12 +840,13 @@ async function drainIssues(phase, cfg, opts, budget) {
       (budget.perIssue.get(issue.number) || 0) + st.inputTokens;
     budget.perIssue.set(issue.number, issueTokens);
 
-    if (st.denials.length > 0) {
+    const outcome = sessionOutcome(st);
+    if (st.denials.length > 0 && outcome && !abortedByRateLimit(st)) {
       throw new Stop(
-        `session hit a missing permission: ${JSON.stringify(st.denials).slice(0, 300)}\n` +
-          '  add it to permissions.allow in .claude/settings.json and re-run',
+        `session was denied ${deniedTools(st)} and did not complete (${outcome}) - add it to allowedTools in ${CONFIG_DEFAULT} and re-run`,
       );
     }
+    reportDenials(st, 'session');
     await handleRateLimit(st, cfg, opts);
 
     const before = new Set(open.map((i) => i.number));
@@ -906,11 +924,7 @@ async function reviewPhase(phase, cfg, opts, budget) {
     budget.runTokens += st.inputTokens;
     budget.runCost += st.cost;
 
-    if (st.denials.length > 0) {
-      throw new Stop(
-        `review hit a missing permission: ${JSON.stringify(st.denials).slice(0, 300)}`,
-      );
-    }
+    reportDenials(st, 'review');
     await handleRateLimit(st, cfg, opts);
 
     const outcome = sessionOutcome(st);
