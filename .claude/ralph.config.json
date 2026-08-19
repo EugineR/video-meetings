@@ -1,5 +1,7 @@
 {
   "active": true,
+  "featureBranch": "feature/user-profile",
+  "featureTitle": "Профиль пользователя: страница и редактирование",
   "implModel": "sonnet",
   "reviewModel": "opus",
   "maxTurns": 100,
@@ -10,7 +12,7 @@
   "stallSeconds": 120,
   "onRateLimit": "wait",
   "implPrompt": "Read .claude/ralph.md and follow the rules in that file. Implement GitHub issue #{issue} (\"{title}\") from milestone '{milestone}'. You are already on branch {branch}: work there, do not create or switch branches. When the work is done and all tests pass, commit it and close issue #{issue}. Do not open a pull request and do not start another issue.",
-  "reviewPrompt": "Review pull request #{pr} for milestone '{milestone}'. Read the PRD and phase plan under docs/ for the feature it belongs to, then check the diff for correctness, architecture, security, performance and test coverage. Leave your findings as comments on the PR using the gh CLI. If you find blocking problems, create one GitHub issue per problem in milestone '{milestone}' describing the fix, and end your reply with a line containing only BLOCKED. If there is nothing blocking, end your reply with a line containing only APPROVED. Do not merge the PR and do not push commits.",
+  "reviewPrompt": "Review the work of milestone '{milestone}'. The diff to review is the output of `git diff {range}` — the phase branch {branch} against the feature branch {featureBranch}. Read the PRD and phase plan under docs/ for the feature, then check the diff for correctness, architecture, security, performance and test coverage. For every blocking problem create one GitHub issue in milestone '{milestone}' describing the fix, then end your reply with a line containing only BLOCKED. If nothing is blocking, summarise your non-blocking observations in your reply and end it with a line containing only APPROVED. Do not commit, push, merge or open a pull request.",
   "phases": [
     {
       "milestone": "Phase 1: Profile read & display name API (Tracer Bullet)",

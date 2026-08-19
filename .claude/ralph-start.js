@@ -4,10 +4,13 @@
 /**
  * Ralph Loop orchestrator.
  *
- * Runs one Claude session per issue, one PR per phase, merging each phase into the
- * default branch. Design: docs/ralph-loop-rework/plan.md. Usage: docs/ralph-loop-rework/usage.md.
+ * One Claude session per issue; one branch per phase, merged with --no-ff into a
+ * long-lived feature branch and tagged so phases stay revertable during development.
+ * Nothing reaches the default branch automatically: when every phase is done the loop
+ * opens a single pull request and stops, leaving the merge to a human.
  *
- * There is no Stop hook involved: this process owns the loop from start to finish.
+ * Design: docs/ralph-loop-rework/plan.md. Usage: docs/ralph-loop-rework/usage.md.
+ * There is deliberately no Stop hook: this process owns the loop from start to finish.
  */
 
 const { spawn, spawnSync } = require('child_process');
@@ -35,12 +38,8 @@ function fail(message) {
   process.exit(1);
 }
 
-function stamp() {
-  return new Date().toTimeString().slice(0, 8);
-}
-
 function log(line) {
-  const text = `[${stamp()}] ${line}`;
+  const text = `[${new Date().toTimeString().slice(0, 8)}] ${line}`;
   console.log(text);
   try {
     fs.appendFileSync(LOG_FILE, text + '\n');
@@ -105,6 +104,11 @@ const gitTry = (...args) => exec('git', args, { allowFail: true });
 const gh = (...args) => exec('gh', args);
 const ghTry = (...args) => exec('gh', args, { allowFail: true });
 
+const refExists = (ref) =>
+  gitTry('rev-parse', '--verify', '--quiet', ref).code === 0;
+const isAncestor = (a, b) =>
+  gitTry('merge-base', '--is-ancestor', a, b).code === 0;
+
 /** Wraps a .cmd shim (claude, pnpm) for spawn. Only safe for simple arguments. */
 function shimSpawnArgs(file, args) {
   if (!IS_WIN) return [file, args, {}];
@@ -130,6 +134,9 @@ Ralph Loop — автономный цикл по issue и фазам.
   --branch <имя>     переопределить ветку фазы; только вместе с --only
   --stop-on-limit    при упоре в rate limit остановиться, а не ждать сброса окна
   --config <путь>    другой каталог фаз (по умолчанию ${CONFIG_DEFAULT})
+
+Фазы копятся в фича-ветке, каждая — merge-коммит с тегом (точка отката).
+В master ничего не мержится: когда фазы кончатся, цикл откроет один PR и остановится.
 
 Остановка: Ctrl-C (мягко), Ctrl-C дважды (жёстко), либо создать ${STOP_FILE}.
 `);
@@ -178,7 +185,7 @@ function parseArgs(argv) {
       case '--help':
         usage();
         process.exit(0);
-      // eslint-disable-next-line no-fallthrough
+        break;
       default:
         fail(`Неизвестный флаг: ${flag}`);
     }
@@ -197,8 +204,11 @@ function loadConfig(file) {
   const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!Array.isArray(cfg.phases) || cfg.phases.length === 0)
     fail(`В ${file} нет фаз`);
+  if (!cfg.featureBranch) fail(`В ${file} не задан featureBranch`);
   return {
     active: cfg.active !== false,
+    featureBranch: cfg.featureBranch,
+    featureTitle: cfg.featureTitle || cfg.featureBranch,
     implModel: cfg.implModel || 'sonnet',
     reviewModel: cfg.reviewModel || 'opus',
     maxTurns: cfg.maxTurns || 100,
@@ -216,31 +226,14 @@ function loadConfig(file) {
 
 // ─── GitHub ────────────────────────────────────────────────────────────────────
 
-function openIssues(milestone) {
+function issuesOf(milestone, state) {
   const raw = gh(
     'issue',
     'list',
     '--milestone',
     milestone,
     '--state',
-    'open',
-    '--limit',
-    '200',
-    '--json',
-    'number,title',
-  ).stdout;
-  const list = JSON.parse(raw || '[]');
-  return list.sort((a, b) => a.number - b.number); // возрастание = порядок TDD
-}
-
-function milestoneIssues(milestone) {
-  const raw = gh(
-    'issue',
-    'list',
-    '--milestone',
-    milestone,
-    '--state',
-    'all',
+    state,
     '--limit',
     '200',
     '--json',
@@ -249,12 +242,14 @@ function milestoneIssues(milestone) {
   return JSON.parse(raw || '[]').sort((a, b) => a.number - b.number);
 }
 
-function findPr(branch, state) {
+const openIssues = (milestone) => issuesOf(milestone, 'open');
+
+function findPr(head, state) {
   const raw = ghTry(
     'pr',
     'list',
     '--head',
-    branch,
+    head,
     '--state',
     state,
     '--limit',
@@ -262,8 +257,7 @@ function findPr(branch, state) {
     '--json',
     'number,url,state',
   ).stdout;
-  const list = JSON.parse(raw || '[]');
-  return list[0] || null;
+  return JSON.parse(raw || '[]')[0] || null;
 }
 
 // ─── session runner ────────────────────────────────────────────────────────────
@@ -310,7 +304,6 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
       rateLimit: null,
       resultText: '',
       isError: false,
-      apiErrorStatus: null,
       lastTool: null,
     };
 
@@ -381,7 +374,6 @@ function runSession({ model, maxTurns, prompt, stallSeconds }) {
           st.denials = ev.permission_denials || [];
           st.cost = ev.total_cost_usd || 0;
           st.isError = !!ev.is_error;
-          st.apiErrorStatus = ev.api_error_status || null;
           st.resultText = typeof ev.result === 'string' ? ev.result : '';
         }
       }
@@ -441,28 +433,12 @@ function estimateIssueTokens() {
 
 // ─── prompts ───────────────────────────────────────────────────────────────────
 
-function implPrompt(cfg, phase, issue) {
-  const template = cfg.implPrompt;
-  return template
-    .split('{milestone}')
-    .join(phase.milestone)
-    .split('{branch}')
-    .join(phase.branch)
-    .split('{issue}')
-    .join(String(issue.number))
-    .split('{title}')
-    .join(issue.title);
-}
-
-function reviewPrompt(cfg, phase, prNumber) {
-  const template = cfg.reviewPrompt;
-  return template
-    .split('{milestone}')
-    .join(phase.milestone)
-    .split('{branch}')
-    .join(phase.branch)
-    .split('{pr}')
-    .join(String(prNumber));
+function fillPrompt(template, values) {
+  let out = template;
+  for (const [key, value] of Object.entries(values)) {
+    out = out.split(`{${key}}`).join(String(value));
+  }
+  return out;
 }
 
 // ─── rate limit ────────────────────────────────────────────────────────────────
@@ -489,75 +465,112 @@ function checkInterrupt() {
     throw new Stop(`найден ${STOP_FILE} — остановка`);
 }
 
-// ─── phase execution ───────────────────────────────────────────────────────────
+// ─── branches ──────────────────────────────────────────────────────────────────
 
-function prepareBranch(phase, base) {
-  git('fetch', 'origin', '--prune');
-  git('switch', base);
-  git('pull', '--ff-only');
+const phaseTag = (phase) => `ralph/phase-${phase.index}`;
 
-  const existsLocal =
-    gitTry('rev-parse', '--verify', '--quiet', `refs/heads/${phase.branch}`)
-      .code === 0;
-  const existsRemote =
-    gitTry(
-      'rev-parse',
-      '--verify',
-      '--quiet',
-      `refs/remotes/origin/${phase.branch}`,
-    ).code === 0;
+/** Long-lived feature branch: created from the default branch, kept in sync with it. */
+function prepareFeatureBranch(cfg, base) {
+  git('fetch', 'origin', '--prune', '--tags');
 
-  if (!existsLocal && !existsRemote) {
-    git('switch', '-c', phase.branch, `origin/${base}`);
-    log(`  ветка ${phase.branch} создана от origin/${base}`);
-    return;
+  if (!refExists(`refs/heads/${cfg.featureBranch}`)) {
+    if (refExists(`refs/remotes/origin/${cfg.featureBranch}`)) {
+      git('switch', '-c', cfg.featureBranch, `origin/${cfg.featureBranch}`);
+    } else {
+      git('switch', '-c', cfg.featureBranch, `origin/${base}`);
+      log(`  фича-ветка ${cfg.featureBranch} создана от origin/${base}`);
+      return;
+    }
+  } else {
+    git('switch', cfg.featureBranch);
   }
 
-  if (!existsLocal) git('switch', '-c', phase.branch, `origin/${phase.branch}`);
-  else git('switch', phase.branch);
-
-  const upToDate =
-    gitTry('merge-base', '--is-ancestor', `origin/${base}`, 'HEAD').code === 0;
-  if (upToDate) {
-    log(`  ветка ${phase.branch} переиспользована, base актуален`);
-    return;
+  if (refExists(`refs/remotes/origin/${cfg.featureBranch}`)) {
+    const pull = gitTry('merge', '--ff-only', `origin/${cfg.featureBranch}`);
+    if (pull.code !== 0) {
+      throw new Stop(
+        `фича-ветка ${cfg.featureBranch} разошлась с origin — разберитесь вручную и перезапустите`,
+      );
+    }
   }
-  log(`  ветка ${phase.branch} отстала от origin/${base} — вливаю`);
-  const merged = gitTry('merge', '--no-edit', `origin/${base}`);
-  if (merged.code !== 0) {
+
+  if (isAncestor(`origin/${base}`, 'HEAD')) return;
+  log(`  фича-ветка отстала от origin/${base} — вливаю`);
+  if (gitTry('merge', '--no-edit', `origin/${base}`).code !== 0) {
+    gitTry('merge', '--abort');
     throw new Stop(
-      `ветка ${phase.branch} отстала от ${base}, автослияние не прошло — разрешите конфликт вручную и перезапустите`,
+      `${cfg.featureBranch} конфликтует с ${base} — разрешите вручную и перезапустите`,
     );
   }
 }
 
-function buildPrBody(phase, issues) {
-  const rows = issues.map((i) => `| #${i.number} | ${i.title} |`).join('\n');
-  return [
-    `Реализует **${phase.milestone}**.`,
-    '',
-    '| Issue | Что |',
-    '| --- | --- |',
-    rows,
-    '',
-    issues.map((i) => `Closes #${i.number}`).join(', '),
-    '',
-    '🤖 Generated with [Claude Code](https://claude.com/claude-code)',
-  ].join('\n');
+/** Phase branch: cut from the feature branch, never from the default branch. */
+function preparePhaseBranch(phase, cfg) {
+  const exists =
+    refExists(`refs/heads/${phase.branch}`) ||
+    refExists(`refs/remotes/origin/${phase.branch}`);
+
+  if (!exists) {
+    git('switch', '-c', phase.branch, cfg.featureBranch);
+    log(`  ветка ${phase.branch} создана от ${cfg.featureBranch}`);
+    return;
+  }
+
+  if (!refExists(`refs/heads/${phase.branch}`)) {
+    git('switch', '-c', phase.branch, `origin/${phase.branch}`);
+  } else {
+    git('switch', phase.branch);
+  }
+
+  if (isAncestor(cfg.featureBranch, 'HEAD')) {
+    log(`  ветка ${phase.branch} переиспользована`);
+    return;
+  }
+  log(`  ветка ${phase.branch} отстала от ${cfg.featureBranch} — вливаю`);
+  if (gitTry('merge', '--no-edit', cfg.featureBranch).code !== 0) {
+    gitTry('merge', '--abort');
+    throw new Stop(
+      `${phase.branch} конфликтует с ${cfg.featureBranch} — разрешите вручную и перезапустите`,
+    );
+  }
 }
 
+/**
+ * A phase counts as merged when its commits are already reachable from the trunk the
+ * feature branch grows on. Before that branch exists the trunk is the default branch —
+ * that is how phases merged under an earlier scheme (phase 1 went straight to master)
+ * are recognised instead of being replayed.
+ */
+function phaseIsMerged(phase, cfg, base) {
+  if (refExists(`refs/tags/${phaseTag(phase)}`)) return true;
+
+  const local = refExists(`refs/heads/${phase.branch}`);
+  const remote = refExists(`refs/remotes/origin/${phase.branch}`);
+  if (!local && !remote) return true; // нечего вливать: ветки фазы не существует
+
+  const trunk = refExists(`refs/heads/${cfg.featureBranch}`)
+    ? cfg.featureBranch
+    : `origin/${base}`;
+  const tip = local ? phase.branch : `origin/${phase.branch}`;
+  return isAncestor(tip, trunk);
+}
+
+// ─── green gate ────────────────────────────────────────────────────────────────
+
 function runGreenGate() {
-  for (const task of [['lint'], ['test']]) {
-    log(`  прогон pnpm ${task[0]}`);
-    const [file, args, extra] = shimSpawnArgs('pnpm', task);
+  for (const task of ['lint', 'test']) {
+    log(`  прогон pnpm ${task}`);
+    const [file, args, extra] = shimSpawnArgs('pnpm', [task]);
     const r = spawnSync(file, args, {
       stdio: ['ignore', 'inherit', 'inherit'],
       ...extra,
     });
-    if (r.status !== 0) return task[0];
+    if (r.status !== 0) return task;
   }
   return null;
 }
+
+// ─── phase execution ───────────────────────────────────────────────────────────
 
 /** Runs implementation sessions until the milestone has no open issues left. */
 async function drainIssues(phase, cfg, opts, budget) {
@@ -586,8 +599,13 @@ async function drainIssues(phase, cfg, opts, budget) {
     const st = await runSession({
       model: cfg.implModel,
       maxTurns: cfg.maxTurns,
-      prompt: implPrompt(cfg, phase, issue),
       stallSeconds: cfg.stallSeconds,
+      prompt: fillPrompt(cfg.implPrompt, {
+        milestone: phase.milestone,
+        branch: phase.branch,
+        issue: issue.number,
+        title: issue.title,
+      }),
     });
     recordStats('impl', phase, issue.number, st);
     budget.phaseTokens += st.inputTokens;
@@ -631,69 +649,28 @@ async function drainIssues(phase, cfg, opts, budget) {
   }
 }
 
-async function runPhase(phase, cfg, opts, base, budget) {
-  const openBefore = openIssues(phase.milestone);
-  const mergedPr = findPr(phase.branch, 'merged');
-  if (openBefore.length === 0 && mergedPr) {
-    log(
-      `⏭ фаза «${phase.milestone}» уже завершена (PR #${mergedPr.number}) — пропуск`,
-    );
-    return false;
-  }
-
-  budget.phaseTokens = 0;
-  budget.phaseLimit =
-    cfg.issueBudgetTokens * Math.max(1, openBefore.length) +
-    cfg.reviewBudgetTokens * cfg.maxReviewRounds;
-
-  log(
-    `▶ Фаза «${phase.milestone}» · ветка ${phase.branch} · ${openBefore.length} открытых issue · бюджет ${fmtTokens(budget.phaseLimit)}`,
-  );
-  prepareBranch(phase, base);
-
-  await drainIssues(phase, cfg, opts, budget);
-
-  // ─── публикация ───
-  checkInterrupt();
-  git('push', '-u', 'origin', phase.branch);
-  let pr = findPr(phase.branch, 'open');
-  if (!pr) {
-    const issues = milestoneIssues(phase.milestone);
-    const url = gh(
-      'pr',
-      'create',
-      '--base',
-      base,
-      '--head',
-      phase.branch,
-      '--title',
-      `feat: ${phase.milestone}`,
-      '--body',
-      buildPrBody(phase, issues),
-    ).stdout;
-    pr = findPr(phase.branch, 'open');
-    log(`✓ PR создан: ${url}`);
-  } else {
-    log(`· PR #${pr.number} уже существует: ${pr.url}`);
-  }
-  if (!pr) throw new Stop('PR создан, но не найден через gh pr list');
-
-  // ─── ревью ───
+async function reviewPhase(phase, cfg, opts, budget) {
   for (let round = 1; ; round++) {
     checkInterrupt();
     if (round > cfg.maxReviewRounds) {
       throw new Stop(
-        `фаза «${phase.milestone}» не проходит ревью за ${cfg.maxReviewRounds} раунда — PR #${pr.number} оставлен открытым`,
+        `фаза «${phase.milestone}» не проходит ревью за ${cfg.maxReviewRounds} раунда — ветка ${phase.branch} не влита`,
       );
     }
     log(
-      `▶ ревью PR #${pr.number} · раунд ${round}/${cfg.maxReviewRounds} · ${cfg.reviewModel}`,
+      `▶ ревью фазы · раунд ${round}/${cfg.maxReviewRounds} · ${cfg.reviewModel}`,
     );
+
     const st = await runSession({
       model: cfg.reviewModel,
       maxTurns: cfg.maxTurns,
-      prompt: reviewPrompt(cfg, phase, pr.number),
       stallSeconds: cfg.stallSeconds,
+      prompt: fillPrompt(cfg.reviewPrompt, {
+        milestone: phase.milestone,
+        branch: phase.branch,
+        featureBranch: cfg.featureBranch,
+        range: `${cfg.featureBranch}...${phase.branch}`,
+      }),
     });
     recordStats('review', phase, null, st);
     budget.phaseTokens += st.inputTokens;
@@ -715,76 +692,171 @@ async function runPhase(phase, cfg, opts, base, budget) {
     );
 
     const stillOpen = openIssues(phase.milestone);
-    if (stillOpen.length === 0) break;
+    if (stillOpen.length === 0) return;
 
     log(
       `  ревью завело ${stillOpen.length} follow-up issue — возвращаюсь к реализации`,
     );
     await drainIssues(phase, cfg, opts, budget);
-    git('push', 'origin', phase.branch);
+  }
+}
+
+async function runPhase(phase, cfg, opts, base, budget) {
+  const openBefore = openIssues(phase.milestone);
+  if (openBefore.length === 0 && phaseIsMerged(phase, cfg, base)) {
+    log(
+      `⏭ фаза «${phase.milestone}» уже влита в ${cfg.featureBranch} — пропуск`,
+    );
+    return false;
   }
 
-  // ─── зелёный гейт ───
+  budget.phaseTokens = 0;
+  budget.phaseLimit =
+    cfg.issueBudgetTokens * Math.max(1, openBefore.length) +
+    cfg.reviewBudgetTokens * cfg.maxReviewRounds;
+
+  log(
+    `▶ Фаза ${phase.index} «${phase.milestone}» · ветка ${phase.branch} · ${openBefore.length} открытых issue · бюджет ${fmtTokens(budget.phaseLimit)}`,
+  );
+
+  prepareFeatureBranch(cfg, base);
+  preparePhaseBranch(phase, cfg);
+
+  await drainIssues(phase, cfg, opts, budget);
+  await reviewPhase(phase, cfg, opts, budget);
+
   checkInterrupt();
   const failedTask = runGreenGate();
   if (failedTask) {
     throw new Stop(
-      `pnpm ${failedTask} красный — PR #${pr.number} оставлен открытым, почините и перезапустите`,
+      `pnpm ${failedTask} красный — ветка ${phase.branch} не влита, почините и перезапустите`,
     );
   }
 
-  // ─── мерж ───
-  const merge = ghTry(
-    'pr',
+  // Фаза вливается в фича-ветку отдельным merge-коммитом и помечается тегом:
+  // это и есть точка отката до попадания фичи в master.
+  git('switch', cfg.featureBranch);
+  const merge = gitTry(
     'merge',
-    String(pr.number),
-    '--merge',
-    '--delete-branch',
+    '--no-ff',
+    '-m',
+    `merge(${phase.branch}): ${phase.milestone}`,
+    phase.branch,
   );
   if (merge.code !== 0) {
+    gitTry('merge', '--abort');
+    git('switch', phase.branch);
     throw new Stop(
-      `gh pr merge для PR #${pr.number} не прошёл:\n${merge.stderr || merge.stdout}`,
+      `слияние ${phase.branch} в ${cfg.featureBranch} не прошло — разрешите вручную и перезапустите`,
     );
   }
+  git('tag', '-f', phaseTag(phase));
+  git('push', '-u', 'origin', cfg.featureBranch);
+  git('push', '-f', 'origin', phaseTag(phase));
+
   log(
-    `✓ фаза «${phase.milestone}» смержена в ${base} · PR #${pr.number} · ${fmtTokens(budget.phaseTokens)} за фазу`,
+    `✓ фаза ${phase.index} влита в ${cfg.featureBranch} · тег ${phaseTag(phase)} · ${fmtTokens(budget.phaseTokens)} за фазу`,
   );
   return true;
+}
+
+// ─── final pull request ────────────────────────────────────────────────────────
+
+function maybeOpenFeaturePr(cfg, allPhases, base) {
+  const unfinished = allPhases.filter(
+    (p) => openIssues(p.milestone).length > 0 || !phaseIsMerged(p, cfg, base),
+  );
+  if (unfinished.length > 0) {
+    log(
+      `· фича не завершена: осталось фаз ${unfinished.length} — финальный PR не создаётся`,
+    );
+    return;
+  }
+
+  const existing = findPr(cfg.featureBranch, 'open');
+  if (existing) {
+    log(`· финальный PR уже открыт: ${existing.url}`);
+    return;
+  }
+
+  const sections = allPhases.map((p) => {
+    const rows = issuesOf(p.milestone, 'all')
+      .map((i) => `| #${i.number} | ${i.title} |`)
+      .join('\n');
+    return [
+      `### Фаза ${p.index}: ${p.milestone}`,
+      '',
+      '| Issue | Что |',
+      '| --- | --- |',
+      rows,
+      '',
+    ].join('\n');
+  });
+
+  const body = [
+    `Реализует **${cfg.featureTitle}** целиком.`,
+    '',
+    'Каждая фаза влита в эту ветку отдельным merge-коммитом и помечена тегом',
+    `\`ralph/phase-N\` — до мержа в \`${base}\` фазы можно откатывать по одной.`,
+    '',
+    '**Мержить merge-коммитом, не squash** — иначе история по issue схлопнется.',
+    '',
+    ...sections,
+    '🤖 Generated with [Claude Code](https://claude.com/claude-code)',
+  ].join('\n');
+
+  git('push', '-u', 'origin', cfg.featureBranch);
+  const url = gh(
+    'pr',
+    'create',
+    '--base',
+    base,
+    '--head',
+    cfg.featureBranch,
+    '--title',
+    `feat: ${cfg.featureTitle}`,
+    '--body',
+    body,
+  ).stdout;
+  log(`✓ все фазы готовы · финальный PR открыт: ${url}`);
+  log('  мерж — за вами; оркестратор в master ничего не пишет');
 }
 
 // ─── dry run ───────────────────────────────────────────────────────────────────
 
 function printPlan(phases, cfg, base) {
   const perIssue = estimateIssueTokens();
-  const usingBaseline = perIssue === BASELINE_ISSUE_TOKENS;
-  let totalIssues = 0;
-  let totalTokens = 0;
-  let totalSessions = 0;
+  const baseline = perIssue === BASELINE_ISSUE_TOKENS;
+  let issues = 0;
+  let tokens = 0;
+  let sessions = 0;
   let planned = 0;
 
   console.log(
-    `\nЦелевая ветка: ${base}\nОценка: ${fmtTokens(perIssue)} на issue${usingBaseline ? ' (базовая линия, статистики пока нет)' : ' (медиана по ' + STATS_FILE + ')'}\n`,
+    `\nФича-ветка: ${cfg.featureBranch} → PR в ${base} (мержите вы)\n` +
+      `Оценка: ${fmtTokens(perIssue)} на issue${baseline ? ' (базовая линия, статистики пока нет)' : ` (медиана по ${STATS_FILE})`}\n`,
   );
 
   for (const phase of phases) {
     const open = openIssues(phase.milestone);
-    if (open.length === 0 && findPr(phase.branch, 'merged')) {
-      console.log(`  ⏭ ${phase.milestone} — уже завершена`);
+    if (open.length === 0 && phaseIsMerged(phase, cfg, base)) {
+      console.log(`  ⏭ ${phase.milestone} — уже влита`);
       continue;
     }
     planned++;
-    const tokens = perIssue * open.length + BASELINE_REVIEW_TOKENS;
-    const sessions = open.length * cfg.maxIssueAttempts + cfg.maxReviewRounds;
-    totalIssues += open.length;
-    totalTokens += tokens;
-    totalSessions += sessions;
+    const phaseTokens = perIssue * open.length + BASELINE_REVIEW_TOKENS;
+    const phaseSessions =
+      open.length * cfg.maxIssueAttempts + cfg.maxReviewRounds;
+    issues += open.length;
+    tokens += phaseTokens;
+    sessions += phaseSessions;
     console.log(
-      `  ${String(open.length).padStart(2)} issue  ~${fmtTokens(tokens).padStart(6)} вх  ≤ ${String(sessions).padStart(2)} сессий   ${phase.milestone}`,
+      `  ${String(open.length).padStart(2)} issue  ~${fmtTokens(phaseTokens).padStart(6)} вх  ≤ ${String(phaseSessions).padStart(2)} сессий   ${phase.milestone}`,
     );
   }
 
   console.log(
-    `\nИтого: ${planned} фаз, ${totalIssues} issue, ~${fmtTokens(totalTokens)} входных токенов, максимум ${totalSessions} сессий`,
+    `\nИтого: ${planned} фаз, ${issues} issue, ~${fmtTokens(tokens)} входных токенов, максимум ${sessions} сессий`,
   );
   console.log('Ни одна сессия не запущена.\n');
 }
@@ -836,6 +908,7 @@ async function main() {
   ).stdout;
   if (!base) fail('Не удалось определить дефолтную ветку через gh');
 
+  const allPhases = cfg.phases.map((p, i) => ({ ...p, index: i + 1 }));
   const phases = selectPhases(cfg, opts);
 
   if (opts.dryRun) {
@@ -879,7 +952,7 @@ async function main() {
   let executed = 0;
 
   log(
-    `▶ Ralph Loop · база ${base} · модели ${cfg.implModel}/${cfg.reviewModel} · maxTurns ${cfg.maxTurns}`,
+    `▶ Ralph Loop · фича-ветка ${cfg.featureBranch} · база ${base} · модели ${cfg.implModel}/${cfg.reviewModel} · maxTurns ${cfg.maxTurns}`,
   );
 
   try {
@@ -889,9 +962,9 @@ async function main() {
         break;
       }
       checkInterrupt();
-      const didWork = await runPhase(phase, cfg, opts, base, budget);
-      if (didWork) executed++;
+      if (await runPhase(phase, cfg, opts, base, budget)) executed++;
     }
+    maybeOpenFeaturePr(cfg, allPhases, base);
     log(
       `✔ прогон завершён · фаз выполнено ${executed} · issue закрыто ${budget.issuesClosed} · ${fmtTokens(budget.runTokens)} вх · $${budget.runCost.toFixed(2)} · ${fmtDuration(Date.now() - startedAt)}`,
     );
