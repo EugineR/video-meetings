@@ -82,10 +82,6 @@ ESLint (`eslint.config.mjs`) uses `typescript-eslint` recommendedTypeChecked + `
 - Generated client: `generated/prisma`-style output is not used here — the schema uses the classic `prisma-client-js` generator, so the client is generated into `node_modules/@prisma/client` and imported as `import { PrismaClient } from '@prisma/client'`.
 - Required env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (Postgres connection string — must match the credentials in the root `docker-compose.yml`/`​.env.example`) and `JWT_SECRET`. `PORT` (default `3001` in `.env`/`.env.example`) sets the HTTP listen port in `src/main.ts` — it must differ from `apps/web`'s port (3000) since both apps are run together via `pnpm dev`. `WEB_URL` (default `http://localhost:3000`) sets the allowed CORS origin in `src/main.ts` — it must match wherever `apps/web` is actually served from. `UPLOADS_DIR` (default `uploads`, relative to `apps/api/`) is where `StorageService` writes recording files — gitignored/dockerignored, created on demand. `MAX_UPLOAD_SIZE_BYTES` and `ALLOWED_RECORDING_MIME_TYPES` (comma-separated MIME list) enforce the upload route's size/type validation via `MeetingsModule`'s `MulterModule.registerAsync` config (`StorageService` itself doesn't check them — see the recording upload/delete bullet below).
 
-## Documentation
+## Recording upload research
 
-When this app's architecture changes (new modules, external services, commands), update this file and the root `CLAUDE.md`/`README.md` so they stay accurate.
-
-## File upload
-
-Use this research for it: @docs/meeting-recording-upload/research.md
+Design notes behind the recording upload flow: `docs/meeting-recording-upload/research.md`. Referenced by plain path on purpose — an `@` import would load all 15 KB of it into every session that touches this app.

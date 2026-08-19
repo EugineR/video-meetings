@@ -1,4 +1,4 @@
-    # CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -6,22 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 pnpm workspace monorepo (`pnpm-workspace.yaml`: `apps/*`) with two applications:
 
-- `apps/api` — NestJS backend (TypeScript). See `apps/api/CLAUDE.md`.
-- `apps/web` — Next.js frontend (TypeScript, App Router). See `apps/web/CLAUDE.md`.
+- `apps/api` — NestJS backend (TypeScript): an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings, plus upload/stream/delete one recording file per meeting), backed by Postgres via Prisma. See `apps/api/CLAUDE.md`.
+- `apps/web` — Next.js frontend (TypeScript, App Router) on Tailwind CSS v4 and HeroUI v3: `/register` and `/login`, a home page (`/`) listing the signed-in user's meetings, and `/meetings/{id}` with the meeting's details and its recording (player or uploader). Auth is client-side only, via a `localStorage`-stored JWT. See `apps/web/CLAUDE.md`.
 
-`apps/web` is wired up with Tailwind CSS v4 and the HeroUI v3 component library (`@heroui/react`), with `/register` and `/login` pages that call the API and a home page (`/`) that redirects unauthenticated visitors to `/login` (client-side, via a `localStorage`-stored JWT — see `apps/web/CLAUDE.md`); once signed in, the home page lists the user's meetings (all of them, plus the 3 most recent) fetched from the API, each row navigating to `/meetings/{id}` on click and showing an "Upload" button or a "Recording" badge depending on whether it has a recording. `/meetings/{id}` shows the meeting's details plus its recording — an upload area (`RecordingUploader`) when there is none, or a player with metadata and Replace/Delete actions (`RecordingCard`) when there is. `apps/api` now has an auth module (email/password register & login, JWT issuance) and a JWT-protected meetings module (create/list/get meetings, plus upload/stream/delete a recording file per meeting via local-disk `StorageService`), backed by Postgres via Prisma; see `apps/api/CLAUDE.md`. `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` (see `apps/web/CLAUDE.md`) — this is currently the only inter-app wiring.
+`apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` (see `apps/web/CLAUDE.md`) — this is currently the only inter-app wiring. Each app's own architecture is described in its own `CLAUDE.md`; don't restate it here.
 
 ## Commands
 
-Run from the repo root. Scripts use `pnpm -r` (all workspace packages) or `pnpm --filter <app>` (one package) under the hood.
-
-- `pnpm dev` / `pnpm dev:api` / `pnpm dev:web` — run dev server(s)
-- `pnpm build` / `pnpm build:api` / `pnpm build:web` — build
-- `pnpm lint` / `pnpm lint:api` / `pnpm lint:web` — lint
-- `pnpm test` / `pnpm test:api` — run tests (only `api` has a test suite; see `apps/api/CLAUDE.md` for running a single test)
-- `pnpm format` / `pnpm format:check` — Prettier across `apps/**/*.{ts,tsx,js,jsx,json,md}`
+Run from the repo root; the scripts themselves live in `package.json`. Each has `:api`/`:web` variants (`pnpm dev:api`, `pnpm lint:web`, …): `dev`, `build`, `lint`, `test` (only `api` has a test suite — see `apps/api/CLAUDE.md` for single-test and e2e invocations), plus `format` / `format:check` (Prettier over `apps/**`).
 
 Requires Node >= 20; package manager is pinned via `packageManager: pnpm@11.20.0`.
+
+## Token efficiency
+
+Prefer the narrow form of a command; read the part of a file you need, not the whole file.
+
+- `git diff --stat` first, then `git diff -- <path>` for the file that actually matters.
+- `git log --oneline -10` — never bare `git log`.
+- `gh issue list --json number,title,state --limit 20`; `gh pr view <n> --json title,body`.
+- Tests: run the narrowest scope — `pnpm test:api -- <name>.spec.ts`, or `-- -t "case name"`. The pre-commit hook runs the full suite anyway, so don't pre-run it.
+- Types: `pnpm --filter api exec tsc --noEmit 2>&1 | head -30` (errors print in source order — `head`, not `tail`).
+- `pnpm lint` runs ESLint with `--fix`; read its output instead of re-running it to confirm.
 
 ## Database
 
@@ -33,10 +38,7 @@ Root `.prettierrc` sets `singleQuote: true, trailingComma: "all"` and applies re
 
 ## Language
 
-Everything written into the repository is in English — code, comments, identifiers,
-commit messages, pull request bodies, documentation under `docs/`, and any console or log
-output a tool produces. The point is that anyone can pick the project up. A conversation
-with the author may happen in another language; that never changes what lands in the repo.
+Everything written into the repository is in English — code, comments, identifiers, commit messages, pull request bodies, documentation under `docs/`, and any console or log output a tool produces. A conversation with the author may happen in another language; that never changes what lands in the repo.
 
 ## Documentation
 
@@ -45,9 +47,9 @@ Whenever a change alters the project's architecture — new modules/services, ch
 - Root `README.md` and this `CLAUDE.md` for repo-wide structure, commands, or requirements.
 - `apps/api/CLAUDE.md` / `apps/web/CLAUDE.md` for changes scoped to one app's architecture or commands.
 
-Do not let these files describe a structure that no longer matches the code.
+Do not let these files describe a structure that no longer matches the code. This is the only place the rule is stated — the per-app files don't repeat it.
 
-Feature documentation lives in `docs/`, one folder per feature named after it in kebab-case (`docs/meeting-recording-upload/`), holding `prd.md`, `plan.md` and any research notes (`research.md`). Add new PRDs, plans and research to the matching feature folder rather than to `docs/` directly.
+Feature documentation lives in `docs/`, one folder per feature named after it in kebab-case (`docs/meeting-recording-upload/`), holding `prd.md`, `plan.md` and any research notes (`research.md`). Add new PRDs, plans and research to the matching feature folder rather than to `docs/` directly. Reference such a file by plain path, never with an `@` prefix — an `@path` is an inline import that loads the whole file into every session's context.
 
 ## Git workflow
 
