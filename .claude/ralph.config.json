@@ -8,6 +8,7 @@
   "maxTurns": 100,
   "maxIssueAttempts": 2,
   "maxReviewRounds": 3,
+  "maxRateLimitRetries": 3,
   "issueBudgetTokens": 6000000,
   "reviewBudgetTokens": 4000000,
   "stallSeconds": 120,

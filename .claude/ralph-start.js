@@ -229,6 +229,7 @@ function loadConfig(file) {
     maxTurns: cfg.maxTurns || 100,
     maxIssueAttempts: cfg.maxIssueAttempts || 2,
     maxReviewRounds: cfg.maxReviewRounds || 3,
+    maxRateLimitRetries: cfg.maxRateLimitRetries || 3,
     issueBudgetTokens: cfg.issueBudgetTokens || 6_000_000,
     reviewBudgetTokens: cfg.reviewBudgetTokens || 4_000_000,
     stallSeconds: cfg.stallSeconds || 120,
@@ -549,6 +550,16 @@ function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
  * Anything short of a clean completion must not be read as a verdict: an empty or
  * truncated reply would otherwise be indistinguishable from an approval.
  */
+/**
+ * True when the rate limit, not the task, ended the session. handleRateLimit has
+ * already waited for the reset by the time this is consulted.
+ */
+function abortedByRateLimit(st) {
+  const info = st.rateLimit;
+  if (!info || info.status === 'allowed') return false;
+  return st.terminalReason !== 'completed';
+}
+
 function sessionOutcome(st) {
   if (st.exitCode !== 0) return `exit code ${st.exitCode}`;
   if (st.isError) return 'the session reported an error';
@@ -833,6 +844,24 @@ async function drainIssues(phase, cfg, opts, budget) {
       continue;
     }
 
+    // A session the rate limit cut off did not fail at the task, it never got to
+    // finish it. Charging it an attempt means a limit arriving twice looks exactly
+    // like an issue that cannot be implemented.
+    if (abortedByRateLimit(st)) {
+      const aborts = (budget.limitAborts.get(issue.number) || 0) + 1;
+      budget.limitAborts.set(issue.number, aborts);
+      if (aborts > cfg.maxRateLimitRetries) {
+        throw new Stop(
+          `issue #${issue.number} was cut off by the rate limit ${aborts} times, stopping instead of retrying further`,
+        );
+      }
+      attempts.set(issue.number, attempt - 1);
+      log(
+        `~ issue #${issue.number} cut off by the rate limit, retrying without charging an attempt (${aborts}/${cfg.maxRateLimitRetries}) . ${summary}`,
+      );
+      continue;
+    }
+
     log(`- issue #${issue.number} still open . ${summary}`);
     if (issueTokens > cfg.issueBudgetTokens) {
       throw new Stop(
@@ -930,6 +959,7 @@ async function runPhase(phase, cfg, opts, base, budget) {
   }
 
   budget.attempts = new Map();
+  budget.limitAborts = new Map();
   budget.phaseTokens = 0;
   budget.phaseLimit =
     cfg.issueBudgetTokens * Math.max(1, openBefore.length) +
@@ -1167,6 +1197,7 @@ async function main() {
     phaseLimit: Infinity,
     perIssue: new Map(),
     attempts: new Map(),
+    limitAborts: new Map(),
   };
   const startedAt = Date.now();
   let executed = 0;
