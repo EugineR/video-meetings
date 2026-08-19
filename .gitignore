@@ -64,3 +64,9 @@ apps/api/uploads/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Ralph loop runtime state
+.claude/ralph.log
+.claude/ralph.stats.jsonl
+.claude/ralph.stop
+.claude/ralph.iterations.json

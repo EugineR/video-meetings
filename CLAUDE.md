@@ -31,6 +31,13 @@ Requires Node >= 20; package manager is pinned via `packageManager: pnpm@11.20.0
 
 Root `.prettierrc` sets `singleQuote: true, trailingComma: "all"` and applies repo-wide (each app also carries its own copy of the same config).
 
+## Language
+
+Everything written into the repository is in English — code, comments, identifiers,
+commit messages, pull request bodies, documentation under `docs/`, and any console or log
+output a tool produces. The point is that anyone can pick the project up. A conversation
+with the author may happen in another language; that never changes what lands in the repo.
+
 ## Documentation
 
 Whenever a change alters the project's architecture — new modules/services, changed repository structure, new inter-app wiring, new external dependencies (database, queue, third-party API), or new required commands/env vars — update the relevant documentation in the same change:
@@ -47,3 +54,9 @@ Feature documentation lives in `docs/`, one folder per feature named after it in
 - Group related changes into one logical commit instead of committing after every small step. For example, when adding several skills, stage and commit them together once the set is complete — don't create a separate commit per skill.
 - Do not `git push` unless the user explicitly asks for it in that turn. Committing locally does not imply permission to push; a prior push request does not carry over to later, unrelated changes.
 - Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test`, blocking the commit on lint errors or test failures.
+
+## Ralph loop
+
+`node .claude/ralph-start.js` drives an autonomous loop over a feature backlog: one Claude session per GitHub issue, one branch per phase, each phase reviewed and then merged `--no-ff` into a long-lived feature branch and tagged `ralph/phase-N`, so phases stay revertable while the feature is in progress. Phases are catalogued in `.claude/ralph.config.json`; which of them a given run executes is chosen with flags (`--dry-run`, `--phases N`, `--only`), never by editing the catalogue. Per-session rules for the implementing agent live in `.claude/ralph.md`.
+
+The orchestrator never writes to `master`: once every phase is merged it opens a single pull request for the whole feature and stops, leaving the merge to a human (with a merge commit, never a squash, so issue-level history survives). It owns the loop end to end — there is deliberately no Stop hook involved. Design rationale is in `docs/ralph-loop-rework/plan.md`, the developer guide in `docs/ralph-loop-rework/usage.md`. Runtime state (`ralph.log`, `ralph.stats.jsonl`, `ralph.stop`) is gitignored.

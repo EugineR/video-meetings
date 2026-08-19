@@ -1,14 +1,20 @@
 {
-  "enabledMcpjsonServers": ["playwright"],
+  "enabledMcpjsonServers": [
+    "playwright"
+  ],
+  "permissions": {
+    "allow": [
+      "Edit(*)",
+      "Write(*)",
+      "Bash(pnpm *)",
+      "Bash(npx prisma *)",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Skill(git-commit)",
+      "Skill(code-review)"
+    ]
+  },
   "hooks": {
-    "Stop": [
-      {
-        "hooks": [{
-          "type": "command",
-          "command": "node .claude/hooks/stop.js"
-        }]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|NotebookEdit",

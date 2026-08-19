@@ -1,40 +1,17 @@
 {
-  "active": true,
-  "maxIterations": 1,
-  "maxTurns": 50,
-  "prompt": "Read .claude/ralph.md and follow the rules from that file. Take the next open issue from milestone '{milestone}' and implement it in {branch}. Don't create create a PR - just close the issue",
-  "phases": [
-    {
-      "milestone": "Phase 1: Profile read & display name API (Tracer Bullet)",
-      "branch": "feature/profile-edit-phase-1"
-    },
-    {
-      "milestone": "Phase 2: Password change API",
-      "branch": "feature/profile-edit-phase-2"
-    },
-    {
-      "milestone": "Phase 3: Avatar storage & upload/delete API",
-      "branch": "feature/profile-edit-phase-3"
-    },
-    {
-      "milestone": "Phase 4: Avatar streaming & profile response integration",
-      "branch": "feature/profile-edit-phase-4"
-    },
-    {
-      "milestone": "Phase 5: Web API client, profile state & header identity",
-      "branch": "feature/profile-edit-phase-5"
-    },
-    {
-      "milestone": "Phase 6: Profile page",
-      "branch": "feature/profile-edit-phase-6"
-    },
-    {
-      "milestone": "Phase 7: Profile editing — display name & password",
-      "branch": "feature/profile-edit-phase-7"
-    },
-    {
-      "milestone": "Phase 8: Profile editing — avatar",
-      "branch": "feature/profile-edit-phase-8"
-    }
-  ]
+  "feature": "user-profile-page-and-editing",
+  "featureBranch": "feature/user-profile",
+  "featureTitle": "User profile page and editing",
+  "niceToHaveLabel": "nice-to-have",
+  "implModel": "sonnet",
+  "reviewModel": "opus",
+  "maxTurns": 100,
+  "maxIssueAttempts": 2,
+  "maxReviewRounds": 3,
+  "issueBudgetTokens": 6000000,
+  "reviewBudgetTokens": 4000000,
+  "stallSeconds": 120,
+  "onRateLimit": "wait",
+  "implPrompt": "Read .claude/ralph.md and follow the rules in that file. Implement GitHub issue #{issue} (\"{title}\") from milestone '{milestone}'. You are already on branch {branch}: work there, do not create or switch branches. When the work is done and all tests pass, commit it and close issue #{issue}. Do not open a pull request and do not start another issue.",
+  "reviewPrompt": "Review the work of milestone '{milestone}'. The diff to review is the output of `git diff {range}` - the phase branch {branch} against the feature branch {featureBranch}. Read the PRD and phase plan under docs/ for the feature, then check the diff for correctness, architecture, security, performance and test coverage.\n\nSort every finding into one of two buckets.\n\nBLOCKING - the phase must not ship with it: a bug, a security or data-integrity problem, a missing acceptance criterion, or a design decision that later phases would have to work around. File one GitHub issue per blocking finding in milestone '{milestone}', so the loop implements the fix, and end your reply with a line containing only BLOCKED.\n\nNON-BLOCKING - worth doing but not now: naming, small refactors, extra test cases, documentation polish. File one GitHub issue per finding with the label '{niceToHaveLabel}' and NO milestone, so it stays in the backlog for a separate pass and does not hold up this phase.\n\nWhen nothing is blocking, end your reply with a line containing only APPROVED - even if you filed nice-to-have issues. Be strict about the split: treating polish as blocking sends the loop into endless rework. Do not commit, push, merge or open a pull request."
 }
