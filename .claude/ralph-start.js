@@ -1187,6 +1187,16 @@ async function main() {
     return;
   }
 
+  // The orchestrator lives in .claude/, which is versioned per branch, and a finished
+  // run leaves the tree on a phase branch. Starting from there would silently execute
+  // that branch's older copy of this file and its config.
+  const current = git('rev-parse', '--abbrev-ref', 'HEAD').stdout;
+  if (current !== base) {
+    fail(
+      `Start the loop from ${base}, not ${current}. A previous run leaves the tree on its phase branch, and running from there would use that branch's copy of the orchestrator.`,
+    );
+  }
+
   const dirty = git('status', '--porcelain').stdout;
   if (dirty)
     fail(`Working tree is not clean - commit or stash first:\n${dirty}`);
