@@ -547,3 +547,129 @@ test('no test ever leaves a checkpoint in the repository', async () => {
   assert.equal(fs.existsSync(real), before, 'the repository checkout is untouched');
   assert.equal(fs.existsSync(`${real}.tmp`), false);
 });
+
+// ─── the branch a resume may start from ────────────────────────────────────────
+
+const CHECKPOINT = { branch: 'feature/user-profile-phase-4', stage: 'ISSUE_REVIEW', issue: 41 };
+
+test('the trunk is always a valid place to start', () => {
+  assert.equal(ralph.startupBranchRefusal('master', 'master', null, []), null);
+  assert.equal(ralph.startupBranchRefusal('master', 'master', CHECKPOINT, ['x']), null);
+});
+
+test('without a checkpoint a phase branch is still refused', () => {
+  // The original guard, unchanged: a finished run leaves the tree on a phase branch,
+  // and starting there would execute that branch's own older copy of the loop.
+  const refusal = ralph.startupBranchRefusal('feature/user-profile-phase-4', 'master', null, []);
+  assert.match(refusal, /Start the loop from master/);
+  assert.match(refusal, /that branch's copy of the orchestrator/);
+});
+
+test('a resume may start from the branch its own checkpoint names', () => {
+  // Why this exception has to exist: the interrupted issue's work is uncommitted on the
+  // phase branch, and git will not carry a file the trunk does not have back to the
+  // trunk. The canary stood at ISSUE_REVIEW with no way back except stashing away the
+  // very work the checkpoint was protecting.
+  assert.equal(
+    ralph.startupBranchRefusal('feature/user-profile-phase-4', 'master', CHECKPOINT, []),
+    null,
+  );
+});
+
+test('a resume is refused from a branch the checkpoint does not name', () => {
+  const refusal = ralph.startupBranchRefusal('feature/other-phase-2', 'master', CHECKPOINT, []);
+  assert.match(refusal, /belongs to feature\/user-profile-phase-4/);
+});
+
+test('a branch running its own copy of the loop is refused, and told what to do', () => {
+  const refusal = ralph.startupBranchRefusal(
+    'feature/user-profile-phase-4',
+    'master',
+    CHECKPOINT,
+    ['.claude/ralph-start.js'],
+  );
+  assert.match(refusal, /its own version of \.claude\/ralph-start\.js/);
+  assert.match(refusal, /Merge master into feature\/user-profile-phase-4 first/);
+});
+
+test('orchestratorDrift compares the files behaviour comes out of', () => {
+  // Against the real repository: HEAD and origin/master agree here, or the working
+  // branch is deliberately ahead - either way the answer must be a list, not a throw.
+  const drift = ralph.orchestratorDrift('master');
+  assert.ok(Array.isArray(drift));
+  for (const file of drift) assert.ok(ralph.ORCHESTRATOR_FILES.includes(file), file);
+});
+
+// ─── a resume must not move the ground under itself ────────────────────────────
+
+test('a checkpoint counts only while it has something at stake', () => {
+  const mid = { issue: 41, stage: 'ISSUE_REVIEW', commitSha: null };
+  assert.equal(ralph.checkpointAtStake(mid, LEFTOVERS), true, 'work in the tree');
+  assert.equal(ralph.checkpointAtStake(mid, ''), false, 'nothing left of it');
+  // A commit is at stake even with a clean tree: the issue still has to be closed.
+  assert.equal(
+    ralph.checkpointAtStake({ issue: 41, stage: 'CLOSE_ISSUE', commitSha: 'abc' }, ''),
+    true,
+  );
+  assert.equal(ralph.checkpointAtStake(null, LEFTOVERS), false);
+  assert.equal(ralph.checkpointAtStake({ stage: 'PHASE_REVIEW' }, LEFTOVERS), false);
+});
+
+/** Runs one phase far enough to see how it prepared the branches, then lets it stop. */
+async function phaseUpToDrain({ state, repo = {} }) {
+  const spawnSync = fakeRepo({ dirty: state ? LEFTOVERS : '', ...repo });
+  const paths = withTempPaths(ralph);
+  const loud = quiet();
+  const restore = withFakes(ralph, {
+    spawnSync,
+    spawn: fakeSpawn({ fixtures: ['session-impl', 'session-review-approved'] }),
+  });
+  if (state) fs.writeFileSync(paths.state, JSON.stringify(state));
+  try {
+    // --issues 0 stops it inside drainIssues, after the branch preparation under test.
+    await ralph
+      .runPhase(PHASE, config(), { issues: 0, stopOnLimit: false }, 'master', newBudget())
+      .catch(() => {});
+    return spawnSync.state;
+  } finally {
+    restore();
+    loud();
+    paths.restore();
+  }
+}
+
+const checkpointFor = (over) => ({
+  schemaVersion: 1,
+  feature: ralph.loadConfig('.claude/ralph.config.json').feature,
+  phase: PHASE.index,
+  milestone: PHASE.milestone,
+  branch: PHASE.branch,
+  issue: 41,
+  issueBaseSha: 'base00000000',
+  stage: 'ISSUE_REVIEW',
+  reviewRound: null,
+  commitSha: null,
+  commitSubject: null,
+  updatedAt: '2026-08-20T18:00:00.000Z',
+  ...over,
+});
+
+test('a phase resumed mid-issue does not merge the trunk in', async () => {
+  // The merges belong to the start of a phase. Run under an interrupted issue they move
+  // HEAD out from under the anchor the checkpoint measured that issue from, and the
+  // resume then refuses itself - which is what the canary hit twice.
+  const repo = await phaseUpToDrain({ state: checkpointFor() });
+  assert.deepEqual(repo.merges, [], `merged anyway: ${repo.merges.join(' | ')}`);
+});
+
+test('a phase with no live checkpoint prepares its branches as usual', async () => {
+  const repo = await phaseUpToDrain({ state: null });
+  assert.ok(repo.merges.length > 0, 'the trunk was never merged in');
+});
+
+test('a checkpoint with nothing left in the tree does not hold the phase back', async () => {
+  // Same checkpoint, empty tree: the phase must start normally rather than pin an
+  // anchor that no longer describes anything.
+  const repo = await phaseUpToDrain({ state: checkpointFor(), repo: { dirty: '' } });
+  assert.ok(repo.merges.length > 0, 'a spent checkpoint still blocked the merge');
+});

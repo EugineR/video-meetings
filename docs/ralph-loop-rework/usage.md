@@ -194,18 +194,37 @@ the issue:
 | `CLOSE_ISSUE` / `VERIFY_CLOSED`         | closes and verifies only; the commit already exists            |
 | the issue is already closed on GitHub   | marks it done; no model session at all                         |
 | `PHASE_REVIEW`                          | reviews the phase again (a phase review writes nothing)         |
-| `HEAD` is not where the checkpoint says | **stops**, with both SHAs in the message                        |
+| `HEAD` is not where the checkpoint says, and the checkpoint still has work or a commit at stake | **stops**, with both SHAs in the message |
+| `HEAD` has moved but the checkpoint left nothing behind | drops it and starts the issue from here |
 
 The checkpoint is deleted **only** after GitHub confirms the issue closed, or once the
-phase is merged. Two consequences worth knowing:
+phase is merged. Three consequences worth knowing:
 
 - **The tree may legitimately be dirty at startup.** The clean-tree guard is relaxed
   exactly when a checkpoint stands at a stage that leaves work in the tree (`IMPLEMENT`
   through `COMMIT`). At any other stage, or with no checkpoint at all, the loop still
-  refuses to start. The other half of that guard is unchanged: **start the loop from
-  `master`**, never from a phase branch, or it runs that branch's older copy of the
-  orchestrator. `git switch master` carries the uncommitted work across with you; the
-  checkpoint then explains it and the phase branch is re-entered with the work intact.
+  refuses to start.
+- **Resuming, you stay where the loop left you.** Normally you start a run from `master`
+  and nowhere else, or the loop executes the phase branch's own older copy of itself.
+  But an interrupted issue's work is uncommitted *on the phase branch*, and git will not
+  carry a file `master` does not have back to `master` — which is every issue that adds
+  one. So a run may also start from the branch its own checkpoint names, and the loop
+  checks what the guard was really protecting: that `.claude/ralph-start.js`,
+  `.claude/ralph.config.json` and `.claude/ralph.md` on that branch are the same
+  versions `master` has. If they are not, it refuses and tells you to merge `master` in
+  first.
+
+  ```
+  | resuming on feature/user-profile-phase-4: its 3 orchestrator files match master
+    mid-issue: leaving feature/user-profile-phase-4 where the checkpoint left it, no trunk merge
+  ```
+
+  The trunk merge is skipped on purpose while an issue is open: it would move `HEAD` out
+  from under the commit the checkpoint measured that issue's diff from, and the resume
+  would then refuse itself. The merges happen at the start of the next phase.
+- **A stale checkpoint does not hold a phase back.** One that left no commit and has
+  nothing in the tree is not contradicted by a moved `HEAD` — it is just older than the
+  branch — so the loop says so, drops it and starts the phase normally.
 - **A checkpoint whose work has been thrown away is noticed.** If you read the leftovers
   and discard them, the next run finds nothing in the tree and implements the issue again
   rather than reviewing an empty diff.

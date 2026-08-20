@@ -39,7 +39,12 @@ function fakeRepo(opts = {}) {
     stateAfterClose: opts.stateAfterClose || 'CLOSED',
     commits: [],
     gateRuns: [],
+    merges: [],
     calls: [],
+    // Which refs exist, matched as substrings: the phase branch does, its tag does not,
+    // so a phase reads as unfinished rather than already merged.
+    refs: opts.refs || ['refs/heads/'],
+    merged: !!opts.merged,
   };
 
   const fn = (file, args = []) => {
@@ -50,7 +55,18 @@ function fakeRepo(opts = {}) {
     if (file === 'git') {
       const [verb] = argv;
       if (verb === 'rev-parse' && argv.includes('--abbrev-ref')) return ok(state.branch);
+      // `--verify --quiet <ref>` is refExists, and answering "yes" to everything makes a
+      // phase look already merged, which silently skips the code under test.
+      if (verb === 'rev-parse' && argv.includes('--verify')) {
+        const ref = argv[argv.length - 1];
+        return state.refs.some((r) => ref.includes(r)) ? ok(state.head) : bad('');
+      }
       if (verb === 'rev-parse') return ok(state.head);
+      if (verb === 'merge-base') return state.merged ? ok() : bad('');
+      if (verb === 'merge') {
+        state.merges.push(line);
+        return ok();
+      }
       if (verb === 'status') return ok(state.dirty);
       if (verb === 'add') return ok();
       if (verb === 'diff') return ok(state.files.join('\n'));
