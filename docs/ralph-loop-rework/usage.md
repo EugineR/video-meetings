@@ -60,18 +60,23 @@ node .claude/ralph-start.js --dry-run
 ```
 
 ```
-Feature branch: feature/user-profile -> pull request into master (you merge it)
-Estimate: 1.80M per issue (baseline, no stats yet)
+Feature "user-profile-page-and-editing" on feature/user-profile -> pull request into master (you merge it)
+Per issue:  $2.02 (median of 10 across 14 sessions)
+Per review: $1.36 (median of 5 from .claude/ralph.stats.jsonl)
 
   = Phase 1: Profile read & display name API (Tracer Bullet) - already merged
-   5 issues  ~13.00M in  <= 13 sessions   Phase 2: Password change API
-   5 issues  ~13.00M in  <= 13 sessions   Phase 3: Avatar storage & upload/delete API
-   2 issues  ~ 7.60M in  <=  7 sessions   Phase 6: Profile page
+   5 issues  ~$ 11.45  ~23.76M gross  <= 13 sessions   Phase 4: Avatar streaming & profile response integration
+   2 issues  ~$  5.39  ~11.90M gross  <=  7 sessions   Phase 6: Profile page
    ...
 
-Total: 7 phases, 32 issues, ~85.60M input tokens, at most 85 sessions
+Total: 5 phases, 22 issues, ~$51.20, ~106.92M gross input, at most 59 sessions
 No session was started.
 ```
+
+The per-issue figure is a median over *issues*, not sessions: an issue that took two attempts is
+charged both, which is why it reads "10 across 14 sessions". Plan with the dollars. The token
+column is gross — it includes cache reads, billed at a fraction of the input price — and is there
+only for scale.
 
 ### 2. Run as many phases as you can spare the limit for
 
@@ -86,10 +91,10 @@ Phases that are already done are skipped and do not count against `--phases`.
 ```
 [14:23:05] > Phase 2 "Password change API" . branch feature/user-profile-phase-2 . 5 open issue(s) . budget 42.00M
 [14:23:05] > issue #31 "Add ChangePasswordCommand" . attempt 1/2 . sonnet . maxTurns 100
-[14:23:41]   . 6 turns . 210k in . 1.8k out . Bash: pnpm --filter api test
-[14:26:30] + issue #31 closed . 24 turns . 1.9M in . 3m25s . completed . run total 1.9M
+[14:23:41]   . 6 events . 210k gross in . Bash: pnpm --filter api test
+[14:26:30] + issue #31 closed . $1.66 . 3m25s . 24 req . 1.9M gross in . completed . run total $1.66
 [14:41:02] > phase review . round 1/3 . opus
-[14:44:10]   review: APPROVED . 31 turns . 2.4M in . 3m08s
+[14:44:10]   review: APPROVED . $1.36 . 31 req . 3m08s
 [14:46:55] + phase 2 merged into feature/user-profile . tag ralph/user-profile/phase-2 . 13.1M
 ```
 
@@ -163,12 +168,14 @@ what is already done.
 Two files, both gitignored:
 
 - **`.claude/ralph.log`** — a copy of the console output. Read it to see what happened and where it stopped.
-- **`.claude/ralph.stats.jsonl`** — one JSON row per session (`kind`, `phase`, `issue`, `terminalReason`, `turns`, `inputTokens`, `outputTokens`, `costUsd`, `durationMs`). This is what `--dry-run` derives its median from.
+- **`.claude/ralph.stats.jsonl`** — one JSON row per session. `schemaVersion: 2` rows carry `kind`, `phase`, `issue`, `stage`, `model`, `effort`, `terminalReason`, `assistantEvents`, `apiRequests`, `inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, `grossInputTokens`, `outputTokens`, `forkedEvents`, `costUsd`, `usageQuality`, `durationMs`, `exitCode` and the rate-limit state. This is what `--dry-run` derives its median from.
+
+  Rows written before the telemetry fix have no `schemaVersion` and are read as v1: their `inputTokens` was the gross all-three sum and is normalised into `grossInputTokens`, the fields v1 never knew come back `null`, and their usage is marked `estimated` because it double-counted re-emitted messages. **Their `costUsd` is correct** — it always came straight from the CLI — so cost comparisons may span both schemas while token comparisons may not.
 
 Spend per phase:
 
 ```bash
-jq -s 'group_by(.phase) | map({phase: .[0].phase, tokens: (map(.inputTokens) | add), cost: (map(.costUsd) | add)})' .claude/ralph.stats.jsonl
+jq -s 'group_by(.phase) | map({phase: .[0].phase, cost: (map(.costUsd) | add), gross: (map(.grossInputTokens // .inputTokens) | add)})' .claude/ralph.stats.jsonl
 ```
 
 ---
@@ -211,7 +218,8 @@ a milestone of their own and add it to the phase catalogue.
 ## Common traps
 
 - **Do not edit `phases` in the config to limit a run** — that is what `--phases` is for. Editing it is how seven phases once vanished from the catalogue.
-- **Do not raise `maxTurns` "just in case".** 100 is already double the observed 28–42 turns. 500 lets a single session drain the whole five-hour window.
+- **Do not raise `maxTurns` "just in case".** 500 lets a single session drain the whole five-hour window. Note the `apiRequests` in the stats is not the same quantity `--max-turns` limits, so do not calibrate one against the other by eye.
+- **Do not read the token counts as money.** `grossInputTokens` includes cache reads, which are billed at a fraction of the input price. `costUsd` is the figure to plan with, and it is the one the loop's caps and estimates use.
 - **`/model opus` in an interactive session does not affect the loop** — the models are set explicitly in the config (`implModel`, `reviewModel`). That is deliberate: the loop used to inherit the interactive default silently and ran twice as expensive.
 - **The orchestrator never merges into `master`.** The final pull request stays open until you decide; merge it **with a merge commit, not a squash**, or the per-issue history collapses.
 - **One feature at a time.** Parallel runs collide over the working tree, the database and the shared rate limit — see §12 in [plan.md](./plan.md).

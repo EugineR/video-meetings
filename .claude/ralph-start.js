@@ -34,6 +34,11 @@ const paths = {
 const BASELINE_ISSUE_TOKENS = 1_800_000;
 const BASELINE_REVIEW_TOKENS = 4_000_000;
 
+// Measured over issues #31-#40, see docs/ralph-loop-cost/research.md §1. Cost is the
+// only figure the old telemetry got right, so these are real numbers rather than guesses.
+const BASELINE_ISSUE_COST_USD = 2.02;
+const BASELINE_REVIEW_COST_USD = 1.23;
+
 let stopRequested = false;
 let currentChild = null;
 let currentKill = null;
@@ -851,6 +856,49 @@ function estimateIssueTokens() {
   return samples[Math.floor(samples.length / 2)];
 }
 
+function median(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/**
+ * Median dollar cost of past work of one kind.
+ *
+ * costUsd is the one quantity a v1 and a v2 row both state correctly - it always came
+ * straight from the CLI's own total_cost_usd - so unlike the token counts the whole
+ * file can be used. Three samples is the point at which a median beats the baseline.
+ *
+ * `perIssue` groups the sessions of one issue together first. Four of the ten issues on
+ * record took two sessions, so a median over rows answers "what does a session cost"
+ * when the question the plan is asking is "what does an issue cost" - $1.71 against the
+ * $2.02 actually spent.
+ */
+function estimateCost(kind, fallbackUsd, { perIssue = false } = {}) {
+  const rows = readStatsRows().filter((r) => r.kind === kind && r.costUsd > 0);
+
+  let samples;
+  if (perIssue) {
+    const byIssue = new Map();
+    for (const r of rows) {
+      const key = r.issue === null || r.issue === undefined ? r.at : r.issue;
+      byIssue.set(key, (byIssue.get(key) || 0) + r.costUsd);
+    }
+    samples = [...byIssue.values()];
+  } else {
+    samples = rows.map((r) => r.costUsd);
+  }
+
+  const mid = samples.length >= 3 ? median(samples) : null;
+  return {
+    usd: mid === null ? fallbackUsd : mid,
+    samples: samples.length,
+    sessions: rows.length,
+    fromBaseline: mid === null,
+    legacyOnly: rows.length > 0 && rows.every((r) => r.schemaVersion === 1),
+  };
+}
+
 function fillPrompt(template, values) {
   let out = template;
   for (const [key, value] of Object.entries(values)) {
@@ -1328,16 +1376,36 @@ function maybeOpenFeaturePr(cfg, allPhases, base) {
 // ─── dry run ───────────────────────────────────────────────────────────────────
 
 function printPlan(phases, cfg, base) {
-  const perIssue = estimateIssueTokens();
-  const baseline = perIssue === BASELINE_ISSUE_TOKENS;
+  const issueCost = estimateCost('impl', BASELINE_ISSUE_COST_USD, {
+    perIssue: true,
+  });
+  const reviewCost = estimateCost('phase-review', BASELINE_REVIEW_COST_USD);
+  const perIssueTokens = estimateIssueTokens();
   let issues = 0;
+  let usd = 0;
   let tokens = 0;
   let sessions = 0;
   let planned = 0;
 
+  const provenance = (e) => {
+    if (e.fromBaseline) return `baseline, ${e.samples} sample(s)`;
+    const source =
+      e.samples === e.sessions
+        ? `median of ${e.samples} from ${paths.stats}`
+        : `median of ${e.samples} across ${e.sessions} sessions`;
+    // Worth saying out loud: the legacy rows' token counts are unusable, but their
+    // cost came from the CLI and is directly comparable with a v2 row's.
+    return e.legacyOnly ? `${source}, all legacy v1 rows - cost is still comparable` : source;
+  };
+
   console.log(
-    `\nFeature "${cfg.feature}" on ${cfg.featureBranch} -> pull request into ${base} (you merge it)\n` +
-      `Estimate: ${fmtTokens(perIssue)} per issue${baseline ? ' (baseline, no stats yet)' : ` (median from ${paths.stats})`}\n`,
+    [
+      '',
+      `Feature "${cfg.feature}" on ${cfg.featureBranch} -> pull request into ${base} (you merge it)`,
+      `Per issue:  $${issueCost.usd.toFixed(2)} (${provenance(issueCost)})`,
+      `Per review: $${reviewCost.usd.toFixed(2)} (${provenance(reviewCost)})`,
+      '',
+    ].join('\n'),
   );
 
   for (const phase of phases) {
@@ -1347,21 +1415,27 @@ function printPlan(phases, cfg, base) {
       continue;
     }
     planned++;
-    const phaseTokens = perIssue * open.length + BASELINE_REVIEW_TOKENS;
+    const phaseUsd = issueCost.usd * open.length + reviewCost.usd;
+    const phaseTokens = perIssueTokens * open.length + BASELINE_REVIEW_TOKENS;
     const phaseSessions =
       open.length * cfg.maxIssueAttempts + cfg.maxReviewRounds;
     issues += open.length;
+    usd += phaseUsd;
     tokens += phaseTokens;
     sessions += phaseSessions;
     console.log(
-      `  ${String(open.length).padStart(2)} issues  ~${fmtTokens(phaseTokens).padStart(6)} in  <= ${String(phaseSessions).padStart(2)} sessions   ${phase.milestone}`,
+      `  ${String(open.length).padStart(2)} issues  ~$${phaseUsd.toFixed(2).padStart(6)}  ~${fmtTokens(phaseTokens).padStart(6)} gross  <= ${String(phaseSessions).padStart(2)} sessions   ${phase.milestone}`,
     );
   }
 
   console.log(
-    `\nTotal: ${planned} phases, ${issues} issues, ~${fmtTokens(tokens)} input tokens, at most ${sessions} sessions`,
+    [
+      '',
+      `Total: ${planned} phases, ${issues} issues, ~$${usd.toFixed(2)}, ~${fmtTokens(tokens)} gross input, at most ${sessions} sessions`,
+      'No session was started.',
+      '',
+    ].join('\n'),
   );
-  console.log('No session was started.\n');
 }
 
 // ─── main ──────────────────────────────────────────────────────────────────────
@@ -1471,13 +1545,13 @@ async function main() {
     }
     maybeOpenFeaturePr(cfg, allPhases, base);
     log(
-      `= run finished . ${executed} phase(s) . ${budget.issuesClosed} issue(s) closed . ${fmtTokens(budget.runTokens)} in . $${budget.runCost.toFixed(2)} . ${fmtDuration(Date.now() - startedAt)}`,
+      `= run finished . $${budget.runCost.toFixed(2)} . ${executed} phase(s) . ${budget.issuesClosed} issue(s) closed . ${fmtTokens(budget.runTokens)} gross in . ${fmtDuration(Date.now() - startedAt)}`,
     );
   } catch (err) {
     if (!(err instanceof Stop)) throw err;
     log(`!! STOPPED: ${err.message}`);
     log(
-      `  run so far: ${executed} phase(s) . ${budget.issuesClosed} issue(s) . ${fmtTokens(budget.runTokens)} in . $${budget.runCost.toFixed(2)} . ${fmtDuration(Date.now() - startedAt)}`,
+      `  run so far: $${budget.runCost.toFixed(2)} . ${executed} phase(s) . ${budget.issuesClosed} issue(s) . ${fmtTokens(budget.runTokens)} gross in . ${fmtDuration(Date.now() - startedAt)}`,
     );
     log(
       `  branch ${git('rev-parse', '--abbrev-ref', 'HEAD').stdout} left as is; re-running picks up from here`,
@@ -1519,6 +1593,8 @@ module.exports = {
   deniedTools,
   buildStatsRow,
   estimateIssueTokens,
+  estimateCost,
+  median,
   phaseTag,
   shimSpawnArgs,
   fmtTokens,
