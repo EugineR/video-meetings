@@ -175,17 +175,23 @@ function shimSpawnArgs(file, args) {
     const text = String(a);
     return safe.test(text) ? text : '"' + text.split('"').join('""') + '"';
   });
-  // The whole command line gets one more pair of quotes around it. With /s, cmd.exe
-  // strips the first quote and the LAST quote on the line and runs what is left
-  // verbatim - so without the wrapper it eats a quote belonging to an argument. That
-  // is not theoretical: `--tools "Bash,PowerShell,..."` made cmd read
-  // `claude" -p ... --tools "Bash` as the program name and the first real run died
-  // before it started. It stayed hidden while every argument happened to be
-  // quote-free, because then the only quotes on the line were the pair around the
-  // program name.
+  // Two cmd.exe rules pull in opposite directions here, and both cost a canary run.
+  //
+  // With /s, cmd strips the first quote and the LAST quote on the line and runs the
+  // rest verbatim. So the whole line is wrapped in a pair of quotes of our own: without
+  // it, cmd ate the closing quote of an argument instead - `--tools "Bash,..."` made it
+  // read `claude" -p ... --tools "Bash` as the program name, and nothing ran.
+  //
+  // The program name itself is left unquoted. `claude` and `pnpm` are batch shims, and
+  // a batch file invoked with a quoted name resolves %~dp0 against the current
+  // directory rather than its own: pnpm.CMD then looked for corepack inside the
+  // repository and every gate step died with "Cannot find module". A name that would
+  // not survive unquoted - one with a space in it - is quoted anyway, because not
+  // running at all is worse; no shim in this repository has one.
+  const program = /^[^\s"]+$/.test(String(file)) ? String(file) : `"${file}"`;
   return [
     process.env.ComSpec || 'cmd.exe',
-    ['/d', '/s', '/c', `""${file}" ${quoted.join(' ')}"`],
+    ['/d', '/s', '/c', `"${program} ${quoted.join(' ')}"`],
     { windowsVerbatimArguments: true },
   ];
 }
@@ -1481,7 +1487,14 @@ function runIssueGate(cfg, files) {
     });
     if (r.error || r.status !== 0) {
       const output = r.error ? r.error.message : `${r.stdout || ''}\n${r.stderr || ''}`;
-      log(`  x gate ${step.name} failed`);
+      // The reason goes to the repair session either way, but it used to go only
+      // there: a gate that failed for an environmental reason - a broken shim, a
+      // container that is not up - looked exactly like code that does not compile,
+      // and the log said nothing at all.
+      log(`  x gate ${step.name} failed: ${[step.run[0], ...args].join(' ').slice(0, 100)}`);
+      for (const line of tailOf(output, 12, 1200).split('\n')) {
+        if (line.trim()) log(`    ${line}`);
+      }
       return {
         step: step.name,
         command: [step.run[0], ...args].join(' '),
