@@ -247,6 +247,13 @@ function loadConfig(file) {
     maxRateLimitRetries: cfg.maxRateLimitRetries || 3,
     issueBudgetTokens: cfg.issueBudgetTokens || 6_000_000,
     reviewBudgetTokens: cfg.reviewBudgetTokens || 4_000_000,
+    // Effort is explicit per stage rather than inherited.
+    implEffort: cfg.implEffort || 'medium',
+    reviewEffort: cfg.reviewEffort || 'high',
+    // Runaway detectors, not throttles: the dearest healthy session on record cost
+    // $4.42, so these sit well above it and only catch a session that has lost its way.
+    implMaxCostUsd: cfg.implMaxCostUsd || 6,
+    phaseReviewMaxCostUsd: cfg.phaseReviewMaxCostUsd || 4,
     stallSeconds: cfg.stallSeconds || 120,
     allowedTools: cfg.allowedTools || [
       'Bash',
@@ -533,7 +540,15 @@ function applyStreamEvent(st, ev) {
  * Runs one `claude -p` session. The prompt goes through stdin, so no shell escaping
  * is involved and the hook-payload leak of the old Stop hook cannot recur.
  */
-function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
+function runSession({
+  model,
+  maxTurns,
+  prompt,
+  stallSeconds,
+  allowedTools,
+  effort,
+  maxCostUsd,
+}) {
   return new Promise((resolve) => {
     const args = [
       '-p',
@@ -544,13 +559,29 @@ function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
       model,
       '--max-turns',
       String(maxTurns),
-      // A session runs unattended, so a permission prompt simply kills it. The
-      // allow-list in settings.json cannot cover this: Claude Code requires every
-      // component of a compound command to be permitted, and no list anticipates the
-      // shapes a session produces - the first live run died on `echo "---UPSTREAM---"`.
-      '--allowedTools',
-      ...allowedTools,
+      // Moves cwd, env info and git status out of the system prompt. A loop spawns
+      // dozens of sessions against the same repository, so keeping the cached prefix
+      // identical between them is free.
+      '--exclude-dynamic-system-prompt-sections',
     ];
+
+    // Effort was previously whatever a session inherited; a reviewer that quietly
+    // thought less than intended is not a reviewer anyone can rely on.
+    if (effort) args.push('--effort', effort);
+
+    // The only limit that bites while the session is still running. Everything else -
+    // the token budget, the attempt counter - is checked once the session is already
+    // over and the money already spent.
+    if (maxCostUsd) args.push('--max-budget-usd', String(maxCostUsd));
+
+    // Must stay last: --allowedTools is variadic, so any flag after it would be
+    // swallowed as another tool name.
+    //
+    // A session runs unattended, so a permission prompt simply kills it. The
+    // allow-list in settings.json cannot cover this: Claude Code requires every
+    // component of a compound command to be permitted, and no list anticipates the
+    // shapes a session produces - the first live run died on `echo "---UPSTREAM---"`.
+    args.push('--allowedTools', ...allowedTools);
     const [file, spawnArgs, extra] = shimSpawnArgs('claude', args);
     const child = runtime.spawn(file, spawnArgs, {
       stdio: ['pipe', 'pipe', 'inherit'],
@@ -1001,6 +1032,8 @@ async function drainIssues(phase, cfg, opts, budget) {
       maxTurns: cfg.maxTurns,
       stallSeconds: cfg.stallSeconds,
       allowedTools: cfg.allowedTools,
+      effort: cfg.implEffort,
+      maxCostUsd: cfg.implMaxCostUsd,
       prompt: fillPrompt(cfg.implPrompt, {
         milestone: phase.milestone,
         branch: phase.branch,
@@ -1101,6 +1134,8 @@ async function reviewPhase(phase, cfg, opts, budget) {
       maxTurns: cfg.maxTurns,
       stallSeconds: cfg.stallSeconds,
       allowedTools: cfg.allowedTools,
+      effort: cfg.reviewEffort,
+      maxCostUsd: cfg.phaseReviewMaxCostUsd,
       prompt: fillPrompt(cfg.reviewPrompt, {
         milestone: phase.milestone,
         branch: phase.branch,
@@ -1421,7 +1456,7 @@ async function main() {
   let executed = 0;
 
   log(
-    `> Ralph Loop . feature "${cfg.feature}" . branch ${cfg.featureBranch} . trunk ${base} . models ${cfg.implModel}/${cfg.reviewModel} . maxTurns ${cfg.maxTurns}`,
+    `> Ralph Loop . feature "${cfg.feature}" . branch ${cfg.featureBranch} . trunk ${base} . models ${cfg.implModel}/${cfg.reviewModel} . effort ${cfg.implEffort}/${cfg.reviewEffort} . cost cap $${cfg.implMaxCostUsd}/$${cfg.phaseReviewMaxCostUsd} per session`,
   );
   ensureNiceToHaveLabel(cfg.niceToHaveLabel);
 
