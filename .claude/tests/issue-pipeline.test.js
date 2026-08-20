@@ -36,6 +36,7 @@ const newBudget = () => ({
   attempts: new Map(),
   limitAborts: new Map(),
   baseSha: new Map(),
+  done: new Set(),
 });
 
 /**
