@@ -223,3 +223,12 @@ a milestone of their own and add it to the phase catalogue.
 - **`/model opus` in an interactive session does not affect the loop** — the models are set explicitly in the config (`implModel`, `reviewModel`). That is deliberate: the loop used to inherit the interactive default silently and ran twice as expensive.
 - **The orchestrator never merges into `master`.** The final pull request stays open until you decide; merge it **with a merge commit, not a squash**, or the per-issue history collapses.
 - **One feature at a time.** Parallel runs collide over the working tree, the database and the shared rate limit — see §12 in [plan.md](./plan.md).
+
+## Effort
+
+`implEffort` and `reviewEffort` are not set. Effort has never been configured for this
+repository, so every session so far ran at the CLI's own default — which the CLI does not
+document. Setting a level would change both the cost and the quality of every session against a
+baseline nobody has measured, so the keys exist and are wired through to `--effort`, but stay
+unset until there is telemetry to compare against. Set one deliberately, one stage at a time, and
+compare `costUsd` and the blocking findings before and after.

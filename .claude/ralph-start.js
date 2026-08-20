@@ -252,9 +252,13 @@ function loadConfig(file) {
     maxRateLimitRetries: cfg.maxRateLimitRetries || 3,
     issueBudgetTokens: cfg.issueBudgetTokens || 6_000_000,
     reviewBudgetTokens: cfg.reviewBudgetTokens || 4_000_000,
-    // Effort is explicit per stage rather than inherited.
-    implEffort: cfg.implEffort || 'medium',
-    reviewEffort: cfg.reviewEffort || 'high',
+    // Opt-in, and deliberately not defaulted. Effort has never been set for this
+    // repository, so every session so far ran at the CLI's own default - which the
+    // CLI does not document. Picking a value here would silently change both the cost
+    // and the quality of every session against an unknown baseline. The plumbing is
+    // ready; choose a level once there is v2 telemetry to compare against.
+    implEffort: cfg.implEffort || null,
+    reviewEffort: cfg.reviewEffort || null,
     // Runaway detectors, not throttles: the dearest healthy session on record cost
     // $4.42, so these sit well above it and only catch a session that has lost its way.
     implMaxCostUsd: cfg.implMaxCostUsd || 6,
@@ -1530,7 +1534,7 @@ async function main() {
   let executed = 0;
 
   log(
-    `> Ralph Loop . feature "${cfg.feature}" . branch ${cfg.featureBranch} . trunk ${base} . models ${cfg.implModel}/${cfg.reviewModel} . effort ${cfg.implEffort}/${cfg.reviewEffort} . cost cap $${cfg.implMaxCostUsd}/$${cfg.phaseReviewMaxCostUsd} per session`,
+    `> Ralph Loop . feature "${cfg.feature}" . branch ${cfg.featureBranch} . trunk ${base} . models ${cfg.implModel}/${cfg.reviewModel} . effort ${cfg.implEffort || 'default'}/${cfg.reviewEffort || 'default'} . cost cap $${cfg.implMaxCostUsd}/$${cfg.phaseReviewMaxCostUsd} per session`,
   );
   ensureNiceToHaveLabel(cfg.niceToHaveLabel);
 
