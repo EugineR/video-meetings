@@ -32,6 +32,13 @@ let currentKill = null;
 
 class Stop extends Error {}
 
+/**
+ * The only door to the outside world. Tests swap these for fakes and drive the whole
+ * orchestrator without a real claude, git, gh or pnpm; production never touches the
+ * fields. Keeping it one object means a test cannot forget to stub one of the two.
+ */
+const runtime = { spawn, spawnSync };
+
 // ─── infrastructure ────────────────────────────────────────────────────────────
 
 function fail(message) {
@@ -80,7 +87,7 @@ function sleep(ms) {
  * itself (milestone titles contain spaces and `&`). Only .cmd shims need cmd.exe.
  */
 function exec(file, args, { allowFail = false } = {}) {
-  const r = spawnSync(file, args, {
+  const r = runtime.spawnSync(file, args, {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -378,6 +385,63 @@ function describeTool(part) {
   return part.name + (text ? ': ' + text : '');
 }
 
+function newSessionStats() {
+  return {
+    turns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cost: 0,
+    terminalReason: null,
+    denials: [],
+    rateLimit: null,
+    resultText: '',
+    isError: false,
+    lastTool: null,
+  };
+}
+
+/** A stream-json line, or null for a blank or malformed one - never a throw. */
+function parseStreamLine(line) {
+  if (!line.trim()) return null;
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Folds one stream-json event into the session stats. Split out from runSession so the
+ * accounting can be driven by a recorded stream in a test: runSession owns the
+ * transport, this owns the arithmetic, and neither needs the other to be exercised.
+ */
+function applyStreamEvent(st, ev) {
+  if (!ev || typeof ev !== 'object') return;
+
+  if (ev.type === 'rate_limit_event' && ev.rate_limit_info) {
+    st.rateLimit = ev.rate_limit_info;
+  }
+  if (ev.type === 'assistant' && ev.message) {
+    st.turns++;
+    const u = ev.message.usage || {};
+    st.inputTokens +=
+      (u.input_tokens || 0) +
+      (u.cache_creation_input_tokens || 0) +
+      (u.cache_read_input_tokens || 0);
+    st.outputTokens += u.output_tokens || 0;
+    for (const part of ev.message.content || []) {
+      if (part.type === 'tool_use') st.lastTool = describeTool(part);
+    }
+  }
+  if (ev.type === 'result') {
+    st.terminalReason = st.terminalReason || ev.terminal_reason || null;
+    st.denials = ev.permission_denials || [];
+    st.cost = ev.total_cost_usd || 0;
+    st.isError = !!ev.is_error;
+    st.resultText = typeof ev.result === 'string' ? ev.result : '';
+  }
+}
+
 /**
  * Runs one `claude -p` session. The prompt goes through stdin, so no shell escaping
  * is involved and the hook-payload leak of the old Stop hook cannot recur.
@@ -401,7 +465,7 @@ function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
       ...allowedTools,
     ];
     const [file, spawnArgs, extra] = shimSpawnArgs('claude', args);
-    const child = spawn(file, spawnArgs, {
+    const child = runtime.spawn(file, spawnArgs, {
       stdio: ['pipe', 'pipe', 'inherit'],
       ...extra,
     });
@@ -430,18 +494,7 @@ function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
     currentKill = killTree;
 
     const started = Date.now();
-    const st = {
-      turns: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cost: 0,
-      terminalReason: null,
-      denials: [],
-      rateLimit: null,
-      resultText: '',
-      isError: false,
-      lastTool: null,
-    };
+    const st = newSessionStats();
 
     let lastEventAt = Date.now();
     let stallWarned = false;
@@ -499,41 +552,19 @@ function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
       const lines = buffer.split('\n');
       buffer = lines.pop();
       for (const line of lines) {
-        if (!line.trim()) continue;
-        let ev;
-        try {
-          ev = JSON.parse(line);
-        } catch {
-          continue;
-        }
+        const ev = parseStreamLine(line);
+        if (!ev) continue;
+        applyStreamEvent(st, ev);
 
-        if (ev.type === 'rate_limit_event' && ev.rate_limit_info) {
-          st.rateLimit = ev.rate_limit_info;
-        }
-        if (ev.type === 'assistant' && ev.message) {
-          st.turns++;
-          const u = ev.message.usage || {};
-          st.inputTokens +=
-            (u.input_tokens || 0) +
-            (u.cache_creation_input_tokens || 0) +
-            (u.cache_read_input_tokens || 0);
-          st.outputTokens += u.output_tokens || 0;
-          for (const part of ev.message.content || []) {
-            if (part.type === 'tool_use') st.lastTool = describeTool(part);
-          }
-          if (Date.now() - lastPrintAt > 20000) {
-            lastPrintAt = Date.now();
-            log(
-              `  . ${st.turns} turns . ${fmtTokens(st.inputTokens)} in . ${fmtTokens(st.outputTokens)} out . ${st.lastTool || '...'}`,
-            );
-          }
-        }
-        if (ev.type === 'result') {
-          st.terminalReason = st.terminalReason || ev.terminal_reason || null;
-          st.denials = ev.permission_denials || [];
-          st.cost = ev.total_cost_usd || 0;
-          st.isError = !!ev.is_error;
-          st.resultText = typeof ev.result === 'string' ? ev.result : '';
+        if (
+          ev.type === 'assistant' &&
+          ev.message &&
+          Date.now() - lastPrintAt > 20000
+        ) {
+          lastPrintAt = Date.now();
+          log(
+            `  . ${st.turns} turns . ${fmtTokens(st.inputTokens)} in . ${fmtTokens(st.outputTokens)} out . ${st.lastTool || '...'}`,
+          );
         }
       }
     });
@@ -601,8 +632,8 @@ function readVerdict(text) {
   return tokens[tokens.length - 1];
 }
 
-function recordStats(kind, phase, issueNumber, st) {
-  const row = {
+function buildStatsRow(kind, phase, issueNumber, st) {
+  return {
     at: new Date().toISOString(),
     kind,
     phase: phase.milestone,
@@ -615,6 +646,10 @@ function recordStats(kind, phase, issueNumber, st) {
     durationMs: st.durationMs,
     exitCode: st.exitCode,
   };
+}
+
+function recordStats(kind, phase, issueNumber, st) {
+  const row = buildStatsRow(kind, phase, issueNumber, st);
   try {
     fs.appendFileSync(STATS_FILE, JSON.stringify(row) + '\n');
   } catch {
@@ -784,7 +819,7 @@ function runGreenGate() {
   for (const task of ['lint', 'test']) {
     log(`  running pnpm ${task}`);
     const [file, args, extra] = shimSpawnArgs('pnpm', [task]);
-    const r = spawnSync(file, args, {
+    const r = runtime.spawnSync(file, args, {
       stdio: ['ignore', 'inherit', 'inherit'],
       ...extra,
     });
@@ -1257,4 +1292,35 @@ async function main() {
   }
 }
 
-main().catch((err) => fail(err.stack || String(err)));
+// ─── entry point ───────────────────────────────────────────────────────────────
+
+/**
+ * Only the CLI runs the loop. Requiring this file must stay inert: the tests import it
+ * to exercise the accounting and the state rules, and an import that parsed argv or
+ * reached for GitHub would make that impossible.
+ */
+if (require.main === module) {
+  main().catch((err) => fail(err.stack || String(err)));
+}
+
+module.exports = {
+  runtime,
+  parseArgs,
+  loadConfig,
+  fillPrompt,
+  describeTool,
+  newSessionStats,
+  parseStreamLine,
+  applyStreamEvent,
+  readVerdict,
+  sessionOutcome,
+  abortedByRateLimit,
+  deniedTools,
+  buildStatsRow,
+  estimateIssueTokens,
+  phaseTag,
+  shimSpawnArgs,
+  fmtTokens,
+  fmtDuration,
+  main,
+};
