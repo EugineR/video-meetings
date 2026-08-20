@@ -1,22 +1,30 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Patch,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { CommandBus, QueryBus } from '@nestjs/cqrs';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AccessTokenResponse } from '../auth/interfaces/access-token-response.interface';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { ChangePasswordCommand } from './commands/change-password.command';
+import { DeleteAvatarCommand } from './commands/delete-avatar.command';
 import { UpdateProfileCommand } from './commands/update-profile.command';
+import { UploadAvatarCommand } from './commands/upload-avatar.command';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { AvatarResponse } from './interfaces/avatar-response.interface';
 import { ProfileResponse } from './interfaces/profile-response.interface';
 import { GetProfileQuery } from './queries/get-profile.query';
 
@@ -56,5 +64,25 @@ export class UsersController {
     return this.commandBus.execute(
       new ChangePasswordCommand(user.sub, dto.currentPassword, dto.newPassword),
     );
+  }
+
+  @Post('me/avatar')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('file'))
+  uploadAvatar(
+    @CurrentUser() user: JwtPayload,
+    @UploadedFile() file?: Express.Multer.File,
+  ): Promise<AvatarResponse> {
+    if (!file) {
+      throw new BadRequestException('file is required');
+    }
+
+    return this.commandBus.execute(new UploadAvatarCommand(user.sub, file));
+  }
+
+  @Delete('me/avatar')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  deleteAvatar(@CurrentUser() user: JwtPayload): Promise<void> {
+    return this.commandBus.execute(new DeleteAvatarCommand(user.sub));
   }
 }
