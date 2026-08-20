@@ -72,7 +72,10 @@ Enforce that at the CLI, not only in the prompt (all verified on 2.1.237):
 - `--tools` to limit the built-in set — note this limits **availability**, whereas `--allowedTools`
   only grants permission;
 - Playwright only for web/e2e issues that actually need it. Backend storage, schema and unit issues
-  must not see browser tools.
+  must not see browser tools. `--tools` cannot do this: Playwright is an MCP server, and an MCP
+  tool the human's `settings.local.json` already permits is never checked against
+  `--allowedTools` either. Only `--strict-mcp-config`, with no `--mcp-config` to point at, removes
+  it — see the phase 5 note below.
 
 Be careful when narrowing the tool list: `drainIssues` currently **stops the whole run** when a
 session is denied a tool and does not complete. Narrow the tools and update the prompt in the same
@@ -285,6 +288,26 @@ $5.87 including the phase review. Three things it proved that the canary could n
 
 It also found the fourth defect: the reviewer's findings never reached the log, so a block
 could not be judged after the fact. Fixed in `0de014f`.
+
+### What phase 5 found
+
+The read-only reviewer of issue #49 opened a browser, drove the running dev server and
+saved `appheader-review.png` into the repository root. The tree-change guard caught it and
+stopped the phase — correctly, but the reviewer should never have had the browser.
+
+Three CLI facts collided:
+
+1. `--tools` limits the **built-in** set. Playwright is an MCP server, so it is untouched.
+2. `--allowedTools` is not consulted for a tool the human's own `.claude/settings.local.json`
+   has already added to `permissions.allow` — every `mcp__playwright__*` tool was there.
+3. The existing test asserted only that `playwright` is absent from the reviewer's argv,
+   which was true the whole time. The tool never came from the argv.
+
+`--strict-mcp-config` with no `--mcp-config` loads no MCP server at all; measured on the
+installed CLI, a session's tool list drops from 55 to 31 and every Playwright tool
+disappears. It is now passed to the issue reviewer and the phase review always, and to the
+implementation and repair sessions unless the issue carries a browser label — so 24 tool
+definitions also leave the system prompt of most sessions.
 
 ### Still open
 
