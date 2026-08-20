@@ -1704,6 +1704,21 @@ async function settleSession(st, cfg, opts, what, budget) {
  * honour it: the retry inside drainIssues after a rate limit, and the next process.
  */
 async function runIssue(phase, cfg, opts, budget, issue) {
+  // One authoritative read before anything is spent. The list an issue came from can be
+  // seconds behind - GitHub handed this loop back an issue it had just closed itself -
+  // and an issue somebody closed by hand needs no session at all.
+  if (issueState(issue) === 'CLOSED') {
+    const saved = stateFor(cfg, phase);
+    const mine = saved && saved.issue === issue.number ? saved : null;
+    if (mine) clearState();
+    return {
+      status: 'closed',
+      note: mine && mine.commitSha
+        ? `already committed as ${mine.commitSha.slice(0, 8)} and closed`
+        : 'already closed on GitHub',
+    };
+  }
+
   const ctx = prepareIssue(phase, cfg, budget, issue);
 
   const mark = (stage, extra) => {
@@ -1754,14 +1769,10 @@ async function runIssue(phase, cfg, opts, budget, issue) {
 
   // Work that is already committed is never done twice. GitHub is asked first: an issue
   // somebody closed by hand while the loop was down needs no work at all.
+  // An issue already closed on GitHub never gets this far - the check at the top of this
+  // function returns before anything is read or spent - so what is left here is a commit
+  // that exists with the issue still open.
   if (resume && resume.commitSha) {
-    if (issueState(issue) === 'CLOSED') {
-      clearState();
-      return {
-        status: 'closed',
-        note: `already committed as ${resume.commitSha.slice(0, 8)} and closed`,
-      };
-    }
     log(
       `~ resuming issue #${issue.number} at CLOSE_ISSUE - it is committed as ${resume.commitSha.slice(0, 8)}, only the close is left`,
     );
@@ -1956,7 +1967,13 @@ async function runIssue(phase, cfg, opts, budget, issue) {
 /** Runs the issue pipeline until the milestone has no open issues left. */
 async function drainIssues(phase, cfg, opts, budget) {
   const attempts = budget.attempts;
-  let open = openIssues(phase.milestone);
+  // GitHub's issue list lags behind a close by seconds. The loop closed #42, asked for
+  // the open issues, was handed #42 again, and spent two sessions re-implementing work
+  // that was already committed - each of which correctly changed nothing, so the issue
+  // then read as one that could not be implemented at all. What this run has closed and
+  // verified is not something to ask GitHub about twice.
+  const settled = () => openIssues(phase.milestone).filter((i) => !budget.done.has(i.number));
+  let open = settled();
 
   while (open.length > 0) {
     checkInterrupt();
@@ -2000,11 +2017,13 @@ async function drainIssues(phase, cfg, opts, budget) {
       attempts.set(issue.number, 0);
       budget.baseSha.delete(issue.number);
       budget.issuesClosed++;
+      budget.done.add(issue.number);
       log(`+ issue #${issue.number} closed . ${summary}`);
       if (overBudget) throw budgetStop();
-      // GitHub stays the source of truth even though the orchestrator did the closing:
-      // re-reading also picks up an issue somebody closed by hand meanwhile.
-      open = openIssues(phase.milestone);
+      // GitHub stays the source of truth for what is left - re-reading picks up an issue
+      // somebody closed by hand, or one the phase review filed - minus what this run has
+      // already finished, which no list is going to tell it about sooner than it knows.
+      open = settled();
       continue;
     }
 
@@ -2155,6 +2174,7 @@ async function runPhase(phase, cfg, opts, base, budget) {
   budget.attempts = new Map();
   budget.limitAborts = new Map();
   budget.baseSha = new Map();
+  if (!budget.done) budget.done = new Set();
   budget.phaseTokens = 0;
 
   // A checkpoint for this phase carries the anchor its issue was measured from. Seeding
@@ -2504,6 +2524,9 @@ async function main() {
     limitAborts: new Map(),
     baseSha: new Map(),
     rateLimitWaits: 0,
+    // Issues this run closed and verified. A list that has not caught up yet does not
+    // get to reopen the question.
+    done: new Set(),
   };
   const startedAt = Date.now();
   let executed = 0;

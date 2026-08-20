@@ -41,6 +41,10 @@ function fakeRepo(opts = {}) {
     gateRuns: [],
     merges: [],
     calls: [],
+    closed: new Set(),
+    // Keeps a closed issue on the open list, the way GitHub's own list does for a few
+    // seconds after a close.
+    listLag: !!opts.listLag,
     // Which refs exist, matched as substrings: the phase branch does, its tag does not,
     // so a phase reads as unfinished rather than already merged.
     refs: opts.refs || ['refs/heads/'],
@@ -85,12 +89,14 @@ function fakeRepo(opts = {}) {
     if (file === 'gh') {
       if (line.includes('issue list')) return ok(JSON.stringify(state.open));
       if (line.includes('issue view') && line.includes('--json state')) {
-        // Still on the open list means still open on GitHub. A resume asks this before
-        // it closes anything, so answering CLOSED unconditionally would hide the very
-        // path being tested.
+        // The authoritative single-issue read, which is not the same thing as the list:
+        // GitHub's list lags behind a close by seconds, and `listLag` reproduces that.
         const number = Number(argv[2]);
-        const open = state.open.some((i) => i.number === number);
-        return ok(JSON.stringify({ state: open ? 'OPEN' : state.stateAfterClose }));
+        return ok(
+          JSON.stringify({
+            state: state.closed.has(number) ? state.stateAfterClose : 'OPEN',
+          }),
+        );
       }
       if (line.includes('issue view')) {
         return ok(
@@ -103,7 +109,8 @@ function fakeRepo(opts = {}) {
       if (line.includes('issue close')) {
         if (state.closeFails) return bad('HTTP 403: Resource not accessible');
         const number = Number(argv[2]);
-        state.open = state.open.filter((i) => i.number !== number);
+        state.closed.add(number);
+        if (!state.listLag) state.open = state.open.filter((i) => i.number !== number);
         return ok();
       }
       return ok('[]');
