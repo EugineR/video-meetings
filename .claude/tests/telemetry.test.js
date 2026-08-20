@@ -217,3 +217,55 @@ test('a mixed file never averages a v1 and a v2 token count together', () => {
 test('a missing stats file is empty, not a crash', () => {
   assert.deepEqual(ralph.readStatsRows('.claude/tests/fixtures/does-not-exist.jsonl'), []);
 });
+
+const withStats = (fixture, fn) => {
+  const path = require('node:path');
+  const original = ralph.paths.stats;
+  ralph.paths.stats = path.join(__dirname, 'fixtures', fixture);
+  try {
+    return fn();
+  } finally {
+    ralph.paths.stats = original;
+  }
+};
+
+test('the per-issue estimate groups an issue that took several sessions', () => {
+  withStats('stats-per-issue.jsonl', () => {
+    // Issue 32 cost $1 then $3. Per session the samples are 1, 1, 3, 9 - median 2.
+    // Per issue they are 1, 4, 9 - median 4, which is what an issue actually costs.
+    const perSession = ralph.estimateCost('impl', 0);
+    assert.equal(perSession.samples, 4);
+    assert.equal(perSession.usd, 3);
+
+    const perIssue = ralph.estimateCost('impl', 0, { perIssue: true });
+    assert.equal(perIssue.samples, 3, 'three issues');
+    assert.equal(perIssue.sessions, 4, 'across four sessions');
+    assert.equal(perIssue.usd, 4, 'the retry is charged to its issue');
+  });
+});
+
+test('an estimate falls back to the baseline below three samples', () => {
+  withStats('stats-per-issue.jsonl', () => {
+    const review = ralph.estimateCost('phase-review', 1.23);
+    assert.equal(review.samples, 1);
+    assert.equal(review.fromBaseline, true);
+    assert.equal(review.usd, 1.23);
+  });
+});
+
+test('cost estimates may use legacy rows, and say when they do', () => {
+  withStats('stats-mixed.jsonl', () => {
+    const impl = ralph.estimateCost('impl', 99, { perIssue: true });
+    // Only two impl issues in that fixture, so the baseline still wins...
+    assert.equal(impl.fromBaseline, true);
+    // ...but the rows were readable, which is the point: costUsd is correct in v1 too.
+    assert.equal(impl.sessions, 2);
+    assert.equal(impl.legacyOnly, false, 'one v1 row and one v2 row');
+  });
+});
+
+test('median is the middle sample, and empty is null', () => {
+  assert.equal(ralph.median([]), null);
+  assert.equal(ralph.median([5]), 5);
+  assert.equal(ralph.median([9, 1, 4]), 4, 'sorts before picking');
+});
