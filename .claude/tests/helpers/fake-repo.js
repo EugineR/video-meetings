@@ -69,7 +69,12 @@ function fakeRepo(opts = {}) {
     if (file === 'gh') {
       if (line.includes('issue list')) return ok(JSON.stringify(state.open));
       if (line.includes('issue view') && line.includes('--json state')) {
-        return ok(JSON.stringify({ state: state.stateAfterClose }));
+        // Still on the open list means still open on GitHub. A resume asks this before
+        // it closes anything, so answering CLOSED unconditionally would hide the very
+        // path being tested.
+        const number = Number(argv[2]);
+        const open = state.open.some((i) => i.number === number);
+        return ok(JSON.stringify({ state: open ? 'OPEN' : state.stateAfterClose }));
       }
       if (line.includes('issue view')) {
         return ok(
@@ -119,9 +124,11 @@ function withTempPaths(ralph) {
   ralph.paths.log = path.join(dir, 'ralph.log');
   ralph.paths.stats = path.join(dir, 'ralph.stats.jsonl');
   ralph.paths.stop = path.join(dir, 'ralph.stop');
+  ralph.paths.state = path.join(dir, 'ralph.state.json');
   return {
     dir,
     stats: ralph.paths.stats,
+    state: ralph.paths.state,
     restore() {
       Object.assign(ralph.paths, original);
       fs.rmSync(dir, { recursive: true, force: true });
