@@ -17,10 +17,18 @@ const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 
 const CONFIG_DEFAULT = '.claude/ralph.config.json';
-const LOG_FILE = '.claude/ralph.log';
-const STATS_FILE = '.claude/ralph.stats.jsonl';
-const STOP_FILE = '.claude/ralph.stop';
 const IS_WIN = process.platform === 'win32';
+
+/**
+ * Where the run's own state lives. Mutable so a test can point the whole lot at a
+ * temporary directory: a suite that appended to the real ralph.stats.jsonl would
+ * corrupt the very baseline the loop is measured against.
+ */
+const paths = {
+  log: '.claude/ralph.log',
+  stats: '.claude/ralph.stats.jsonl',
+  stop: '.claude/ralph.stop',
+};
 
 // Baseline from docs/ralph-loop-rework/plan.md §3, used until ralph.stats.jsonl has samples.
 const BASELINE_ISSUE_TOKENS = 1_800_000;
@@ -50,7 +58,7 @@ function log(line) {
   const text = `[${new Date().toTimeString().slice(0, 8)}] ${line}`;
   console.log(text);
   try {
-    fs.appendFileSync(LOG_FILE, text + '\n');
+    fs.appendFileSync(paths.log, text + '\n');
   } catch {
     /* logging must never break a run */
   }
@@ -160,7 +168,7 @@ Phases accumulate on the feature branch, each as a merge commit with a tag - tho
 are the rollback points. Nothing is merged into the default branch: once every phase is
 done the loop opens a single pull request and stops.
 
-To stop: Ctrl-C (graceful), Ctrl-C twice (immediate), or create ${STOP_FILE}.
+To stop: Ctrl-C (graceful), Ctrl-C twice (immediate), or create ${paths.stop}.
 `);
 }
 
@@ -757,7 +765,7 @@ function buildStatsRow(kind, phase, issueNumber, st, meta = {}) {
  * make a legacy row look like an enormous non-cached input. Its usage is marked
  * `estimated` because the underlying number double-counted re-emitted messages.
  */
-function readStatsRows(file = STATS_FILE) {
+function readStatsRows(file = paths.stats) {
   if (!fs.existsSync(file)) return [];
   return fs
     .readFileSync(file, 'utf8')
@@ -791,7 +799,7 @@ function readStatsRows(file = STATS_FILE) {
 function recordStats(kind, phase, issueNumber, st, meta) {
   const row = buildStatsRow(kind, phase, issueNumber, st, meta);
   try {
-    fs.appendFileSync(STATS_FILE, JSON.stringify(row) + '\n');
+    fs.appendFileSync(paths.stats, JSON.stringify(row) + '\n');
   } catch {
     /* not critical */
   }
@@ -845,7 +853,7 @@ async function handleRateLimit(st, cfg, opts) {
 
 function checkInterrupt() {
   if (stopRequested) throw new Stop('stopped by Ctrl-C');
-  if (fs.existsSync(STOP_FILE)) throw new Stop(`found ${STOP_FILE}, stopping`);
+  if (fs.existsSync(paths.stop)) throw new Stop(`found ${paths.stop}, stopping`);
 }
 
 // ─── branches ──────────────────────────────────────────────────────────────────
@@ -1029,9 +1037,21 @@ async function drainIssues(phase, cfg, opts, budget) {
     const closed = !stillOpen.has(issue.number);
     const summary = `$${st.cost.toFixed(2)} . ${fmtDuration(st.durationMs)} . ${st.apiRequests} req . ${fmtTokens(st.grossInputTokens)} gross in . ${st.terminalReason || 'no result event'} . run total $${budget.runCost.toFixed(2)}`;
 
+    // The budget applies however the session ended. It used to be checked only after
+    // the closed and rate-limited branches had already continued, which is how issue
+    // #40 ran to 15.6M against a 6M cap without a word: it closed, so nothing measured
+    // it. An issue that only just made it is exactly the signal that the next one
+    // will not.
+    const budgetStop = () =>
+      new Stop(
+        `issue #${issue.number} used ${fmtTokens(issueTokens)} of its ${fmtTokens(cfg.issueBudgetTokens)} budget, it probably needs splitting`,
+      );
+    const overBudget = issueTokens > cfg.issueBudgetTokens;
+
     if (closed) {
       attempts.set(issue.number, 0);
       log(`+ issue #${issue.number} closed . ${summary}`);
+      if (overBudget) throw budgetStop();
       continue;
     }
 
@@ -1050,18 +1070,15 @@ async function drainIssues(phase, cfg, opts, budget) {
       log(
         `~ issue #${issue.number} cut off by the rate limit, retrying without charging an attempt (${aborts}/${cfg.maxRateLimitRetries}) . ${summary}`,
       );
+      if (overBudget) throw budgetStop();
       continue;
     }
 
     log(`- issue #${issue.number} still open . ${summary}`);
-    if (issueTokens > cfg.issueBudgetTokens) {
-      throw new Stop(
-        `issue #${issue.number} is over budget (${fmtTokens(issueTokens)} of ${fmtTokens(cfg.issueBudgetTokens)}), it probably needs splitting`,
-      );
-    }
+    if (overBudget) throw budgetStop();
     if (attempt >= cfg.maxIssueAttempts) {
       throw new Stop(
-        `issue #${issue.number} is not progressing after ${attempt} attempts, check ${STATS_FILE} and the issue comments`,
+        `issue #${issue.number} is not progressing after ${attempt} attempts, check ${paths.stats} and the issue comments`,
       );
     }
   }
@@ -1122,7 +1139,7 @@ async function reviewPhase(phase, cfg, opts, budget) {
       // reply no verdict could be read from, leaves nothing the loop could act on.
       if (verdict !== 'APPROVED') {
         throw new Stop(
-          `review returned ${verdict} and filed no issue, phase "${phase.milestone}" is not merged - see ${LOG_FILE}`,
+          `review returned ${verdict} and filed no issue, phase "${phase.milestone}" is not merged - see ${paths.log}`,
         );
       }
       return;
@@ -1285,7 +1302,7 @@ function printPlan(phases, cfg, base) {
 
   console.log(
     `\nFeature "${cfg.feature}" on ${cfg.featureBranch} -> pull request into ${base} (you merge it)\n` +
-      `Estimate: ${fmtTokens(perIssue)} per issue${baseline ? ' (baseline, no stats yet)' : ` (median from ${STATS_FILE})`}\n`,
+      `Estimate: ${fmtTokens(perIssue)} per issue${baseline ? ' (baseline, no stats yet)' : ` (median from ${paths.stats})`}\n`,
   );
 
   for (const phase of phases) {
@@ -1341,8 +1358,8 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const cfg = loadConfig(opts.config);
 
-  if (fs.existsSync(STOP_FILE))
-    fail(`Found ${STOP_FILE} - remove it to start the loop`);
+  if (fs.existsSync(paths.stop))
+    fail(`Found ${paths.stop} - remove it to start the loop`);
   if (!cfg.implPrompt || !cfg.reviewPrompt)
     fail(`${opts.config} has no implPrompt / reviewPrompt`);
 
@@ -1447,6 +1464,7 @@ if (require.main === module) {
 
 module.exports = {
   runtime,
+  paths,
   parseArgs,
   loadConfig,
   fillPrompt,
@@ -1458,6 +1476,8 @@ module.exports = {
   currentGrossInput,
   readStatsRows,
   runSession,
+  drainIssues,
+  recordStats,
   readVerdict,
   sessionOutcome,
   abortedByRateLimit,
