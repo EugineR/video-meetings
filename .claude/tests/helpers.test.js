@@ -103,6 +103,16 @@ test('fillPrompt leaves an unknown placeholder alone rather than blanking it', (
   assert.equal(out, 'on x for {unknown}');
 });
 
+test('fillPrompt does not substitute inside a value it already filled in', () => {
+  // Issue bodies go into prompts now, and a body is written by whoever filed the
+  // issue. A second pass over the result would let it fill slots of its own.
+  const out = ralph.fillPrompt('body: {body} on {branch}', {
+    body: 'see {branch} and {issue}',
+    branch: 'phase-4',
+  });
+  assert.equal(out, 'body: see {branch} and {issue} on phase-4');
+});
+
 test('describeTool summarises the tool call for the progress line', () => {
   assert.equal(
     ralph.describeTool({ name: 'Bash', input: { command: 'pnpm test:api' } }),
