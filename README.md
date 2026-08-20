@@ -85,8 +85,13 @@ Root `.prettierrc` sets `singleQuote: true, trailingComma: "all"` and applies re
 
 ## Git hooks
 
-[Husky](https://typicode.github.io/husky/) is installed (`prepare` script, runs automatically on `pnpm install`). A `pre-commit` hook (`.husky/pre-commit`) runs `pnpm lint && pnpm test` before every commit, blocking it on lint errors or test failures.
+[Husky](https://typicode.github.io/husky/) is installed (`prepare` script, runs automatically on `pnpm install`). A `pre-commit` hook (`.husky/pre-commit`) runs `pnpm lint && pnpm test && pnpm test:ralph && pnpm check:links` before every commit, blocking it on lint errors, test failures or a broken documentation link.
 
 ## Development with Claude Code
 
 This repo carries `CLAUDE.md` guidance files (root and per-app) plus vendored skills under `.claude/skills` for working with [Claude Code](https://claude.ai/code).
+
+Those guidance files stay small on purpose — an agent loads them before it does anything. The per-file reference material lives beside them, read on demand rather than resident:
+
+- `docs/architecture/api.md` / `docs/architecture/web.md` — every module, page, component and library file
+- `docs/testing/api.md` / `docs/testing/web.md` — what the suites cover, and how a UI change is verified

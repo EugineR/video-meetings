@@ -47,17 +47,17 @@ Everything written into the repository is in English — code, comments, identif
 Whenever a change alters the project's architecture — new modules/services, changed repository structure, new inter-app wiring, new external dependencies (database, queue, third-party API), or new required commands/env vars — update the relevant documentation in the same change:
 
 - Root `README.md` and this `CLAUDE.md` for repo-wide structure, commands, or requirements.
-- `apps/api/CLAUDE.md` / `apps/web/CLAUDE.md` for changes scoped to one app's architecture or commands.
+- `apps/api/CLAUDE.md` / `apps/web/CLAUDE.md` for changes scoped to one app's architecture or commands. Those two carry rules, boundaries and invariants only; the per-file inventories live in `docs/architecture/` and `docs/testing/`, because an instruction file is loaded into every session whether it is needed or not. A statement belongs in the instruction file only if it is a rule an agent could not derive from the code.
 
 Do not let these files describe a structure that no longer matches the code. This is the only place the rule is stated — the per-app files don't repeat it.
 
-Feature documentation lives in `docs/`, one folder per feature named after it in kebab-case (`docs/meeting-recording-upload/`), holding `prd.md`, `plan.md` and any research notes (`research.md`). Add new PRDs, plans and research to the matching feature folder rather than to `docs/` directly. Reference such a file by plain path, never with an `@` prefix — an `@path` is an inline import that loads the whole file into every session's context.
+Feature documentation lives in `docs/`, one folder per feature named after it in kebab-case (`docs/meeting-recording-upload/`), holding `prd.md`, `plan.md` and any research notes (`research.md`). Add new PRDs, plans and research to the matching feature folder rather than to `docs/` directly. Reference such a file by plain path, never with an `@` prefix — an `@path` is an inline import that loads the whole file into every session's context. The one exception is `@AGENTS.md` in `apps/web/CLAUDE.md`, which `next dev` regenerates on its own. `pnpm check:links` (run by the pre-commit hook) checks that every markdown link and backticked `.md` path resolves.
 
 ## Git workflow
 
 - Group related changes into one logical commit instead of committing after every small step. For example, when adding several skills, stage and commit them together once the set is complete — don't create a separate commit per skill.
 - Do not `git push` unless the user explicitly asks for it in that turn. Committing locally does not imply permission to push; a prior push request does not carry over to later, unrelated changes.
-- Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test && pnpm test:ralph`, blocking the commit on lint errors or test failures.
+- Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test && pnpm test:ralph && pnpm check:links`, blocking the commit on lint errors, test failures or a broken documentation link.
 
 ## Ralph loop
 
