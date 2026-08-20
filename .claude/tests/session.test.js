@@ -120,6 +120,41 @@ test('effort and the cost cap are omitted rather than passed empty', async () =>
   }
 });
 
+test('runSession can limit the built-in tool set and disable skills', async () => {
+  const spawn = fakeSpawn({ fixture: 'session-completed' });
+  const restore = withFakes(ralph, { spawn });
+  try {
+    await session({
+      tools: ['Read', 'Grep', 'Glob', 'Bash'],
+      disallowedTools: ['Task', 'Skill'],
+      disableSlashCommands: true,
+    });
+    const flat = spawn.calls[0].args.join(' ');
+    // Comma-joined, so each variadic flag consumes exactly one argument. On Windows
+    // the shim quotes it, which is the same single argument once cmd.exe has parsed it.
+    assert.match(flat, /--tools "?Read,Grep,Glob,Bash"?/);
+    assert.match(flat, /--disallowedTools "?Task,Skill"?/);
+    assert.match(flat, /--disable-slash-commands/);
+    assert.equal((flat.match(/--tools/g) || []).length, 1, 'the list is one argument');
+  } finally {
+    restore();
+  }
+});
+
+test('an unrestricted session passes no tool-limiting flag at all', async () => {
+  const spawn = fakeSpawn({ fixture: 'session-completed' });
+  const restore = withFakes(ralph, { spawn });
+  try {
+    await session({ tools: [], disallowedTools: [], disableSlashCommands: false });
+    const flat = spawn.calls[0].args.join(' ');
+    assert.doesNotMatch(flat, /--tools/);
+    assert.doesNotMatch(flat, /--disallowedTools/);
+    assert.doesNotMatch(flat, /--disable-slash-commands/);
+  } finally {
+    restore();
+  }
+});
+
 test('--allowedTools stays last, because it is variadic', async () => {
   // Anything after it would be read as another tool name and silently swallowed.
   const spawn = fakeSpawn({ fixture: 'session-completed' });
@@ -128,6 +163,9 @@ test('--allowedTools stays last, because it is variadic', async () => {
     await session({
       effort: 'high',
       maxCostUsd: 4,
+      tools: ['Read', 'Grep', 'Bash'],
+      disallowedTools: ['Task', 'Skill'],
+      disableSlashCommands: true,
       allowedTools: ['Read', 'Grep', 'Bash'],
     });
     const argv = spawn.calls[0].args;

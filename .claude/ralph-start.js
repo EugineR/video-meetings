@@ -555,6 +555,9 @@ function runSession({
   prompt,
   stallSeconds,
   allowedTools,
+  tools,
+  disallowedTools,
+  disableSlashCommands,
   effort,
   maxCostUsd,
 }) {
@@ -573,6 +576,18 @@ function runSession({
       // identical between them is free.
       '--exclude-dynamic-system-prompt-sections',
     ];
+
+    // --tools decides which built-in tools exist at all; --allowedTools only grants
+    // permission for tools the session can already see. Only the first can keep a
+    // reviewer read-only or stop an implementation session forking a subagent. Both
+    // are variadic, so each value is joined with commas into a single argument.
+    if (tools && tools.length > 0) args.push('--tools', tools.join(','));
+    if (disallowedTools && disallowedTools.length > 0) {
+      args.push('--disallowedTools', disallowedTools.join(','));
+    }
+    // Skills are the other door to a subagent: /code-review forked one per issue and
+    // it was the single most expensive thing in a session.
+    if (disableSlashCommands) args.push('--disable-slash-commands');
 
     // Effort was previously whatever a session inherited; a reviewer that quietly
     // thought less than intended is not a reviewer anyone can rely on.
@@ -903,12 +918,16 @@ function estimateCost(kind, fallbackUsd, { perIssue = false } = {}) {
   };
 }
 
+/**
+ * One pass, so a substituted value is never scanned again. Prompts now carry issue
+ * bodies written by whoever filed the issue: with successive replacements a body
+ * containing "{branch}" would have been filled in as if the template had asked for it.
+ * An unknown placeholder is left as written rather than blanked.
+ */
 function fillPrompt(template, values) {
-  let out = template;
-  for (const [key, value] of Object.entries(values)) {
-    out = out.split(`{${key}}`).join(String(value));
-  }
-  return out;
+  return String(template).replace(/\{(\w+)\}/g, (match, key) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match,
+  );
 }
 
 // ─── rate limit ────────────────────────────────────────────────────────────────
