@@ -15,6 +15,8 @@ pnpm workspace monorepo (`pnpm-workspace.yaml`: `apps/*`) with two applications:
 
 Run from the repo root; the scripts themselves live in `package.json`. Each has `:api`/`:web` variants (`pnpm dev:api`, `pnpm lint:web`, …): `dev`, `build`, `lint`, `test` (only `api` has a test suite — see `apps/api/CLAUDE.md` for single-test and e2e invocations), plus `format` / `format:check` (Prettier over `apps/**`).
 
+`pnpm test:ralph` is separate from `pnpm test`: it runs the Ralph orchestrator's own suite (`node --test` over `.claude/tests/`), which is tooling rather than an app workspace, so `pnpm -r` does not reach it.
+
 Requires Node >= 20; package manager is pinned via `packageManager: pnpm@11.20.0`.
 
 ## Token efficiency
@@ -55,10 +57,10 @@ Feature documentation lives in `docs/`, one folder per feature named after it in
 
 - Group related changes into one logical commit instead of committing after every small step. For example, when adding several skills, stage and commit them together once the set is complete — don't create a separate commit per skill.
 - Do not `git push` unless the user explicitly asks for it in that turn. Committing locally does not imply permission to push; a prior push request does not carry over to later, unrelated changes.
-- Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test`, blocking the commit on lint errors or test failures.
+- Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test && pnpm test:ralph`, blocking the commit on lint errors or test failures.
 
 ## Ralph loop
 
-`node .claude/ralph-start.js` drives an autonomous loop over a feature backlog: one Claude session per GitHub issue, one branch per phase, each phase reviewed and then merged `--no-ff` into a long-lived feature branch and tagged `ralph/phase-N`, so phases stay revertable while the feature is in progress. Phases are catalogued in `.claude/ralph.config.json`; which of them a given run executes is chosen with flags (`--dry-run`, `--phases N`, `--only`), never by editing the catalogue. Per-session rules for the implementing agent live in `.claude/ralph.md`.
+`node .claude/ralph-start.js` drives an autonomous loop over a feature backlog: one Claude session per GitHub issue, one branch per phase, each phase reviewed and then merged `--no-ff` into a long-lived feature branch and tagged `ralph/phase-N`, so phases stay revertable while the feature is in progress. Each issue is gated by the orchestrator (format, lint, typecheck, tests) and reviewed by a separate read-only session over exactly that issue's diff; the orchestrator, not the session, commits and closes the issue. Phases are catalogued in `.claude/ralph.config.json`; which of them a given run executes is chosen with flags (`--dry-run`, `--phases N`, `--only`), never by editing the catalogue. Per-session rules for the implementing agent live in `.claude/ralph.md`.
 
-The orchestrator never writes to `master`: once every phase is merged it opens a single pull request for the whole feature and stops, leaving the merge to a human (with a merge commit, never a squash, so issue-level history survives). It owns the loop end to end — there is deliberately no Stop hook involved. Design rationale is in `docs/ralph-loop-rework/plan.md`, the developer guide in `docs/ralph-loop-rework/usage.md`. Runtime state (`ralph.log`, `ralph.stats.jsonl`, `ralph.stop`) is gitignored.
+The orchestrator never writes to `master`: once every phase is merged it opens a single pull request for the whole feature and stops, leaving the merge to a human (with a merge commit, never a squash, so issue-level history survives). It owns the loop end to end — there is deliberately no Stop hook involved. Every stage is checkpointed to `.claude/ralph.state.json`, so an interrupted run resumes that stage rather than repeating the issue, and the checkpoint is cleared only once GitHub confirms the issue closed. Design rationale is in `docs/ralph-loop-rework/plan.md`, the developer guide in `docs/ralph-loop-rework/usage.md`. Runtime state (`ralph.log`, `ralph.stats.jsonl`, `ralph.stop`, `ralph.state.json`) is gitignored.

@@ -18,6 +18,7 @@
     "lint:api": "pnpm --filter api run lint",
     "test": "pnpm -r run test",
     "test:api": "pnpm --filter api run test",
+    "test:ralph": "node --test \".claude/tests/**/*.test.js\"",
     "format": "prettier --write \"apps/**/*.{ts,tsx,js,jsx,json,md}\"",
     "format:check": "prettier --check \"apps/**/*.{ts,tsx,js,jsx,json,md}\"",
     "prepare": "husky"

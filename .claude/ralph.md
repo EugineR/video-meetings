@@ -8,13 +8,13 @@ branch. Everything outside that issue is not your job.
 
 - Work on the single issue you were given, nothing else.
 - You are already on the correct branch. Do not create, switch or rebase branches.
-- Do not open a pull request — the orchestrator does that once the phase is complete.
-- Do not pick up another issue afterwards. End the session when yours is closed.
+- Do not pick up another issue afterwards. End the session when the work is done.
 
 ## Taking the Issue
 
-- Read the issue title, body and acceptance criteria with `gh issue view`.
-- Check the feature's PRD and phase plan under `docs/` when the issue references them.
+- The issue body is in your prompt. Do not fetch it again with `gh issue view`.
+- Check the feature's PRD and phase plan under `docs/` when the issue references them —
+  the section that matters, not the whole document.
 - If the work already exists in the branch (an earlier attempt was interrupted), verify
   it against the acceptance criteria and fill the gaps instead of redoing it.
 
@@ -22,20 +22,36 @@ branch. Everything outside that issue is not your job.
 
 - Tests first, implementation second (TDD).
 - Run the tests after each meaningful change.
-- If the tests stay red after 5 attempts, stop and write a comment on the issue
-  describing the problem. Do not close the issue.
+- If the tests stay red after 5 attempts, stop and say so in your reply. Do not leave
+  the tree in a state you know is broken without saying it.
 
-## Commit Naming
+## What the Orchestrator Does, Not You
 
-- Follow the conventions in the `git-commit` skill.
+The orchestrator runs format, lint, typecheck and the test suites itself, has an
+independent reviewer read your diff, and only then commits and closes the issue. So do
+not:
 
-## Closing the Issue
+- commit, push, or open a pull request;
+- close the issue;
+- review your own diff, or run a code-review skill on it;
+- write review notes, diffs or scratch files into the repository.
 
-1. Make sure the tests are green and every acceptance criterion is met.
-2. Run the `/code-review` skill on your own diff and address what it finds.
-3. Commit the work.
-4. Close the issue with `gh issue close`, referencing the commit.
+Leave your work uncommitted. Everything that changed on top of the base commit named in
+your prompt is what gets reviewed and committed.
 
-Closing the issue is what tells the orchestrator you succeeded — it measures progress
-by GitHub state, not by what the session says. An issue left open is treated as a
-failed attempt and will be retried.
+## Ending a Session
+
+End your reply with exactly these three lines:
+
+```
+FILES: <comma-separated paths you changed>
+TESTS: <the test commands you ran>
+COMMIT: <a one-line conventional commit subject for this work>
+```
+
+The commit subject follows the conventions in the `git-commit` skill. The orchestrator
+uses it if it is a valid conventional subject and falls back to one built from the issue
+if it is not — so a missing or malformed line costs nothing but a less precise message.
+
+If a reviewer blocks the change you will be given its findings and asked to fix exactly
+those. Fix them; do not take the opportunity to refactor something else.

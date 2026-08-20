@@ -1,0 +1,5 @@
+{"schemaVersion":2,"at":"t1","kind":"impl","phase":"P","issue":31,"costUsd":1.00,"terminalReason":"completed","exitCode":0}
+{"schemaVersion":2,"at":"t2","kind":"impl","phase":"P","issue":32,"costUsd":1.00,"terminalReason":"api_error","exitCode":1}
+{"schemaVersion":2,"at":"t3","kind":"impl","phase":"P","issue":32,"costUsd":3.00,"terminalReason":"completed","exitCode":0}
+{"schemaVersion":2,"at":"t4","kind":"impl","phase":"P","issue":33,"costUsd":9.00,"terminalReason":"completed","exitCode":0}
+{"schemaVersion":2,"at":"t5","kind":"phase-review","phase":"P","issue":null,"costUsd":2.00,"terminalReason":"completed","exitCode":0}
