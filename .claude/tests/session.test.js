@@ -86,8 +86,57 @@ test('runSession passes the model, turn cap and tool list to the CLI', async () 
     assert.match(argv, /--max-turns 100/);
     assert.match(argv, /--output-format stream-json/);
     assert.match(argv, /--allowedTools Read Grep/);
+    assert.match(argv, /--exclude-dynamic-system-prompt-sections/);
     // The prompt goes over stdin, never on the command line.
     assert.doesNotMatch(argv, /do the thing/);
+  } finally {
+    restore();
+  }
+});
+
+test('runSession passes the stage effort and the cost cap', async () => {
+  const spawn = fakeSpawn({ fixture: 'session-completed' });
+  const restore = withFakes(ralph, { spawn });
+  try {
+    await session({ effort: 'high', maxCostUsd: 4 });
+    const argv = spawn.calls[0].args.join(' ');
+    assert.match(argv, /--effort high/);
+    assert.match(argv, /--max-budget-usd 4/);
+  } finally {
+    restore();
+  }
+});
+
+test('effort and the cost cap are omitted rather than passed empty', async () => {
+  const spawn = fakeSpawn({ fixture: 'session-completed' });
+  const restore = withFakes(ralph, { spawn });
+  try {
+    await session({ effort: undefined, maxCostUsd: undefined });
+    const argv = spawn.calls[0].args.join(' ');
+    assert.doesNotMatch(argv, /--effort/);
+    assert.doesNotMatch(argv, /--max-budget-usd/);
+  } finally {
+    restore();
+  }
+});
+
+test('--allowedTools stays last, because it is variadic', async () => {
+  // Anything after it would be read as another tool name and silently swallowed.
+  const spawn = fakeSpawn({ fixture: 'session-completed' });
+  const restore = withFakes(ralph, { spawn });
+  try {
+    await session({
+      effort: 'high',
+      maxCostUsd: 4,
+      allowedTools: ['Read', 'Grep', 'Bash'],
+    });
+    const argv = spawn.calls[0].args;
+    const flat = argv.join(' ');
+    const at = flat.indexOf('--allowedTools');
+    assert.ok(at >= 0);
+    const tail = flat.slice(at + '--allowedTools'.length);
+    assert.doesNotMatch(tail, /--/, `a flag follows --allowedTools: ${tail}`);
+    assert.ok(flat.trimEnd().endsWith('Bash'), flat);
   } finally {
     restore();
   }
