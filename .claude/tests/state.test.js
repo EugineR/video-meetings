@@ -46,6 +46,7 @@ const newBudget = () => ({
   limitAborts: new Map(),
   baseSha: new Map(),
   rateLimitWaits: 0,
+  done: new Set(),
 });
 
 /**
@@ -345,7 +346,10 @@ test('an issue closed by hand while the loop was down needs no work at all', asy
     await l.run({ fixtures: ['session-impl', 'session-review-approved'] });
     assert.equal(l.state().stage, 'CLOSE_ISSUE');
 
-    l.repo.open = []; // closed on GitHub by a human
+    // Closed on GitHub by a human. The list and the single-issue read are separate
+    // things in the fake because they are separate things in GitHub - the list lags.
+    l.repo.closed.add(41);
+    l.repo.open = [];
     const second = await l.run({ fixtures: ['session-impl'] });
 
     assert.equal(second.spawn.calls.length, 0);

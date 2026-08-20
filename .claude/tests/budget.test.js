@@ -30,6 +30,7 @@ const newBudget = () => ({
   attempts: new Map(),
   limitAborts: new Map(),
   baseSha: new Map(),
+  done: new Set(),
 });
 
 /**
@@ -128,4 +129,48 @@ test('the test harness never writes to the real stats file', async () => {
   assert.equal(after, before, 'the run baseline is untouched');
   assert.ok(statsFile.includes('ralph-test-'), 'stats went to a temp directory');
   assert.deepEqual(ralph.paths.stats, '.claude/ralph.stats.jsonl', 'paths restored');
+});
+
+test('a list that has not caught up does not hand the same issue back', async () => {
+  // What phase 4 actually did: the loop closed #41, asked GitHub for the open issues,
+  // was handed #41 again seconds later, and spent two more sessions re-implementing work
+  // that was already committed. Each correctly changed nothing, so the issue then read
+  // as one that could not be implemented at all and the run stopped.
+  const { error, budget, repo } = await drainOne({
+    cfg: config(),
+    repo: { listLag: true },
+  });
+
+  assert.equal(error, null, error && error.message);
+  assert.equal(budget.issuesClosed, 1);
+  assert.equal(repo.commits.length, 1, 'committed once, not three times');
+  assert.deepEqual([...budget.done], [41]);
+  // The list still says it is open; the loop knows better because it closed it itself.
+  assert.equal(repo.open.length, 1);
+});
+
+test('an issue GitHub already reports closed costs no session at all', async () => {
+  const spawnSync = fakeRepo({ listLag: true });
+  spawnSync.state.closed.add(41);
+  const paths = withTempPaths(ralph);
+  const loud = quiet();
+  const spawn = fakeSpawn({ fixtures: ['session-impl'] });
+  const restore = withFakes(ralph, { spawnSync, spawn });
+  try {
+    const result = await ralph.runIssue(
+      { index: 4, milestone: 'Phase 4: Avatar streaming', branch: 'feature/user-profile-phase-4' },
+      config(),
+      { issues: null, stopOnLimit: false },
+      newBudget(),
+      { number: 41, title: 'Stream the avatar' },
+    );
+    assert.equal(result.status, 'closed');
+    assert.match(result.note, /already closed on GitHub/);
+    assert.equal(spawn.calls.length, 0, 'no session was started');
+    assert.equal(spawnSync.state.commits.length, 0);
+  } finally {
+    restore();
+    loud();
+    paths.restore();
+  }
 });
