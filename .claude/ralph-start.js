@@ -865,9 +865,22 @@ function reportDenials(st, what) {
   );
 }
 
+/**
+ * A rate_limit_event carries one of three statuses - "allowed", "allowed_warning" or
+ * "rejected" (the CLI's own vocabulary; "allowed_warning" is the one it pairs with
+ * "You're close to your usage limit"). Only a refusal is a limit.
+ *
+ * This used to read `status !== 'allowed'`, which made a courtesy warning
+ * indistinguishable from an exhausted quota: the first canary run stopped dead on a
+ * seven_day warning with 40% of the week still unspent, after a session that had
+ * completed its work. The recorded fixture happened to carry "rejected", so no test
+ * noticed.
+ */
+const RATE_LIMIT_TOLERATED = new Set(['allowed', 'allowed_warning']);
+const rateLimitRefused = (info) => !!info && !RATE_LIMIT_TOLERATED.has(info.status);
+
 function abortedByRateLimit(st) {
-  const info = st.rateLimit;
-  if (!info || info.status === 'allowed') return false;
+  if (!rateLimitRefused(st.rateLimit)) return false;
   return st.terminalReason !== 'completed';
 }
 
@@ -925,6 +938,9 @@ function buildStatsRow(kind, phase, issueNumber, st, meta = {}) {
     usageQuality: st.usageQuality,
     durationMs: st.durationMs,
     exitCode: st.exitCode,
+    // The status is the field that separates "close to the limit" from "refused". Not
+    // recording it is why a stopped run could not be diagnosed from the stats alone.
+    rateLimitStatus: st.rateLimit ? st.rateLimit.status || null : null,
     rateLimitType: st.rateLimit ? st.rateLimit.rateLimitType || null : null,
     rateLimitResetsAt: st.rateLimit ? st.rateLimit.resetsAt || null : null,
   };
@@ -1058,7 +1074,17 @@ function fillPrompt(template, values) {
 
 async function handleRateLimit(st, cfg, opts, budget) {
   const info = st.rateLimit;
-  if (!info || info.status === 'allowed') return;
+  if (!rateLimitRefused(info)) {
+    // Worth saying out loud - it is the only warning the operator gets that the next
+    // phase may not finish - but it is not a reason to stop a run that may proceed.
+    if (info && info.status === 'allowed_warning') {
+      const resets = info.resetsAt
+        ? ` (resets ${new Date(info.resetsAt * 1000).toTimeString().slice(0, 8)})`
+        : '';
+      log(`  ! close to the ${info.rateLimitType} limit${resets}, still allowed - carrying on`);
+    }
+    return;
+  }
   if (opts.stopOnLimit || cfg.onRateLimit === 'stop') {
     throw new Stop(
       `rate limit hit (${info.rateLimitType}), stopping as configured - re-run once it clears and the checkpoint picks the current stage back up`,
