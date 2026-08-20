@@ -175,9 +175,17 @@ function shimSpawnArgs(file, args) {
     const text = String(a);
     return safe.test(text) ? text : '"' + text.split('"').join('""') + '"';
   });
+  // The whole command line gets one more pair of quotes around it. With /s, cmd.exe
+  // strips the first quote and the LAST quote on the line and runs what is left
+  // verbatim - so without the wrapper it eats a quote belonging to an argument. That
+  // is not theoretical: `--tools "Bash,PowerShell,..."` made cmd read
+  // `claude" -p ... --tools "Bash` as the program name and the first real run died
+  // before it started. It stayed hidden while every argument happened to be
+  // quote-free, because then the only quotes on the line were the pair around the
+  // program name.
   return [
     process.env.ComSpec || 'cmd.exe',
-    ['/d', '/s', '/c', `"${file}" ${quoted.join(' ')}`],
+    ['/d', '/s', '/c', `""${file}" ${quoted.join(' ')}"`],
     { windowsVerbatimArguments: true },
   ];
 }
