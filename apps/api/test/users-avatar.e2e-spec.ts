@@ -16,6 +16,8 @@ interface AccessTokenResponseBody {
 
 interface ProfileResponseBody {
   id: string;
+  hasAvatar: boolean;
+  avatarUpdatedAt: string | null;
 }
 
 interface AvatarResponseBody {
@@ -51,6 +53,18 @@ async function getUserId(
     .expect(200);
 
   return (response.body as ProfileResponseBody).id;
+}
+
+async function getProfile(
+  app: INestApplication<App>,
+  token: string,
+): Promise<ProfileResponseBody> {
+  const response = await request(app.getHttpServer())
+    .get('/users/me')
+    .set('Authorization', `Bearer ${token}`)
+    .expect(200);
+
+  return response.body as ProfileResponseBody;
 }
 
 describe('Users Avatar (e2e)', () => {
@@ -283,6 +297,118 @@ describe('Users Avatar (e2e)', () => {
 
     it('rejects an unauthenticated request (401)', async () => {
       await request(app.getHttpServer()).delete('/users/me/avatar').expect(401);
+    });
+  });
+
+  describe('GET /users/me/avatar', () => {
+    it('streams the exact uploaded bytes with the matching Content-Type', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const fileContents = Buffer.from('the exact avatar bytes');
+
+      await request(app.getHttpServer())
+        .post('/users/me/avatar')
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', fileContents, {
+          filename: 'avatar.png',
+          contentType: 'image/png',
+        })
+        .expect(201);
+
+      const response = await request(app.getHttpServer())
+        .get('/users/me/avatar')
+        .set('Authorization', `Bearer ${token}`)
+        .responseType('blob')
+        .expect(200);
+
+      expect(response.headers['content-type']).toBe('image/png');
+      expect(Buffer.from(response.body as Buffer).equals(fileContents)).toBe(
+        true,
+      );
+    });
+
+    it('authenticates via a ?token= query param (for <img> src)', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+
+      await request(app.getHttpServer())
+        .post('/users/me/avatar')
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'avatar.png',
+          contentType: 'image/png',
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .get(`/users/me/avatar?token=${token}`)
+        .expect(200);
+    });
+
+    it('returns 404 when there is no avatar', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+
+      await request(app.getHttpServer())
+        .get('/users/me/avatar')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+    });
+
+    it('rejects an unauthenticated request (401)', async () => {
+      await request(app.getHttpServer()).get('/users/me/avatar').expect(401);
+    });
+  });
+
+  describe('hasAvatar / avatarUpdatedAt on GET /users/me', () => {
+    it('reports no avatar before upload, then true with a timestamp after upload, then false again after delete', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+
+      const beforeUpload = await getProfile(app, token);
+      expect(beforeUpload.hasAvatar).toBe(false);
+      expect(beforeUpload.avatarUpdatedAt).toBeNull();
+
+      await request(app.getHttpServer())
+        .post('/users/me/avatar')
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'avatar.png',
+          contentType: 'image/png',
+        })
+        .expect(201);
+
+      const afterUpload = await getProfile(app, token);
+      expect(afterUpload.hasAvatar).toBe(true);
+      expect(afterUpload.avatarUpdatedAt).toEqual(expect.any(String));
+
+      await request(app.getHttpServer())
+        .delete('/users/me/avatar')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(204);
+
+      const afterDelete = await getProfile(app, token);
+      expect(afterDelete.hasAvatar).toBe(false);
+      expect(afterDelete.avatarUpdatedAt).toBeNull();
+    });
+  });
+
+  describe('cascade delete', () => {
+    it('deletes the user_avatars row when the owning user is deleted', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const userId = await getUserId(app, token);
+
+      await request(app.getHttpServer())
+        .post('/users/me/avatar')
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'avatar.png',
+          contentType: 'image/png',
+        })
+        .expect(201);
+
+      await prisma.user.delete({ where: { id: userId } });
+
+      const avatar = await prisma.userAvatar.findUnique({
+        where: { userId },
+      });
+      expect(avatar).toBeNull();
     });
   });
 });

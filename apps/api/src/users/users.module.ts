@@ -19,6 +19,7 @@ import { UpdateProfileHandler } from './commands/handlers/update-profile.handler
 import { UploadAvatarHandler } from './commands/handlers/upload-avatar.handler';
 import { UserAvatarsRepository } from './user-avatars.repository';
 import { FindUserByEmailHandler } from './queries/handlers/find-user-by-email.handler';
+import { GetAvatarHandler } from './queries/handlers/get-avatar.handler';
 import { GetProfileHandler } from './queries/handlers/get-profile.handler';
 import { UsersController } from './users.controller';
 import { UsersRepository } from './users.repository';
@@ -32,7 +33,11 @@ const CommandHandlers = [
   UploadAvatarHandler,
   DeleteAvatarHandler,
 ];
-const QueryHandlers = [FindUserByEmailHandler, GetProfileHandler];
+const QueryHandlers = [
+  FindUserByEmailHandler,
+  GetProfileHandler,
+  GetAvatarHandler,
+];
 
 @Module({
   imports: [

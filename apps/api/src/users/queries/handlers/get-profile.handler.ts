@@ -4,6 +4,7 @@ import {
   ProfileResponse,
   toProfileResponse,
 } from '../../interfaces/profile-response.interface';
+import { UserAvatarsRepository } from '../../user-avatars.repository';
 import { UsersRepository } from '../../users.repository';
 import { GetProfileQuery } from '../get-profile.query';
 
@@ -12,7 +13,10 @@ export class GetProfileHandler implements IQueryHandler<
   GetProfileQuery,
   ProfileResponse
 > {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  constructor(
+    private readonly usersRepository: UsersRepository,
+    private readonly userAvatarsRepository: UserAvatarsRepository,
+  ) {}
 
   async execute(query: GetProfileQuery): Promise<ProfileResponse> {
     const user = await this.usersRepository.findById(query.userId);
@@ -20,6 +24,8 @@ export class GetProfileHandler implements IQueryHandler<
       throw new NotFoundException('User not found');
     }
 
-    return toProfileResponse(user);
+    const avatar = await this.userAvatarsRepository.findByUserId(query.userId);
+
+    return toProfileResponse(user, avatar);
   }
 }

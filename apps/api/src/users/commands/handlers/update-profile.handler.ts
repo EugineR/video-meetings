@@ -4,6 +4,7 @@ import {
   ProfileResponse,
   toProfileResponse,
 } from '../../interfaces/profile-response.interface';
+import { UserAvatarsRepository } from '../../user-avatars.repository';
 import { UsersRepository } from '../../users.repository';
 import { UpdateProfileCommand } from '../update-profile.command';
 
@@ -12,7 +13,10 @@ export class UpdateProfileHandler implements ICommandHandler<
   UpdateProfileCommand,
   ProfileResponse
 > {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  constructor(
+    private readonly usersRepository: UsersRepository,
+    private readonly userAvatarsRepository: UserAvatarsRepository,
+  ) {}
 
   async execute(command: UpdateProfileCommand): Promise<ProfileResponse> {
     const user = await this.usersRepository.updateName(
@@ -23,6 +27,10 @@ export class UpdateProfileHandler implements ICommandHandler<
       throw new NotFoundException('User not found');
     }
 
-    return toProfileResponse(user);
+    const avatar = await this.userAvatarsRepository.findByUserId(
+      command.userId,
+    );
+
+    return toProfileResponse(user, avatar);
   }
 }
