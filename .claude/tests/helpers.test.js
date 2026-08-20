@@ -201,7 +201,7 @@ test('shimSpawnArgs survives cmd.exe eating the last quote on the line', {
 
   // What cmd.exe /s does, applied here: drop the first quote, drop the last quote.
   const afterCmd = command.slice(1, command.lastIndexOf('"'));
-  assert.ok(afterCmd.startsWith('"claude"'), `program name mangled: ${afterCmd}`);
+  assert.ok(afterCmd.startsWith('claude '), `program name mangled: ${afterCmd}`);
   assert.ok(
     afterCmd.includes('--tools "Bash,PowerShell,Read"'),
     `tool list lost a quote: ${afterCmd}`,
@@ -211,4 +211,32 @@ test('shimSpawnArgs survives cmd.exe eating the last quote on the line', {
     `deny list lost a quote: ${afterCmd}`,
   );
   assert.ok(afterCmd.trimEnd().endsWith('--allowedTools Bash Read'), afterCmd);
+});
+
+test('shimSpawnArgs leaves the program name unquoted for a batch shim', {
+  skip: process.platform !== 'win32' && 'cmd.exe quoting is Windows-only',
+}, () => {
+  // The other half of the same trap. `claude` and `pnpm` are .cmd shims, and a batch
+  // file invoked with a quoted name resolves %~dp0 against the current directory
+  // instead of its own. Quoting the program name made pnpm.CMD look for corepack
+  // inside the repository, so every gate step died with "Cannot find module".
+  const [, args] = ralph.shimSpawnArgs('pnpm', ['exec', 'prettier', '--write', 'a.ts']);
+  const command = args[args.length - 1];
+  assert.ok(command.startsWith('"pnpm exec'), `program name quoted: ${command}`);
+
+  // A name that could not survive unquoted is still quoted: not running at all is worse.
+  const [, spaced] = ralph.shimSpawnArgs('C:/Program Files/x/pnpm', ['-v']);
+  assert.ok(spaced[spaced.length - 1].startsWith('""C:/Program Files/x/pnpm"'), spaced);
+});
+
+test('a real batch shim actually runs through shimSpawnArgs', {
+  skip: process.platform !== 'win32' && 'cmd.exe quoting is Windows-only',
+}, () => {
+  // The only assertion that would have caught this: cmd's own behaviour rather than a
+  // model of it. `pnpm --version` touches nothing, costs nothing and needs no network.
+  const { spawnSync } = require('node:child_process');
+  const [file, args, extra] = ralph.shimSpawnArgs('pnpm', ['--version']);
+  const r = spawnSync(file, args, { encoding: 'utf8', ...extra });
+  assert.equal(r.status, 0, `pnpm did not run: ${(r.stdout || '') + (r.stderr || '')}`);
+  assert.match(r.stdout.trim(), /^\d+\.\d+\.\d+/, r.stdout);
 });

@@ -42,7 +42,7 @@ const newBudget = () => ({
  * Runs one issue through the whole pipeline with claude, git, gh and pnpm all faked.
  * Returns what the pipeline decided plus everything the fakes were asked to do.
  */
-async function runOne({ fixtures, repo = {}, cfg = {}, exitCode = 0 } = {}) {
+async function runOne({ fixtures, repo = {}, cfg = {}, exitCode = 0, opts = {} } = {}) {
   const spawn = fakeSpawn({ fixtures, exitCode });
   const spawnSync = fakeRepo(repo);
   const paths = withTempPaths(ralph);
@@ -55,7 +55,7 @@ async function runOne({ fixtures, repo = {}, cfg = {}, exitCode = 0 } = {}) {
     let result = null;
     let error = null;
     try {
-      result = await ralph.runIssue(PHASE, config(cfg), { issues: null, stopOnLimit: false }, budget, issue);
+      result = await ralph.runIssue(PHASE, config(cfg), { issues: null, stopOnLimit: false, ...opts }, budget, issue);
     } catch (err) {
       error = err;
     }
@@ -447,4 +447,29 @@ test('the pipeline never writes to the real stats file', async () => {
   await runOne({ fixtures: ['session-impl', 'session-review-approved'] });
   const after = fs.existsSync(real) ? fs.readFileSync(real, 'utf8') : null;
   assert.equal(after, before, 'the measurement baseline is untouched');
+});
+
+test('a rate-limit warning does not stop an issue that is going fine', async () => {
+  // With --stop-on-limit, which is the strictest setting there is: a warning still
+  // must not stop the run. The first canary run died here, having spent $1.15 on a
+  // session that had finished its work.
+  const { result, error, repo } = await runOne({
+    fixtures: ['session-rate-limit-warning', 'session-review-approved'],
+    opts: { stopOnLimit: true },
+  });
+
+  assert.equal(error, null, error && error.message);
+  assert.equal(result.status, 'closed');
+  assert.equal(repo.commits.length, 1);
+});
+
+test('a refusal still stops the run under --stop-on-limit', async () => {
+  const { error, repo } = await runOne({
+    fixtures: ['session-rate-limited'],
+    opts: { stopOnLimit: true },
+  });
+
+  assert.ok(error, 'the run stopped');
+  assert.match(error.message, /rate limit hit \(five_hour\)/);
+  assert.equal(repo.commits.length, 0);
 });
