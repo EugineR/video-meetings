@@ -175,17 +175,23 @@ function shimSpawnArgs(file, args) {
     const text = String(a);
     return safe.test(text) ? text : '"' + text.split('"').join('""') + '"';
   });
-  // The whole command line gets one more pair of quotes around it. With /s, cmd.exe
-  // strips the first quote and the LAST quote on the line and runs what is left
-  // verbatim - so without the wrapper it eats a quote belonging to an argument. That
-  // is not theoretical: `--tools "Bash,PowerShell,..."` made cmd read
-  // `claude" -p ... --tools "Bash` as the program name and the first real run died
-  // before it started. It stayed hidden while every argument happened to be
-  // quote-free, because then the only quotes on the line were the pair around the
-  // program name.
+  // Two cmd.exe rules pull in opposite directions here, and both cost a canary run.
+  //
+  // With /s, cmd strips the first quote and the LAST quote on the line and runs the
+  // rest verbatim. So the whole line is wrapped in a pair of quotes of our own: without
+  // it, cmd ate the closing quote of an argument instead - `--tools "Bash,..."` made it
+  // read `claude" -p ... --tools "Bash` as the program name, and nothing ran.
+  //
+  // The program name itself is left unquoted. `claude` and `pnpm` are batch shims, and
+  // a batch file invoked with a quoted name resolves %~dp0 against the current
+  // directory rather than its own: pnpm.CMD then looked for corepack inside the
+  // repository and every gate step died with "Cannot find module". A name that would
+  // not survive unquoted - one with a space in it - is quoted anyway, because not
+  // running at all is worse; no shim in this repository has one.
+  const program = /^[^\s"]+$/.test(String(file)) ? String(file) : `"${file}"`;
   return [
     process.env.ComSpec || 'cmd.exe',
-    ['/d', '/s', '/c', `""${file}" ${quoted.join(' ')}"`],
+    ['/d', '/s', '/c', `"${program} ${quoted.join(' ')}"`],
     { windowsVerbatimArguments: true },
   ];
 }
@@ -865,9 +871,22 @@ function reportDenials(st, what) {
   );
 }
 
+/**
+ * A rate_limit_event carries one of three statuses - "allowed", "allowed_warning" or
+ * "rejected" (the CLI's own vocabulary; "allowed_warning" is the one it pairs with
+ * "You're close to your usage limit"). Only a refusal is a limit.
+ *
+ * This used to read `status !== 'allowed'`, which made a courtesy warning
+ * indistinguishable from an exhausted quota: the first canary run stopped dead on a
+ * seven_day warning with 40% of the week still unspent, after a session that had
+ * completed its work. The recorded fixture happened to carry "rejected", so no test
+ * noticed.
+ */
+const RATE_LIMIT_TOLERATED = new Set(['allowed', 'allowed_warning']);
+const rateLimitRefused = (info) => !!info && !RATE_LIMIT_TOLERATED.has(info.status);
+
 function abortedByRateLimit(st) {
-  const info = st.rateLimit;
-  if (!info || info.status === 'allowed') return false;
+  if (!rateLimitRefused(st.rateLimit)) return false;
   return st.terminalReason !== 'completed';
 }
 
@@ -925,6 +944,9 @@ function buildStatsRow(kind, phase, issueNumber, st, meta = {}) {
     usageQuality: st.usageQuality,
     durationMs: st.durationMs,
     exitCode: st.exitCode,
+    // The status is the field that separates "close to the limit" from "refused". Not
+    // recording it is why a stopped run could not be diagnosed from the stats alone.
+    rateLimitStatus: st.rateLimit ? st.rateLimit.status || null : null,
     rateLimitType: st.rateLimit ? st.rateLimit.rateLimitType || null : null,
     rateLimitResetsAt: st.rateLimit ? st.rateLimit.resetsAt || null : null,
   };
@@ -1058,7 +1080,17 @@ function fillPrompt(template, values) {
 
 async function handleRateLimit(st, cfg, opts, budget) {
   const info = st.rateLimit;
-  if (!info || info.status === 'allowed') return;
+  if (!rateLimitRefused(info)) {
+    // Worth saying out loud - it is the only warning the operator gets that the next
+    // phase may not finish - but it is not a reason to stop a run that may proceed.
+    if (info && info.status === 'allowed_warning') {
+      const resets = info.resetsAt
+        ? ` (resets ${new Date(info.resetsAt * 1000).toTimeString().slice(0, 8)})`
+        : '';
+      log(`  ! close to the ${info.rateLimitType} limit${resets}, still allowed - carrying on`);
+    }
+    return;
+  }
   if (opts.stopOnLimit || cfg.onRateLimit === 'stop') {
     throw new Stop(
       `rate limit hit (${info.rateLimitType}), stopping as configured - re-run once it clears and the checkpoint picks the current stage back up`,
@@ -1125,6 +1157,71 @@ const DIRT_EXPLAINED_BY = new Set([
   'REPAIR',
   'COMMIT',
 ]);
+
+/**
+ * A checkpoint is worth honouring only while it still has something at stake: a commit
+ * it left behind, or work sitting in the tree. One with neither is not contradicted by a
+ * moved HEAD, it is simply older than the branch - the loop merges the trunk in at the
+ * start of every phase, so that is the ordinary case after an interruption rather than
+ * an anomaly. Pinning an anchor from such a checkpoint is what stopped a canary run that
+ * had done nothing wrong.
+ */
+const checkpointAtStake = (saved, dirty) =>
+  !!(saved && saved.issue && (saved.commitSha || dirty));
+
+/**
+ * The files a run's behaviour actually comes out of. A branch whose copies match the
+ * trunk's runs the same loop the trunk would, which is the only thing the branch guard
+ * is really protecting.
+ */
+const ORCHESTRATOR_FILES = [
+  '.claude/ralph-start.js',
+  '.claude/ralph.config.json',
+  '.claude/ralph.md',
+];
+
+/** Which of those files this branch has in a different version from the trunk. */
+function orchestratorDrift(base) {
+  const trunk = refExists(`refs/remotes/origin/${base}`) ? `origin/${base}` : base;
+  return ORCHESTRATOR_FILES.filter((file) => {
+    const here = gitTry('rev-parse', `HEAD:${file}`);
+    const there = gitTry('rev-parse', `${trunk}:${file}`);
+    // A file one side does not have at all is a difference worth stopping for.
+    return here.code !== 0 || there.code !== 0 || here.stdout !== there.stdout;
+  });
+}
+
+/**
+ * Where a run may start.
+ *
+ * Normally the trunk and nowhere else: the orchestrator lives in .claude/, which is
+ * versioned per branch, and a finished run leaves the tree on a phase branch - starting
+ * from there would silently execute that branch's older copy of this file.
+ *
+ * A resume is the exception, and it has to be, because the two rules are otherwise
+ * incompatible. An interrupted issue's work is uncommitted on the phase branch, and git
+ * refuses to carry a file the trunk does not have back to the trunk - which is every
+ * issue that adds one. The canary hit exactly this: the checkpoint stood at
+ * ISSUE_REVIEW, and the only way back to the trunk was to stash away the very work the
+ * checkpoint existed to protect.
+ *
+ * So the loop may start from the branch its own checkpoint names - once the files that
+ * decide its behaviour are shown to be the trunk's, which is what the guard was for.
+ */
+function startupBranchRefusal(current, base, checkpoint, drift) {
+  if (current === base) return null;
+  const from = `Start the loop from ${base}, not ${current}.`;
+  if (!checkpoint) {
+    return `${from} A previous run leaves the tree on its phase branch, and running from there would use that branch's copy of the orchestrator.`;
+  }
+  if (checkpoint.branch !== current) {
+    return `${from} The checkpoint in ${paths.state} belongs to ${checkpoint.branch}, so this is neither the trunk nor the branch being resumed.`;
+  }
+  if (drift.length > 0) {
+    return `${current} carries its own version of ${drift.join(', ')}, so resuming here would run a different loop than ${base} does. Merge ${base} into ${current} first, then re-run.`;
+  }
+  return null;
+}
 
 /**
  * Writes the checkpoint atomically: a temporary file in the same directory, then a
@@ -1455,7 +1552,14 @@ function runIssueGate(cfg, files) {
     });
     if (r.error || r.status !== 0) {
       const output = r.error ? r.error.message : `${r.stdout || ''}\n${r.stderr || ''}`;
-      log(`  x gate ${step.name} failed`);
+      // The reason goes to the repair session either way, but it used to go only
+      // there: a gate that failed for an environmental reason - a broken shim, a
+      // container that is not up - looked exactly like code that does not compile,
+      // and the log said nothing at all.
+      log(`  x gate ${step.name} failed: ${[step.run[0], ...args].join(' ').slice(0, 100)}`);
+      for (const line of tailOf(output, 12, 1200).split('\n')) {
+        if (line.trim()) log(`    ${line}`);
+      }
       return {
         step: step.name,
         command: [step.run[0], ...args].join(' '),
@@ -2057,8 +2161,17 @@ async function runPhase(phase, cfg, opts, base, budget) {
   // it here is what lets prepareIssue accept the tree the interrupted attempt left: the
   // dirt is that issue's own work, and re-anchoring on HEAD would hide it from the gate,
   // the reviewer and the commit.
-  const resume = stateFor(cfg, phase);
-  if (resume && resume.issue && resume.issueBaseSha) {
+  const saved = stateFor(cfg, phase);
+  const resume = checkpointAtStake(saved, git('status', '--porcelain').stdout)
+    ? saved
+    : null;
+  if (saved && !resume) {
+    log(
+      `  checkpoint for issue #${saved.issue} at ${saved.stage} has nothing left in the tree, starting the phase normally`,
+    );
+    clearState();
+  }
+  if (resume) {
     budget.baseSha.set(resume.issue, resume.issueBaseSha);
     log(
       `  checkpoint: issue #${resume.issue} at ${resume.stage}, base ${resume.issueBaseSha.slice(0, 8)}, written ${resume.updatedAt}`,
@@ -2073,8 +2186,19 @@ async function runPhase(phase, cfg, opts, base, budget) {
     `> Phase ${phase.index} "${phase.milestone}" . branch ${phase.branch} . ${openBefore.length} open issue(s) . budget ${fmtTokens(budget.phaseLimit)}`,
   );
 
-  prepareFeatureBranch(cfg, base);
-  preparePhaseBranch(phase, cfg);
+  if (resume) {
+    // Re-syncing the branches merges the trunk in, and that moves HEAD - out from under
+    // the anchor the checkpoint measured its issue from, so the resume then refuses
+    // itself. Those merges belong to the start of a phase, not to the middle of an
+    // issue; the next phase picks them up.
+    if (git('rev-parse', '--abbrev-ref', 'HEAD').stdout !== phase.branch) {
+      git('switch', phase.branch);
+    }
+    log(`  mid-issue: leaving ${phase.branch} where the checkpoint left it, no trunk merge`);
+  } else {
+    prepareFeatureBranch(cfg, base);
+    preparePhaseBranch(phase, cfg);
+  }
 
   await drainIssues(phase, cfg, opts, budget);
   await reviewPhase(phase, cfg, opts, budget);
@@ -2321,13 +2445,15 @@ async function main() {
     return;
   }
 
-  // The orchestrator lives in .claude/, which is versioned per branch, and a finished
-  // run leaves the tree on a phase branch. Starting from there would silently execute
-  // that branch's older copy of this file and its config.
   const current = git('rev-parse', '--abbrev-ref', 'HEAD').stdout;
   if (current !== base) {
-    fail(
-      `Start the loop from ${base}, not ${current}. A previous run leaves the tree on its phase branch, and running from there would use that branch's copy of the orchestrator.`,
+    // Only worth the round trip when the answer might be yes, but then it has to be
+    // fresh: a stale origin/<base> would compare against a trunk nobody is running.
+    git('fetch', 'origin', '--prune', '--quiet');
+    const refusal = startupBranchRefusal(current, base, checkpoint, orchestratorDrift(base));
+    if (refusal) fail(refusal);
+    log(
+      `| resuming on ${current}: its ${ORCHESTRATOR_FILES.length} orchestrator files match ${base}`,
     );
   }
 
@@ -2469,6 +2595,11 @@ module.exports = {
   clearState,
   stateFor,
   startupTreeRefusal,
+  startupBranchRefusal,
+  checkpointAtStake,
+  runPhase,
+  orchestratorDrift,
+  ORCHESTRATOR_FILES,
   STAGES,
   DIRT_EXPLAINED_BY,
   STATE_SCHEMA_VERSION,
