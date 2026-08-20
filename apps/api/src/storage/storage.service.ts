@@ -98,11 +98,20 @@ export class StorageService {
    * whichever upload's row won the DB upsert is also the one whose file survives.
    * Best-effort: a failure to remove one stray file doesn't fail the others or throw.
    */
-  async pruneMeetingDir(
-    meetingId: string,
-    keepStoragePath: string,
-  ): Promise<void> {
-    const dir = this.resolveMeetingDir(meetingId);
+  pruneMeetingDir(meetingId: string, keepStoragePath: string): Promise<void> {
+    return this.pruneDir(this.resolveMeetingDir(meetingId), keepStoragePath);
+  }
+
+  /**
+   * Removes every file in `{UPLOADS_DIR}/avatars/{userId}` except
+   * `keepStoragePath`, for the same reason and in the same race-free way as
+   * `pruneMeetingDir` — see that method's doc comment.
+   */
+  pruneAvatarDir(userId: string, keepStoragePath: string): Promise<void> {
+    return this.pruneDir(this.resolveAvatarDir(userId), keepStoragePath);
+  }
+
+  private async pruneDir(dir: string, keepStoragePath: string): Promise<void> {
     let entries: string[];
     try {
       entries = await readdir(dir);
