@@ -24,7 +24,8 @@ Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "cas
 
 - `src/prisma/` — `@Global()` `PrismaService`, the only `PrismaClient` in the app
 - `src/storage/` — `@Global()` `StorageService` (local filesystem) and the shared Multer factory
-- `src/users/` — user persistence, own-profile read/write, password change, avatar routes
+- `src/users/` — user persistence, own-profile read/write, password change, avatar routes (upload, stream, delete);
+  `GET /users/me`'s `ProfileResponse` reports `hasAvatar`/`avatarUpdatedAt`
 - `src/auth/` — register/login, `TokenService`, `JwtAuthGuard`, `@CurrentUser()`
 - `src/meetings/` — meetings and their one recording (upload, stream, delete)
 
@@ -75,8 +76,8 @@ The reasoning behind them is in `docs/architecture/api.md`.
   `apps/web/src/components/meetings/RecordingUploader.tsx`**, the client-side mirror of the same
   allowlist and cap. Change one, change the other, or the browser accepts a file the API rejects.
 - **`@AllowQueryToken()` is opt-in per route.** The `?token=` fallback exists only because a
-  `<video>`/`<audio>` `src` cannot set headers; blanket, it would let a token leaked through a
-  recording URL authenticate the rest of the API.
+  `<video>`/`<audio>`/`<img>` `src` cannot set headers; blanket, it would let a token leaked through
+  a recording or avatar URL authenticate the rest of the API.
 - **Register and change-password hash with the shared `PASSWORD_SALT_ROUNDS`** (`auth/password-rules.ts`).
 - **A `POST` that answers 200 needs `@HttpCode(HttpStatus.OK)`** — Nest defaults `POST` to 201.
 - **Prisma 7 requires a driver adapter** (`@prisma/adapter-pg`); the connection string cannot live
@@ -98,7 +99,7 @@ truncate their tables in `beforeEach`. Two rules follow:
   mutating the shared one.
 
 What each spec covers: `docs/testing/api.md`. ESLint is `typescript-eslint` recommendedTypeChecked
-+ `eslint-plugin-prettier`; `no-explicit-any` is off,
+plus `eslint-plugin-prettier`; `no-explicit-any` is off,
 `no-floating-promises`/`no-unsafe-argument` are warnings.
 
 ## Database
