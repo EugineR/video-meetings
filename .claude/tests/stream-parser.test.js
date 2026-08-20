@@ -59,6 +59,31 @@ test('a rate limit event is captured for the retry decision', () => {
   assert.equal(ralph.abortedByRateLimit(st), true);
 });
 
+test('a warning is not a limit, however loudly it is reported', () => {
+  // The event that stopped the first canary run: the seven-day window said "close to
+  // the limit" and let the request through, and the session finished its work. Read as
+  // a refusal it cost a whole run with 40% of the week unspent.
+  const st = replay(ralph, 'session-rate-limit-warning');
+  assert.deepEqual(st.rateLimit, {
+    status: 'allowed_warning',
+    rateLimitType: 'seven_day',
+    resetsAt: 1787634000,
+  });
+  assert.equal(st.terminalReason, 'completed');
+  assert.equal(ralph.abortedByRateLimit(st), false);
+  // replay stops at the stream; the exit code is what the child process reports.
+  assert.equal(ralph.sessionOutcome({ ...st, exitCode: 0 }), null, 'the session is usable');
+});
+
+test('the stats row records which of the two it was', () => {
+  // Without the status a stopped run cannot be diagnosed from the stats at all.
+  const phase = { milestone: 'Phase 4' };
+  const warned = ralph.buildStatsRow('impl', phase, 41, replay(ralph, 'session-rate-limit-warning'));
+  const refused = ralph.buildStatsRow('impl', phase, 41, replay(ralph, 'session-rate-limited'));
+  assert.equal(warned.rateLimitStatus, 'allowed_warning');
+  assert.equal(refused.rateLimitStatus, 'rejected');
+});
+
 test('permission denials survive to the caller', () => {
   const st = replay(ralph, 'session-denied');
   assert.equal(ralph.deniedTools(st), 'PowerShell');

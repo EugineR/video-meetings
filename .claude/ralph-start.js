@@ -175,17 +175,23 @@ function shimSpawnArgs(file, args) {
     const text = String(a);
     return safe.test(text) ? text : '"' + text.split('"').join('""') + '"';
   });
-  // The whole command line gets one more pair of quotes around it. With /s, cmd.exe
-  // strips the first quote and the LAST quote on the line and runs what is left
-  // verbatim - so without the wrapper it eats a quote belonging to an argument. That
-  // is not theoretical: `--tools "Bash,PowerShell,..."` made cmd read
-  // `claude" -p ... --tools "Bash` as the program name and the first real run died
-  // before it started. It stayed hidden while every argument happened to be
-  // quote-free, because then the only quotes on the line were the pair around the
-  // program name.
+  // Two cmd.exe rules pull in opposite directions here, and both cost a canary run.
+  //
+  // With /s, cmd strips the first quote and the LAST quote on the line and runs the
+  // rest verbatim. So the whole line is wrapped in a pair of quotes of our own: without
+  // it, cmd ate the closing quote of an argument instead - `--tools "Bash,..."` made it
+  // read `claude" -p ... --tools "Bash` as the program name, and nothing ran.
+  //
+  // The program name itself is left unquoted. `claude` and `pnpm` are batch shims, and
+  // a batch file invoked with a quoted name resolves %~dp0 against the current
+  // directory rather than its own: pnpm.CMD then looked for corepack inside the
+  // repository and every gate step died with "Cannot find module". A name that would
+  // not survive unquoted - one with a space in it - is quoted anyway, because not
+  // running at all is worse; no shim in this repository has one.
+  const program = /^[^\s"]+$/.test(String(file)) ? String(file) : `"${file}"`;
   return [
     process.env.ComSpec || 'cmd.exe',
-    ['/d', '/s', '/c', `""${file}" ${quoted.join(' ')}"`],
+    ['/d', '/s', '/c', `"${program} ${quoted.join(' ')}"`],
     { windowsVerbatimArguments: true },
   ];
 }
@@ -865,9 +871,22 @@ function reportDenials(st, what) {
   );
 }
 
+/**
+ * A rate_limit_event carries one of three statuses - "allowed", "allowed_warning" or
+ * "rejected" (the CLI's own vocabulary; "allowed_warning" is the one it pairs with
+ * "You're close to your usage limit"). Only a refusal is a limit.
+ *
+ * This used to read `status !== 'allowed'`, which made a courtesy warning
+ * indistinguishable from an exhausted quota: the first canary run stopped dead on a
+ * seven_day warning with 40% of the week still unspent, after a session that had
+ * completed its work. The recorded fixture happened to carry "rejected", so no test
+ * noticed.
+ */
+const RATE_LIMIT_TOLERATED = new Set(['allowed', 'allowed_warning']);
+const rateLimitRefused = (info) => !!info && !RATE_LIMIT_TOLERATED.has(info.status);
+
 function abortedByRateLimit(st) {
-  const info = st.rateLimit;
-  if (!info || info.status === 'allowed') return false;
+  if (!rateLimitRefused(st.rateLimit)) return false;
   return st.terminalReason !== 'completed';
 }
 
@@ -925,6 +944,9 @@ function buildStatsRow(kind, phase, issueNumber, st, meta = {}) {
     usageQuality: st.usageQuality,
     durationMs: st.durationMs,
     exitCode: st.exitCode,
+    // The status is the field that separates "close to the limit" from "refused". Not
+    // recording it is why a stopped run could not be diagnosed from the stats alone.
+    rateLimitStatus: st.rateLimit ? st.rateLimit.status || null : null,
     rateLimitType: st.rateLimit ? st.rateLimit.rateLimitType || null : null,
     rateLimitResetsAt: st.rateLimit ? st.rateLimit.resetsAt || null : null,
   };
@@ -1058,7 +1080,17 @@ function fillPrompt(template, values) {
 
 async function handleRateLimit(st, cfg, opts, budget) {
   const info = st.rateLimit;
-  if (!info || info.status === 'allowed') return;
+  if (!rateLimitRefused(info)) {
+    // Worth saying out loud - it is the only warning the operator gets that the next
+    // phase may not finish - but it is not a reason to stop a run that may proceed.
+    if (info && info.status === 'allowed_warning') {
+      const resets = info.resetsAt
+        ? ` (resets ${new Date(info.resetsAt * 1000).toTimeString().slice(0, 8)})`
+        : '';
+      log(`  ! close to the ${info.rateLimitType} limit${resets}, still allowed - carrying on`);
+    }
+    return;
+  }
   if (opts.stopOnLimit || cfg.onRateLimit === 'stop') {
     throw new Stop(
       `rate limit hit (${info.rateLimitType}), stopping as configured - re-run once it clears and the checkpoint picks the current stage back up`,
@@ -1455,7 +1487,14 @@ function runIssueGate(cfg, files) {
     });
     if (r.error || r.status !== 0) {
       const output = r.error ? r.error.message : `${r.stdout || ''}\n${r.stderr || ''}`;
-      log(`  x gate ${step.name} failed`);
+      // The reason goes to the repair session either way, but it used to go only
+      // there: a gate that failed for an environmental reason - a broken shim, a
+      // container that is not up - looked exactly like code that does not compile,
+      // and the log said nothing at all.
+      log(`  x gate ${step.name} failed: ${[step.run[0], ...args].join(' ').slice(0, 100)}`);
+      for (const line of tailOf(output, 12, 1200).split('\n')) {
+        if (line.trim()) log(`    ${line}`);
+      }
       return {
         step: step.name,
         command: [step.run[0], ...args].join(' '),
