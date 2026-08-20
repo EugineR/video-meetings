@@ -15,6 +15,8 @@ pnpm workspace monorepo (`pnpm-workspace.yaml`: `apps/*`) with two applications:
 
 Run from the repo root; the scripts themselves live in `package.json`. Each has `:api`/`:web` variants (`pnpm dev:api`, `pnpm lint:web`, …): `dev`, `build`, `lint`, `test` (only `api` has a test suite — see `apps/api/CLAUDE.md` for single-test and e2e invocations), plus `format` / `format:check` (Prettier over `apps/**`).
 
+`pnpm test:ralph` is separate from `pnpm test`: it runs the Ralph orchestrator's own suite (`node --test` over `.claude/tests/`), which is tooling rather than an app workspace, so `pnpm -r` does not reach it.
+
 Requires Node >= 20; package manager is pinned via `packageManager: pnpm@11.20.0`.
 
 ## Token efficiency
@@ -55,7 +57,7 @@ Feature documentation lives in `docs/`, one folder per feature named after it in
 
 - Group related changes into one logical commit instead of committing after every small step. For example, when adding several skills, stage and commit them together once the set is complete — don't create a separate commit per skill.
 - Do not `git push` unless the user explicitly asks for it in that turn. Committing locally does not imply permission to push; a prior push request does not carry over to later, unrelated changes.
-- Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test`, blocking the commit on lint errors or test failures.
+- Husky (`prepare` script, runs on `pnpm install`) installs a `pre-commit` hook (`.husky/pre-commit`) that runs `pnpm lint && pnpm test && pnpm test:ralph`, blocking the commit on lint errors or test failures.
 
 ## Ralph loop
 

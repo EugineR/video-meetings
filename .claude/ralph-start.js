@@ -1312,6 +1312,7 @@ module.exports = {
   newSessionStats,
   parseStreamLine,
   applyStreamEvent,
+  runSession,
   readVerdict,
   sessionOutcome,
   abortedByRateLimit,
