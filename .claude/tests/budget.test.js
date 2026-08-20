@@ -3,26 +3,20 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 
 const ralph = require('../ralph-start.js');
 const { fakeSpawn, withFakes } = require('./helpers/fake-runtime');
+const { fakeRepo, withTempPaths, quiet } = require('./helpers/fake-repo');
 
-// The completed fixture is worth 68,700 gross input tokens.
-const FIXTURE_GROSS = 68700;
+// One issue through the pipeline costs the implementation fixture plus the review
+// fixture: 399,260 + 103,180 gross input tokens.
+const ISSUE_GROSS = 502440;
 
 const config = (over) => ({
-  implModel: 'sonnet',
-  implEffort: 'medium',
-  maxTurns: 100,
-  stallSeconds: 120,
-  allowedTools: ['Bash', 'Read'],
-  implPrompt: 'implement #{issue}',
-  issueBudgetTokens: 1_000_000,
-  maxIssueAttempts: 2,
-  maxRateLimitRetries: 3,
+  ...ralph.loadConfig('.claude/ralph.config.json'),
   onRateLimit: 'stop',
+  issueGate: [{ name: 'test:api', run: ['pnpm', 'test:api'], when: 'apps/api/' }],
+  issueBudgetTokens: 6_000_000,
   ...over,
 });
 
@@ -35,111 +29,100 @@ const newBudget = () => ({
   perIssue: new Map(),
   attempts: new Map(),
   limitAborts: new Map(),
+  baseSha: new Map(),
 });
 
 /**
- * Runs drainIssues over one issue with everything faked: gh answers from a script, the
- * session replays a fixture, and the run's own state goes to a temp directory so the
- * real ralph.stats.jsonl - the baseline the loop is measured against - is untouched.
+ * Runs drainIssues over one issue with everything faked: git, gh and pnpm answer from
+ * memory, the sessions replay fixtures, and the run's own state goes to a temp
+ * directory so `.claude/ralph.stats.jsonl` - the baseline the loop is measured against
+ * - is untouched.
  */
-async function drainOne({ cfg, closesIssue = true, fixture = 'session-completed' }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-test-'));
-  const original = { ...ralph.paths };
-  const quiet = console.log;
-
-  ralph.paths.log = path.join(dir, 'ralph.log');
-  ralph.paths.stats = path.join(dir, 'ralph.stats.jsonl');
-  ralph.paths.stop = path.join(dir, 'ralph.stop');
-  console.log = () => {};
-
-  let listCalls = 0;
-  const spawnSync = (file, args) => {
-    const line = [file, ...(args || [])].join(' ');
-    if (line.includes('issue list')) {
-      listCalls++;
-      // First call picks the issue up; the call after the session decides whether the
-      // session closed it, which is the only progress signal the loop trusts.
-      const open =
-        listCalls === 1 || !closesIssue ? [{ number: 41, title: 'Stream it' }] : [];
-      return { status: 0, stdout: JSON.stringify(open), stderr: '' };
-    }
-    throw new Error(`unexpected command in test: ${line}`);
-  };
-
-  const restore = withFakes(ralph, { spawnSync, spawn: fakeSpawn({ fixture }) });
+async function drainOne({ cfg, fixtures = ['session-impl', 'session-review-approved'], repo = {} }) {
+  const spawnSync = fakeRepo(repo);
+  const paths = withTempPaths(ralph);
+  const loud = quiet();
+  const restore = withFakes(ralph, { spawnSync, spawn: fakeSpawn({ fixtures }) });
   const budget = newBudget();
+
   try {
-    const phase = { index: 4, milestone: 'Phase 4: Avatar streaming', branch: 'b' };
-    const opts = { issues: null, stopOnLimit: false };
-    const error = await drainIssues(phase, cfg, opts, budget);
-    return { budget, error, statsFile: ralph.paths.stats };
+    const phase = {
+      index: 4,
+      milestone: 'Phase 4: Avatar streaming',
+      branch: 'feature/user-profile-phase-4',
+    };
+    let error = null;
+    try {
+      await ralph.drainIssues(phase, cfg, { issues: null, stopOnLimit: false }, budget);
+    } catch (err) {
+      error = err;
+    }
+    return { budget, error, repo: spawnSync.state, statsFile: paths.stats };
   } finally {
     restore();
-    console.log = quiet;
-    Object.assign(ralph.paths, original);
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-
-  async function drainIssues(...args) {
-    try {
-      await ralph.drainIssues(...args);
-      return null;
-    } catch (err) {
-      return err;
-    }
+    loud();
+    paths.restore();
   }
 }
 
 test('a closed issue over budget is caught', async () => {
-  // The regression: the check used to sit after `if (closed) continue`, so a session
-  // that closed its issue was never measured. Issue #40 ran to 15.6M against a 6M cap
-  // and the loop said nothing.
-  const { error, budget } = await drainOne({
+  // The regression: the check used to sit after `if (closed) continue`, so an issue
+  // that closed was never measured. Issue #40 ran to 15.6M against a 6M cap and the
+  // loop said nothing.
+  const { error, budget, repo } = await drainOne({
     cfg: config({ issueBudgetTokens: 1000 }),
-    closesIssue: true,
   });
 
   assert.ok(error, 'the run stopped');
   assert.match(error.message, /issue #41 used .* of its .* budget/);
-  assert.equal(budget.issuesClosed, 1, 'the issue really did close first');
+  assert.equal(repo.commits.length, 1, 'the issue really was finished first');
+  assert.equal(budget.issuesClosed, 1, 'and it counts as closed, the run stops anyway');
 });
 
 test('a closed issue within budget does not stop the run', async () => {
-  const { error, budget } = await drainOne({
-    cfg: config({ issueBudgetTokens: 10_000_000 }),
-    closesIssue: true,
-  });
+  const { error, budget, repo } = await drainOne({ cfg: config() });
 
   assert.equal(error, null);
   assert.equal(budget.issuesClosed, 1);
-  assert.equal(budget.perIssue.get(41), FIXTURE_GROSS);
+  assert.equal(budget.perIssue.get(41), ISSUE_GROSS);
   assert.ok(budget.runCost > 0, 'cost was accounted for');
+  assert.deepEqual(repo.open, [], 'and GitHub agrees the issue is closed');
 });
 
 test('an issue left open over budget is still caught', async () => {
   const { error } = await drainOne({
     cfg: config({ issueBudgetTokens: 1000, maxIssueAttempts: 5 }),
-    closesIssue: false,
+    // The implementation session changed nothing, so the issue stays open.
+    repo: { files: [] },
   });
 
   assert.ok(error);
   assert.match(error.message, /used .* of its .* budget/);
 });
 
+test('an issue that will not progress stops the run after its attempts', async () => {
+  const { error, repo } = await drainOne({
+    cfg: config({ maxIssueAttempts: 2 }),
+    repo: { files: [] },
+  });
+
+  assert.ok(error);
+  assert.match(error.message, /issue #41 is not progressing after 2 attempts/);
+  assert.equal(repo.commits.length, 0);
+});
+
 test('the budget counts gross tokens, not the API input alone', async () => {
   // Gross is what a v1 row expressed, so the configured budget keeps its meaning.
-  const { budget } = await drainOne({
-    cfg: config({ issueBudgetTokens: 10_000_000 }),
-  });
-  assert.equal(budget.phaseTokens, FIXTURE_GROSS);
-  assert.equal(budget.runTokens, FIXTURE_GROSS);
+  const { budget } = await drainOne({ cfg: config() });
+  assert.equal(budget.phaseTokens, ISSUE_GROSS);
+  assert.equal(budget.runTokens, ISSUE_GROSS);
 });
 
 test('the test harness never writes to the real stats file', async () => {
   const realStats = '.claude/ralph.stats.jsonl';
   const before = fs.existsSync(realStats) ? fs.readFileSync(realStats, 'utf8') : null;
 
-  const { statsFile } = await drainOne({ cfg: config({ issueBudgetTokens: 10_000_000 }) });
+  const { statsFile } = await drainOne({ cfg: config() });
 
   const after = fs.existsSync(realStats) ? fs.readFileSync(realStats, 'utf8') : null;
   assert.equal(after, before, 'the run baseline is untouched');

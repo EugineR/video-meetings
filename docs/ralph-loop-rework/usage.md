@@ -9,12 +9,13 @@ A short guide for developers.
 ## What it does
 
 It takes the open issues of a phase's milestone and implements them one at a time, each
-in its own Claude session, committing to the phase branch. It then reviews the phase and
+in its own Claude session. Every issue is then gated, reviewed by a separate session and
+committed **by the orchestrator** to the phase branch. It then reviews the phase and
 merges it into the feature branch as a single merge commit with a tag. Then on to the
 next phase. When the phases run out it opens **one pull request** into `master` and stops.
 
 ```
-one issue   = one session
+one issue   = implement -> gate -> review -> (repair) -> commit -> close
 one phase   = one tagged merge commit on the feature branch = a rollback point
 the feature = one pull request, which you merge
 ```
@@ -69,14 +70,19 @@ Per review: $1.36 (median of 5 from .claude/ralph.stats.jsonl)
    2 issues  ~$  5.39  ~11.90M gross  <=  7 sessions   Phase 6: Profile page
    ...
 
-Total: 5 phases, 22 issues, ~$51.20, ~106.92M gross input, at most 59 sessions
+Total: 5 phases, 22 issues, ~$51.20, ~144.54M gross input, at most 279 sessions
 No session was started.
 ```
 
-The per-issue figure is a median over *issues*, not sessions: an issue that took two attempts is
-charged both, which is why it reads "10 across 14 sessions". Plan with the dollars. The token
-column is gross — it includes cache reads, billed at a fraction of the input price — and is there
-only for scale.
+The per-issue figure is a median over *issues*, not sessions: every session an issue took —
+implementation, review and any repair — is charged to it, which is why it reads "10 across 14
+sessions". Plan with the dollars. The token column is gross — it includes cache reads, billed at a
+fraction of the input price — and is there only for scale.
+
+The session ceiling is a worst case and reads high on purpose: an issue may take
+`maxIssueAttempts × (1 implementation + maxIssueRepairs repairs + maxIssueRepairs + 1 reviews)`.
+Nothing in the observed data goes near it, and the per-session dollar caps and the per-issue token
+budget stop it long before.
 
 ### 2. Run as many phases as you can spare the limit for
 
@@ -92,11 +98,19 @@ Phases that are already done are skipped and do not count against `--phases`.
 [14:23:05] > Phase 2 "Password change API" . branch feature/user-profile-phase-2 . 5 open issue(s) . budget 42.00M
 [14:23:05] > issue #31 "Add ChangePasswordCommand" . attempt 1/2 . sonnet . maxTurns 100
 [14:23:41]   . 6 events . 210k gross in . Bash: pnpm --filter api test
-[14:26:30] + issue #31 closed . $1.66 . 3m25s . 24 req . 1.9M gross in . completed . run total $1.66
+[14:26:12]   . gate lint:api ok
+[14:26:44]   . gate typecheck:api ok
+[14:27:20]   . gate test:api ok
+[14:28:55]   review: APPROVED . $0.34 . 9 req . 1m31s
+[14:29:02] + issue #31 closed . $1.44 . 5m57s . 1.4M gross in . committed 7f3a91c2 . run total $1.44
 [14:41:02] > phase review . round 1/3 . opus
 [14:44:10]   review: APPROVED . $1.36 . 31 req . 3m08s
 [14:46:55] + phase 2 merged into feature/user-profile . tag ralph/user-profile/phase-2 . 13.1M
 ```
+
+A gate step that fails, or a review that returns `BLOCKED`, prints a `~ repair 1/2` line
+and the issue goes round again. Nothing is committed until the gate is green **and** the
+reviewer said `APPROVED`.
 
 If a session goes more than two minutes without an event you get a warning. If the
 silence drags on, the session is killed and retried.
@@ -147,6 +161,12 @@ closed issues are skipped, the branch is reused, no pull request is duplicated.
 | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `issue #N is not progressing`                | check the last sessions in `ralph.log` and the issue comments; usually the task is ambiguous |
 | `issue #N is over budget`                    | the issue is too large — split it in two                                                     |
+| `issue #N still does not pass after N repair round(s)` | the gate or the reviewer keeps blocking; the work is in the tree — read it, fix or discard it, then re-run |
+| `the commit ... was refused`                 | the pre-commit hook failed; the work is staged, the reason is in the message                 |
+| `... but closing it failed`                  | the work is committed; close the issue by hand and re-run. **Do not re-implement it**         |
+| `reads OPEN on GitHub after being closed`    | same: the commit is safe, GitHub is not; check GitHub, then re-run                            |
+| `the working tree is not clean before issue #N` | something is left over from a previous run; commit or discard it, then re-run              |
+| `the reviewer changed the working tree`      | the reviewer wrote something; its verdict is discarded — check what it left behind            |
 | `did not pass review`                        | the phase branch is not merged and follow-up issues are filed; read them and decide          |
 | `review returned ... and filed no issue`     | the reviewer blocked, or its verdict was unreadable, and left nothing to act on; read `ralph.log` |
 | `the review session did not complete`        | the reviewer crashed, stalled or ran out of turns; its verdict is not trusted, so re-run     |
@@ -168,7 +188,7 @@ what is already done.
 Two files, both gitignored:
 
 - **`.claude/ralph.log`** — a copy of the console output. Read it to see what happened and where it stopped.
-- **`.claude/ralph.stats.jsonl`** — one JSON row per session. `schemaVersion: 2` rows carry `kind`, `phase`, `issue`, `stage`, `model`, `effort`, `terminalReason`, `assistantEvents`, `apiRequests`, `inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, `grossInputTokens`, `outputTokens`, `forkedEvents`, `costUsd`, `usageQuality`, `durationMs`, `exitCode` and the rate-limit state. This is what `--dry-run` derives its median from.
+- **`.claude/ralph.stats.jsonl`** — one JSON row per session. `kind` is `impl`, `issue-review`, `repair` or `phase-review`, and `stage` names the pipeline step (`IMPLEMENT`, `ISSUE_REVIEW`, `REPAIR`, `PHASE_REVIEW`). An issue costs the sum of its rows, which is what the per-issue estimate groups. `schemaVersion: 2` rows carry `kind`, `phase`, `issue`, `stage`, `model`, `effort`, `terminalReason`, `assistantEvents`, `apiRequests`, `inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, `grossInputTokens`, `outputTokens`, `forkedEvents`, `costUsd`, `usageQuality`, `durationMs`, `exitCode` and the rate-limit state. This is what `--dry-run` derives its median from.
 
   Rows written before the telemetry fix have no `schemaVersion` and are read as v1: their `inputTokens` was the gross all-three sum and is normalised into `grossInputTokens`, the fields v1 never knew come back `null`, and their usage is marked `estimated` because it double-counted re-emitted messages. **Their `costUsd` is correct** — it always came straight from the CLI — so cost comparisons may span both schemas while token comparisons may not.
 
@@ -202,10 +222,61 @@ as open.
 
 ---
 
+## The issue pipeline
+
+One issue runs through:
+
+```text
+PREPARE -> IMPLEMENT -> ISSUE_GATE -> ISSUE_REVIEW
+        -> REPAIR (only when the gate or the review blocks) -> back to the gate
+        -> COMMIT -> CLOSE_ISSUE -> VERIFY_CLOSED
+```
+
+- **PREPARE** records `issueBaseSha` (the current `HEAD`) and reads the issue body once.
+  Everything downstream — the gate, the reviewer's diff, the commit — speaks in terms of
+  that commit. A dirty tree stops the issue before a session is started; the exception is
+  a retry of an issue that already has a base recorded, where the changes in the tree are
+  the previous attempt's own work.
+- **IMPLEMENT** gets the issue body in its prompt, so it does not fetch it. It cannot
+  reach `Task` or `Skill` (`--disallowedTools`, `--disable-slash-commands`), and browser
+  tools are handed only to an issue labelled `web`, `frontend`, `ui` or `e2e`. It leaves
+  the work uncommitted and ends with `FILES:` / `TESTS:` / `COMMIT:` lines.
+- **ISSUE_GATE** is run by the orchestrator, not by a model: prettier over the changed
+  files, then lint, typecheck and the unit suite of each workspace the change touched.
+  Its output is captured, and **a passing step's output never reaches a session** — that
+  is a large part of the saving. Steps are configurable via `issueGate`.
+- **ISSUE_REVIEW** is a separate read-only session (`--tools Read,Grep,Glob,Bash`,
+  `--effort high`, capped in dollars) that reviews exactly `git diff <issueBaseSha>`. Only
+  an explicit `VERDICT: APPROVED` approves; a crash, a timeout, an empty reply or an
+  unreadable verdict is a failure. If the reviewer changes the working tree its verdict
+  is thrown away.
+- **REPAIR** is a bounded session that gets only the findings (or the failing gate step's
+  output) and fixes those. After it, the gate runs again from the start. `maxIssueRepairs`
+  rounds, then the run stops with nothing committed.
+- **COMMIT / CLOSE / VERIFY** are the orchestrator's. The commit message is the session's
+  suggested subject if it really is a conventional one, otherwise one built from the
+  issue — no session is ever spawned to write a commit message. The pre-commit hook still
+  runs. After `gh issue close` the orchestrator asks GitHub separately whether the issue
+  is closed.
+
+If the close fails the run stops and says so: the work is committed and safe, and it must
+**not** be re-implemented.
+
+Adding `e2e` to the gate is a one-line config change, and worth it once the Postgres
+container is a standing part of your runs:
+
+```json
+{ "name": "e2e", "run": ["pnpm", "--filter", "api", "run", "test:e2e"], "when": "apps/api/" }
+```
+
+It is not a default because a step that fails whenever Docker is down would block every
+issue.
+
 ## Review findings
 
-Each session reviews its own diff with `/code-review` before committing and fixes what it
-finds. The separate phase review is read-only and sorts findings into two buckets:
+The issue review is internal: its findings go straight into a repair session and never
+become GitHub issues. The separate phase review is read-only and sorts findings into two
+buckets:
 
 - **Blocking** — filed as issues **in the phase milestone**, so the loop implements the fixes and reviews again.
 - **Non-blocking** — filed as issues labelled `nice-to-have` **with no milestone**, so they stay in the backlog without holding up the phase.
@@ -223,8 +294,14 @@ a milestone of their own and add it to the phase catalogue.
 - **`/model opus` in an interactive session does not affect the loop** — the models are set explicitly in the config (`implModel`, `reviewModel`). That is deliberate: the loop used to inherit the interactive default silently and ran twice as expensive.
 - **The orchestrator never merges into `master`.** The final pull request stays open until you decide; merge it **with a merge commit, not a squash**, or the per-issue history collapses.
 - **One feature at a time.** Parallel runs collide over the working tree, the database and the shared rate limit — see §12 in [plan.md](./plan.md).
+- **Do not put `Skill` back into `allowedTools`.** The skill an implementation session was told to run reviewed its own diff, over the wrong range, and forked a subagent to do it. That is what the issue reviewer replaced.
+- **Do not add a gate step you have not run by hand.** A step that fails for an environmental reason blocks every issue of every phase, and the loop cannot tell that apart from broken code.
 
 ## Effort
+
+`issueReviewEffort` is `high`. That stage did not exist before, so naming its effort sets a
+baseline rather than changing one — and a reviewer that thinks less finds less, which is the one
+saving this work is not willing to make.
 
 `implEffort` and `reviewEffort` are not set. Effort has never been configured for this
 repository, so every session so far ran at the CLI's own default — which the CLI does not

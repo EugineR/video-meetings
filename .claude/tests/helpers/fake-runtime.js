@@ -45,12 +45,21 @@ function fakeSpawnSync(rules) {
  * cut the stream into fixed-size chunks that split lines, which is what a real pipe
  * does and what the buffering in runSession has to survive.
  */
-function fakeSpawn({ fixture, exitCode = 0, delivery = 'lines' } = {}) {
+function fakeSpawn({ fixture, fixtures, exitCode = 0, delivery = 'lines' } = {}) {
   const calls = [];
   const fn = (file, args) => {
-    calls.push({ file, args });
+    // The prompt never appears in argv - it goes over stdin - so it is recorded here.
+    // Several of the pipeline's guarantees are guarantees about the prompt.
+    const call = { file, args, stdin: '' };
+    calls.push(call);
 
-    const text = fixture ? fixtureLines(fixture).join('\n') + '\n' : '';
+    // A sequence replays one fixture per session, which is how an issue now runs:
+    // implement, review, repair, review. The last one repeats once the list runs out,
+    // so a test only has to name the sessions it cares about.
+    const name = fixtures
+      ? fixtures[Math.min(calls.length - 1, fixtures.length - 1)]
+      : fixture;
+    const text = name ? fixtureLines(name).join('\n') + '\n' : '';
     const pieces = [];
     if (delivery === 'lines') {
       for (const line of text.split('\n')) if (line) pieces.push(line + '\n');
@@ -64,7 +73,10 @@ function fakeSpawn({ fixture, exitCode = 0, delivery = 'lines' } = {}) {
     child.stdout = Readable.from(pieces, { encoding: 'utf8' });
     child.stdout.setEncoding = () => {};
     child.stdin = new EventEmitter();
-    child.stdin.write = () => true;
+    child.stdin.write = (text) => {
+      call.stdin += String(text);
+      return true;
+    };
     child.stdin.end = () => {};
     child.kill = () => {};
     child.pid = 4242;
