@@ -304,7 +304,7 @@ test('a close failure never starts another implementation session', async () => 
   });
 
   assert.ok(error);
-  assert.match(error.message, /do not re-implement it/);
+  assert.match(error.message, /without re-implementing anything/);
   assert.match(error.message, /committed as commit00/);
   assert.equal(spawn.calls.length, 2, 'no third session was started');
   assert.equal(repo.commits.length, 1, 'the work is committed and safe');

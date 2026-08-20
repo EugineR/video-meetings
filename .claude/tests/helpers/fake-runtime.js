@@ -93,13 +93,15 @@ function fakeSpawn({ fixture, fixtures, exitCode = 0, delivery = 'lines' } = {})
  * back a restore function. Always restore in a finally: the module is a singleton
  * across the whole test file.
  */
-function withFakes(ralph, { spawnSync, spawn } = {}) {
-  const original = { spawnSync: ralph.runtime.spawnSync, spawn: ralph.runtime.spawn };
-  if (spawnSync) ralph.runtime.spawnSync = spawnSync;
-  if (spawn) ralph.runtime.spawn = spawn;
+function withFakes(ralph, fakes = {}) {
+  const original = { ...ralph.runtime };
+  // `sleep` is faked as often as the two spawns: a test that really waited out a rate
+  // limit reset would sit there for the length of the reset.
+  for (const key of ['spawnSync', 'spawn', 'sleep']) {
+    if (fakes[key]) ralph.runtime[key] = fakes[key];
+  }
   return () => {
-    ralph.runtime.spawnSync = original.spawnSync;
-    ralph.runtime.spawn = original.spawn;
+    Object.assign(ralph.runtime, original);
   };
 }
 

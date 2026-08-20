@@ -69,7 +69,8 @@ apps/api/uploads/
 .claude/ralph.log
 .claude/ralph.stats.jsonl
 .claude/ralph.stop
-.claude/ralph.iterations.json
+.claude/ralph.state.json
+.claude/ralph.state.json.tmp
 
 # Scratch diff dumps agents write while reviewing a phase
 *_diff_review.txt

@@ -28,6 +28,7 @@ const paths = {
   log: '.claude/ralph.log',
   stats: '.claude/ralph.stats.jsonl',
   stop: '.claude/ralph.stop',
+  state: '.claude/ralph.state.json',
 };
 
 // Baseline from docs/ralph-loop-rework/plan.md §3, used until ralph.stats.jsonl has samples.
@@ -82,7 +83,7 @@ class Stop extends Error {}
  * orchestrator without a real claude, git, gh or pnpm; production never touches the
  * fields. Keeping it one object means a test cannot forget to stub one of the two.
  */
-const runtime = { spawn, spawnSync };
+const runtime = { spawn, spawnSync, sleep };
 
 // ─── infrastructure ────────────────────────────────────────────────────────────
 
@@ -206,6 +207,10 @@ are the rollback points. Nothing is merged into the default branch: once every p
 done the loop opens a single pull request and stops.
 
 To stop: Ctrl-C (graceful), Ctrl-C twice (immediate), or create ${paths.stop}.
+
+Every stage is checkpointed to ${paths.state}, so a stop - a rate limit, a Ctrl-C, a
+crash - resumes that stage rather than repeating the issue. The checkpoint is cleared
+only once GitHub confirms the issue closed. Delete it to start the current issue over.
 `);
 }
 
@@ -294,6 +299,9 @@ function loadConfig(file) {
     maxIssueRepairs: cfg.maxIssueRepairs || 2,
     maxReviewRounds: cfg.maxReviewRounds || 3,
     maxRateLimitRetries: cfg.maxRateLimitRetries || 3,
+    // How many resets one run may sit through. Waiting does not cost an attempt, so
+    // without a cap a run can spend a day asleep and report nothing back.
+    maxRateLimitWaits: cfg.maxRateLimitWaits || 4,
     issueBudgetTokens: cfg.issueBudgetTokens || 6_000_000,
     reviewBudgetTokens: cfg.reviewBudgetTokens || 4_000_000,
     // Opt-in, and deliberately not defaulted. Effort has never been set for this
@@ -353,7 +361,11 @@ function loadConfig(file) {
     browserTools: cfg.browserTools || ['mcp__playwright'],
     browserIssueLabels: cfg.browserIssueLabels || ['web', 'frontend', 'ui', 'e2e'],
     issueGate: cfg.issueGate || DEFAULT_ISSUE_GATE,
-    onRateLimit: cfg.onRateLimit || 'wait',
+    // `stop` is the default a config that says nothing gets: stopping is only cheap
+    // because the checkpoint resumes the exact stage, so an orchestrator without a
+    // checkpoint should never have defaulted to sleeping through a reset. A config may
+    // still ask for `wait` - .claude/ralph.config.json does, for unattended runs.
+    onRateLimit: cfg.onRateLimit || 'stop',
     implPrompt: cfg.implPrompt,
     issueReviewPrompt: cfg.issueReviewPrompt,
     repairPrompt: cfg.repairPrompt,
@@ -1036,12 +1048,12 @@ function fillPrompt(template, values) {
 
 // ─── rate limit ────────────────────────────────────────────────────────────────
 
-async function handleRateLimit(st, cfg, opts) {
+async function handleRateLimit(st, cfg, opts, budget) {
   const info = st.rateLimit;
   if (!info || info.status === 'allowed') return;
   if (opts.stopOnLimit || cfg.onRateLimit === 'stop') {
     throw new Stop(
-      `rate limit hit (${info.rateLimitType}), stopping as configured`,
+      `rate limit hit (${info.rateLimitType}), stopping as configured - re-run once it clears and the checkpoint picks the current stage back up`,
     );
   }
   if (!info.resetsAt) {
@@ -1049,17 +1061,170 @@ async function handleRateLimit(st, cfg, opts) {
       `rate limit hit (${info.rateLimitType}) with no reset time reported - re-run once it clears`,
     );
   }
+  // Waiting is not an attempt, but it is not free either: a run that keeps waiting out
+  // resets can burn a whole day making no progress, so the waits are counted and capped.
+  if (budget) {
+    budget.rateLimitWaits = (budget.rateLimitWaits || 0) + 1;
+    if (budget.rateLimitWaits > cfg.maxRateLimitWaits) {
+      throw new Stop(
+        `this run has already waited out ${cfg.maxRateLimitWaits} rate-limit reset(s), stopping instead of waiting again - re-run later and the checkpoint picks the current stage back up`,
+      );
+    }
+  }
   const resetAt = info.resetsAt * 1000;
   const waitMs = Math.max(0, resetAt - Date.now()) + 15000;
   log(
-    `... ${info.rateLimitType} limit exhausted, waiting for reset at ${new Date(resetAt).toTimeString().slice(0, 8)} (${fmtDuration(waitMs)})`,
+    `... ${info.rateLimitType} limit exhausted, waiting for reset at ${new Date(resetAt).toTimeString().slice(0, 8)} (${fmtDuration(waitMs)})${budget ? ` . wait ${budget.rateLimitWaits}/${cfg.maxRateLimitWaits} this run` : ''}`,
   );
-  await sleep(waitMs);
+  await runtime.sleep(waitMs);
 }
 
 function checkInterrupt() {
   if (stopRequested) throw new Stop('stopped by Ctrl-C');
   if (fs.existsSync(paths.stop)) throw new Stop(`found ${paths.stop}, stopping`);
+}
+
+// ─── durable state ─────────────────────────────────────────────────────────────
+
+const STATE_SCHEMA_VERSION = 1;
+
+/**
+ * Every stage a checkpoint can stand at. The issue stages are the ones WO-2 introduced
+ * and are what a resume dispatches on; PHASE_REVIEW is recorded for diagnostics only -
+ * a phase review is read-only, so there is never anything of its own to resume.
+ */
+const STAGES = [
+  'PREPARE',
+  'IMPLEMENT',
+  'ISSUE_GATE',
+  'ISSUE_REVIEW',
+  'REPAIR',
+  'COMMIT',
+  'CLOSE_ISSUE',
+  'VERIFY_CLOSED',
+  'PHASE_REVIEW',
+];
+
+/**
+ * The stages that leave uncommitted work in the tree. Only these may relax the
+ * clean-tree guard at startup: at CLOSE_ISSUE the work is already committed, and a
+ * phase review never writes, so dirt at those stages belongs to somebody else.
+ */
+const DIRT_EXPLAINED_BY = new Set([
+  'IMPLEMENT',
+  'ISSUE_GATE',
+  'ISSUE_REVIEW',
+  'REPAIR',
+  'COMMIT',
+]);
+
+/**
+ * Writes the checkpoint atomically: a temporary file in the same directory, then a
+ * rename, so a run killed mid-write leaves either the old checkpoint or the new one and
+ * never a half-written one. A failure here is logged rather than thrown - losing the
+ * checkpoint costs a repeated stage, losing the run costs the whole issue.
+ */
+function writeState(fields) {
+  const next = {
+    schemaVersion: STATE_SCHEMA_VERSION,
+    ...fields,
+    updatedAt: new Date().toISOString(),
+  };
+  const tmp = `${paths.state}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n');
+    fs.renameSync(tmp, paths.state);
+  } catch (err) {
+    log(`  ! could not write the checkpoint: ${err.message}`);
+  }
+  return next;
+}
+
+/**
+ * Reads the checkpoint, or null when there is none.
+ *
+ * Anything present but unusable is a hard stop, never a shrug: a checkpoint the loop
+ * cannot read is exactly the situation in which guessing re-implements work that is
+ * already in the tree.
+ */
+function readState() {
+  if (!fs.existsSync(paths.state)) return null;
+
+  let raw;
+  try {
+    raw = fs.readFileSync(paths.state, 'utf8');
+  } catch (err) {
+    throw new Stop(
+      `${paths.state} exists but cannot be read (${err.message}) - inspect it, then delete it to start the issue over`,
+    );
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Stop(
+      `${paths.state} is not valid JSON - inspect it, then delete it to start the issue over`,
+    );
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Stop(`${paths.state} is not a checkpoint object - delete it to start the issue over`);
+  }
+  if (parsed.schemaVersion !== STATE_SCHEMA_VERSION) {
+    throw new Stop(
+      `${paths.state} has schemaVersion ${JSON.stringify(parsed.schemaVersion)}, this orchestrator writes ${STATE_SCHEMA_VERSION} - delete it to start the issue over`,
+    );
+  }
+  for (const key of ['feature', 'branch', 'stage']) {
+    if (!parsed[key]) {
+      throw new Stop(
+        `${paths.state} has no ${key} - it is not a usable checkpoint, delete it to start the issue over`,
+      );
+    }
+  }
+  if (!STAGES.includes(parsed.stage)) {
+    throw new Stop(
+      `${paths.state} records the unknown stage ${JSON.stringify(parsed.stage)} - delete it to start the issue over`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * The clean-tree half of the startup guard, as a value rather than an exit.
+ *
+ * Returns the reason to refuse, or null to go ahead. A resumed issue is legitimately
+ * dirty - the dirt is its own unfinished work - but only at a stage that leaves work in
+ * the tree, and only with a checkpoint that says so. Without one the loop still refuses
+ * rather than sweep somebody else's edits into an issue's commit. The branch half of the
+ * guard is untouched and stays in main: it stops the loop running a stale copy of itself.
+ */
+function startupTreeRefusal(checkpoint, dirty) {
+  if (!dirty) return null;
+  if (checkpoint && DIRT_EXPLAINED_BY.has(checkpoint.stage)) return null;
+  const why = checkpoint
+    ? `the checkpoint stands at ${checkpoint.stage}, a stage that leaves a clean tree`
+    : `no checkpoint in ${paths.state} explains it`;
+  return `Working tree is not clean and ${why} - commit or stash first:
+${dirty}`;
+}
+
+/** Cleared only after a close GitHub has confirmed, or once a phase is merged. */
+function clearState() {
+  try {
+    fs.rmSync(paths.state, { force: true });
+    fs.rmSync(`${paths.state}.tmp`, { force: true });
+  } catch {
+    /* a checkpoint that outlives its work is caught by the HEAD check on resume */
+  }
+}
+
+/** The checkpoint, only if it belongs to this feature and this phase branch. */
+function stateFor(cfg, phase) {
+  const state = readState();
+  if (!state) return null;
+  if (state.feature !== cfg.feature || state.branch !== phase.branch) return null;
+  return state;
 }
 
 // ─── branches ──────────────────────────────────────────────────────────────────
@@ -1324,7 +1489,7 @@ function commitMessageFor(suggestion, issue, labels) {
  * GitHub state is still the source of truth - nothing now depends on a model
  * remembering to write it.
  */
-function commitAndClose(issue, ctx) {
+function commitIssue(issue, ctx) {
   git('add', '-A');
   if (!git('diff', '--cached', '--name-only').stdout) {
     throw new Stop(`nothing to commit for issue #${issue.number} after a green gate`);
@@ -1342,8 +1507,10 @@ function commitAndClose(issue, ctx) {
       `the commit for issue #${issue.number} was refused, the work is staged and left in place:\n${tailOf(`${commit.stdout}\n${commit.stderr}`, 30)}`,
     );
   }
-  const sha = git('rev-parse', 'HEAD').stdout;
+  return git('rev-parse', 'HEAD').stdout;
+}
 
+function closeIssue(issue, sha) {
   const closed = ghTry(
     'issue',
     'close',
@@ -1353,25 +1520,37 @@ function commitAndClose(issue, ctx) {
   );
   if (closed.code !== 0) {
     throw new Stop(
-      `issue #${issue.number} is implemented and committed as ${sha.slice(0, 8)} but closing it failed (${tailOf(closed.stderr, 3)}) - close it by hand and re-run, do not re-implement it`,
+      `issue #${issue.number} is implemented and committed as ${sha.slice(0, 8)} but closing it failed (${tailOf(closed.stderr, 3)}) - re-run and the checkpoint closes it without re-implementing anything`,
     );
   }
+}
 
-  let state = '';
+/** GitHub's own answer, never the exit code of the close: an unreadable answer is not closed. */
+function issueState(issue) {
   try {
-    state = String(
+    return String(
       JSON.parse(
         ghTry('issue', 'view', String(issue.number), '--json', 'state').stdout || '{}',
       ).state || '',
-    );
+    ).toUpperCase();
   } catch {
-    /* an unreadable answer is not a closed issue */
+    return '';
   }
-  if (state.toUpperCase() !== 'CLOSED') {
+}
+
+function verifyClosed(issue, sha) {
+  const state = issueState(issue);
+  if (state !== 'CLOSED') {
     throw new Stop(
       `issue #${issue.number} reads ${state || 'unknown'} on GitHub after being closed, the work is committed as ${sha.slice(0, 8)} - check GitHub before re-running, do not re-implement it`,
     );
   }
+}
+
+function commitAndClose(issue, ctx) {
+  const sha = commitIssue(issue, ctx);
+  closeIssue(issue, sha);
+  verifyClosed(issue, sha);
   return sha;
 }
 
@@ -1379,7 +1558,7 @@ function commitAndClose(issue, ctx) {
  * What to make of a finished session, before anything is read out of it. Fail-closed: a
  * session that did not complete yields no verdict, no commit and no close.
  */
-async function settleSession(st, cfg, opts, what) {
+async function settleSession(st, cfg, opts, what, budget) {
   const outcome = sessionOutcome(st);
   if (st.denials.length > 0 && outcome && !abortedByRateLimit(st)) {
     throw new Stop(
@@ -1387,7 +1566,7 @@ async function settleSession(st, cfg, opts, what) {
     );
   }
   reportDenials(st, what);
-  await handleRateLimit(st, cfg, opts);
+  await handleRateLimit(st, cfg, opts, budget);
   if (abortedByRateLimit(st)) {
     return { status: 'rate-limited', note: `${what} was cut off by the rate limit` };
   }
@@ -1406,9 +1585,90 @@ async function settleSession(st, cfg, opts, what) {
  * review it used to run on its own diff was self-review over the wrong range whose
  * verdict bound nothing; this reviewer is a separate read-only session over exactly the
  * issue's diff, and its verdict decides whether a commit happens at all.
+ *
+ * Each stage is checkpointed to paths.state before it runs, so an interruption - a rate
+ * limit, a Ctrl-C, a crash - resumes that stage rather than the issue. The checkpoint is
+ * read here rather than handed in, because both ways back into this function have to
+ * honour it: the retry inside drainIssues after a rate limit, and the next process.
  */
 async function runIssue(phase, cfg, opts, budget, issue) {
   const ctx = prepareIssue(phase, cfg, budget, issue);
+
+  const mark = (stage, extra) => {
+    if (extra) Object.assign(ctx, extra);
+    writeState({
+      feature: cfg.feature,
+      phase: phase.index,
+      milestone: phase.milestone,
+      branch: phase.branch,
+      issue: issue.number,
+      issueBaseSha: ctx.baseSha,
+      stage,
+      reviewRound: ctx.reviewRound === undefined ? null : ctx.reviewRound,
+      commitSha: ctx.commitSha === undefined ? null : ctx.commitSha,
+      // Not in the work order's schema, and cheap to carry: without it a resumed issue
+      // loses the subject the session suggested and commits a message built from the
+      // issue title instead.
+      commitSubject: ctx.suggestion || null,
+    });
+  };
+
+  const closeOut = (sha) => {
+    mark('CLOSE_ISSUE', { commitSha: sha });
+    closeIssue(issue, sha);
+    mark('VERIFY_CLOSED');
+    verifyClosed(issue, sha);
+    // The only place the checkpoint is dropped: GitHub has confirmed the close.
+    clearState();
+    return sha;
+  };
+  const commitCloseOut = () => {
+    mark('COMMIT');
+    return closeOut(commitIssue(issue, ctx));
+  };
+
+  const saved = stateFor(cfg, phase);
+  const resume = saved && saved.issue === issue.number ? saved : null;
+  if (resume) {
+    const expected = resume.commitSha || resume.issueBaseSha;
+    const head = git('rev-parse', 'HEAD').stdout;
+    if (expected && head !== expected) {
+      throw new Stop(
+        `the checkpoint for issue #${issue.number} stands at ${resume.stage} and expects ${phase.branch} at ${expected.slice(0, 8)}, but HEAD is ${head.slice(0, 8)} - work out which is right, then delete ${paths.state} to start the issue over`,
+      );
+    }
+    ctx.suggestion = resume.commitSubject || null;
+  }
+
+  // Work that is already committed is never done twice. GitHub is asked first: an issue
+  // somebody closed by hand while the loop was down needs no work at all.
+  if (resume && resume.commitSha) {
+    if (issueState(issue) === 'CLOSED') {
+      clearState();
+      return {
+        status: 'closed',
+        note: `already committed as ${resume.commitSha.slice(0, 8)} and closed`,
+      };
+    }
+    log(
+      `~ resuming issue #${issue.number} at CLOSE_ISSUE - it is committed as ${resume.commitSha.slice(0, 8)}, only the close is left`,
+    );
+    return { status: 'closed', note: `committed ${closeOut(resume.commitSha).slice(0, 8)}` };
+  }
+
+  // A checkpoint past IMPLEMENT is worth honouring only while the work it describes is
+  // still in the tree; if somebody discarded it, the honest thing is to implement again.
+  let entry = 'IMPLEMENT';
+  if (resume && !['PREPARE', 'IMPLEMENT', 'PHASE_REVIEW'].includes(resume.stage)) {
+    if (changedFiles(ctx.baseSha).length === 0) {
+      log(
+        `~ the checkpoint for issue #${issue.number} stands at ${resume.stage} but nothing is left in the tree - implementing it again`,
+      );
+    } else {
+      entry = resume.stage;
+    }
+  }
+
   const slots = (extra) => ({
     issue: issue.number,
     title: issue.title,
@@ -1451,14 +1711,35 @@ async function runIssue(phase, cfg, opts, budget, issue) {
     prompt,
   });
 
-  let st = await runSession({
-    ...implSession(fillPrompt(cfg.implPrompt, slots())),
-    maxCostUsd: cfg.implMaxCostUsd,
-  });
-  charge('impl', 'IMPLEMENT', st, cfg.implModel, cfg.implEffort);
-  let settled = await settleSession(st, cfg, opts, 'the implementation session');
-  if (settled) return settled;
-  ctx.suggestion = suggestedCommit(st.resultText);
+  // Review approved, no commit: nothing left to think about, and no session to pay for.
+  if (entry === 'COMMIT') {
+    log(
+      `~ resuming issue #${issue.number} at COMMIT - the review already approved it, only the commit is left`,
+    );
+    return { status: 'closed', note: `committed ${commitCloseOut().slice(0, 8)}` };
+  }
+
+  let st = null;
+  let settled = null;
+  if (entry === 'IMPLEMENT') {
+    mark('IMPLEMENT');
+    st = await runSession({
+      ...implSession(fillPrompt(cfg.implPrompt, slots())),
+      maxCostUsd: cfg.implMaxCostUsd,
+    });
+    charge('impl', 'IMPLEMENT', st, cfg.implModel, cfg.implEffort);
+    settled = await settleSession(st, cfg, opts, 'the implementation session', budget);
+    if (settled) return settled;
+    ctx.suggestion = suggestedCommit(st.resultText);
+  } else {
+    log(
+      `~ resuming issue #${issue.number} at ${entry} - the implementation is already in the tree, not repeating it`,
+    );
+  }
+
+  // Only for the first round, and only when the checkpoint says the gate had already
+  // passed: what was cut off then was the review, so the review is what repeats.
+  let gateAlreadyGreen = entry === 'ISSUE_REVIEW';
 
   for (let round = 1; ; round++) {
     checkInterrupt();
@@ -1468,7 +1749,14 @@ async function runIssue(phase, cfg, opts, budget, issue) {
     }
 
     let findings = null;
-    const failure = runIssueGate(cfg, files);
+    let failure = null;
+    if (gateAlreadyGreen) {
+      log('  . the checkpoint recorded a green gate, going straight back to the review');
+      gateAlreadyGreen = false;
+    } else {
+      mark('ISSUE_GATE', { reviewRound: round });
+      failure = runIssueGate(cfg, files);
+    }
     if (failure) {
       findings = [
         `The gate step "${failure.step}" failed.`,
@@ -1477,6 +1765,7 @@ async function runIssue(phase, cfg, opts, budget, issue) {
         failure.output,
       ].join('\n');
     } else {
+      mark('ISSUE_REVIEW', { reviewRound: round });
       const treeBefore = git('status', '--porcelain').stdout;
       const stat = git('diff', '--shortstat', ctx.baseSha).stdout;
       log(
@@ -1511,7 +1800,7 @@ async function runIssue(phase, cfg, opts, budget, issue) {
         cfg.issueReviewModel,
         cfg.issueReviewEffort,
       );
-      settled = await settleSession(rv, cfg, opts, 'the issue review');
+      settled = await settleSession(rv, cfg, opts, 'the issue review', budget);
       if (settled) return settled;
 
       // Read-only is asserted at the CLI; this is the check that it held.
@@ -1526,10 +1815,7 @@ async function runIssue(phase, cfg, opts, budget, issue) {
         `  review: ${verdict} . $${rv.cost.toFixed(2)} . ${rv.apiRequests} req . ${fmtDuration(rv.durationMs)}`,
       );
       if (verdict === 'APPROVED') {
-        return {
-          status: 'closed',
-          note: `committed ${commitAndClose(issue, ctx).slice(0, 8)}`,
-        };
+        return { status: 'closed', note: `committed ${commitCloseOut().slice(0, 8)}` };
       }
       findings = rv.resultText.trim();
     }
@@ -1541,12 +1827,13 @@ async function runIssue(phase, cfg, opts, budget, issue) {
     }
     log(`~ repair ${round}/${cfg.maxIssueRepairs} for issue #${issue.number}`);
 
+    mark('REPAIR', { reviewRound: round });
     st = await runSession({
       ...implSession(fillPrompt(cfg.repairPrompt, slots({ findings }))),
       maxCostUsd: cfg.repairMaxCostUsd,
     });
     charge('repair', 'REPAIR', st, cfg.implModel, cfg.implEffort);
-    settled = await settleSession(st, cfg, opts, 'the repair session');
+    settled = await settleSession(st, cfg, opts, 'the repair session', budget);
     if (settled) return settled;
     ctx.suggestion = suggestedCommit(st.resultText) || ctx.suggestion;
   }
@@ -1639,6 +1926,8 @@ async function drainIssues(phase, cfg, opts, budget) {
 }
 
 async function reviewPhase(phase, cfg, opts, budget) {
+  let limitAborts = 0;
+
   for (let round = 1; ; round++) {
     checkInterrupt();
     if (round > cfg.maxReviewRounds) {
@@ -1649,6 +1938,17 @@ async function reviewPhase(phase, cfg, opts, budget) {
     log(
       `> phase review . round ${round}/${cfg.maxReviewRounds} . ${cfg.reviewModel}`,
     );
+    writeState({
+      feature: cfg.feature,
+      phase: phase.index,
+      milestone: phase.milestone,
+      branch: phase.branch,
+      issue: null,
+      issueBaseSha: null,
+      stage: 'PHASE_REVIEW',
+      reviewRound: round,
+      commitSha: null,
+    });
 
     const st = await runSession({
       model: cfg.reviewModel,
@@ -1675,7 +1975,25 @@ async function reviewPhase(phase, cfg, opts, budget) {
     budget.runCost += st.cost;
 
     reportDenials(st, 'review');
-    await handleRateLimit(st, cfg, opts);
+    await handleRateLimit(st, cfg, opts, budget);
+
+    // The phase review had no rate-limit branch at all: a limit here fell straight
+    // through to sessionOutcome and ended the whole run, throwing away every issue the
+    // phase had already finished. Only drainIssues ever retried. A review the limit cut
+    // off did not fail at reviewing, so it repeats without costing a review round.
+    if (abortedByRateLimit(st)) {
+      limitAborts++;
+      if (limitAborts > cfg.maxRateLimitRetries) {
+        throw new Stop(
+          `the review of phase "${phase.milestone}" was cut off by the rate limit ${limitAborts} times, stopping instead of retrying further`,
+        );
+      }
+      log(
+        `~ the phase review was cut off by the rate limit, repeating it without charging a round (${limitAborts}/${cfg.maxRateLimitRetries})`,
+      );
+      round--;
+      continue;
+    }
 
     const outcome = sessionOutcome(st);
     if (outcome) {
@@ -1726,6 +2044,19 @@ async function runPhase(phase, cfg, opts, base, budget) {
   budget.limitAborts = new Map();
   budget.baseSha = new Map();
   budget.phaseTokens = 0;
+
+  // A checkpoint for this phase carries the anchor its issue was measured from. Seeding
+  // it here is what lets prepareIssue accept the tree the interrupted attempt left: the
+  // dirt is that issue's own work, and re-anchoring on HEAD would hide it from the gate,
+  // the reviewer and the commit.
+  const resume = stateFor(cfg, phase);
+  if (resume && resume.issue && resume.issueBaseSha) {
+    budget.baseSha.set(resume.issue, resume.issueBaseSha);
+    log(
+      `  checkpoint: issue #${resume.issue} at ${resume.stage}, base ${resume.issueBaseSha.slice(0, 8)}, written ${resume.updatedAt}`,
+    );
+  }
+
   budget.phaseLimit =
     cfg.issueBudgetTokens * Math.max(1, openBefore.length) +
     cfg.reviewBudgetTokens * cfg.maxReviewRounds;
@@ -1775,6 +2106,9 @@ ${leftovers}`,
   git('tag', '-f', phaseTag(phase, cfg));
   git('push', '-u', 'origin', cfg.featureBranch);
   git('push', '-f', 'origin', phaseTag(phase, cfg));
+  // The phase is in the feature branch: the PHASE_REVIEW checkpoint has nothing left
+  // to describe, and leaving it would make the next run report a stale stage.
+  clearState();
 
   log(
     `+ phase ${phase.index} merged into ${cfg.featureBranch} . tag ${phaseTag(phase, cfg)} . ${fmtTokens(budget.phaseTokens)} for the phase`,
@@ -1849,7 +2183,7 @@ function maybeOpenFeaturePr(cfg, allPhases, base) {
 
 // ─── dry run ───────────────────────────────────────────────────────────────────
 
-function printPlan(phases, cfg, base) {
+function printPlan(phases, cfg, base, checkpoint) {
   const issueCost = estimateCost(ISSUE_KINDS, BASELINE_ISSUE_COST_USD, {
     perIssue: true,
   });
@@ -1878,6 +2212,9 @@ function printPlan(phases, cfg, base) {
       `Feature "${cfg.feature}" on ${cfg.featureBranch} -> pull request into ${base} (you merge it)`,
       `Per issue:  $${issueCost.usd.toFixed(2)} (${provenance(issueCost)})`,
       `Per review: $${reviewCost.usd.toFixed(2)} (${provenance(reviewCost)})`,
+      checkpoint
+        ? `Checkpoint: ${checkpoint.issue ? `issue #${checkpoint.issue}` : 'phase'} at ${checkpoint.stage} on ${checkpoint.branch} (${checkpoint.updatedAt}) - a real run resumes there`
+        : 'Checkpoint: none - a real run starts the next open issue from scratch',
       '',
     ].join('\n'),
   );
@@ -1961,8 +2298,18 @@ async function main() {
   const allPhases = discoverPhases(cfg);
   const phases = selectPhases(allPhases, opts);
 
+  // Read before anything else looks at the tree: a checkpoint that cannot be read is a
+  // hard stop, because guessing is exactly how work already in the tree gets redone.
+  let checkpoint = null;
+  try {
+    checkpoint = readState();
+  } catch (err) {
+    if (!(err instanceof Stop)) throw err;
+    fail(err.message);
+  }
+
   if (opts.dryRun) {
-    printPlan(phases, cfg, base);
+    printPlan(phases, cfg, base, checkpoint);
     return;
   }
 
@@ -1976,9 +2323,29 @@ async function main() {
     );
   }
 
+  if (checkpoint && checkpoint.feature !== cfg.feature) {
+    fail(
+      `${paths.state} is a checkpoint of feature "${checkpoint.feature}" but this run is "${cfg.feature}" - finish that run or delete its checkpoint first`,
+    );
+  }
+  if (checkpoint) {
+    log(
+      `| checkpoint found: ${checkpoint.issue ? `issue #${checkpoint.issue}` : 'phase'} at ${checkpoint.stage} on ${checkpoint.branch}, written ${checkpoint.updatedAt}`,
+    );
+  }
+
+  // The clean-tree guard, relaxed exactly as far as a checkpoint can account for. A
+  // resumed issue is legitimately dirty - the dirt is its own unfinished work - but only
+  // at a stage that leaves work in the tree, and only with a checkpoint that says so.
+  // Without one, the loop still refuses to start rather than sweep up somebody's edits.
   const dirty = git('status', '--porcelain').stdout;
-  if (dirty)
-    fail(`Working tree is not clean - commit or stash first:\n${dirty}`);
+  const refusal = startupTreeRefusal(checkpoint, dirty);
+  if (refusal) fail(refusal);
+  if (dirty) {
+    log(
+      `| the working tree is dirty and the checkpoint accounts for it (issue #${checkpoint.issue} at ${checkpoint.stage}) - resuming there`,
+    );
+  }
 
   process.on('SIGINT', () => {
     if (stopRequested) {
@@ -2002,6 +2369,7 @@ async function main() {
     attempts: new Map(),
     limitAborts: new Map(),
     baseSha: new Map(),
+    rateLimitWaits: 0,
   };
   const startedAt = Date.now();
   let executed = 0;
@@ -2033,6 +2401,17 @@ async function main() {
     log(
       `  branch ${git('rev-parse', '--abbrev-ref', 'HEAD').stdout} left as is; re-running picks up from here`,
     );
+    let left = null;
+    try {
+      left = readState();
+    } catch {
+      /* already reported by whoever wrote it */
+    }
+    if (left) {
+      log(
+        `  checkpoint: ${left.issue ? `issue #${left.issue}` : 'phase'} at ${left.stage} in ${paths.state} - the next run resumes that stage, it does not repeat the issue`,
+      );
+    }
     process.exitCode = 1;
   }
 }
@@ -2072,6 +2451,19 @@ module.exports = {
   suggestedCommit,
   commitMessageFor,
   commitAndClose,
+  commitIssue,
+  closeIssue,
+  verifyClosed,
+  issueState,
+  handleRateLimit,
+  readState,
+  writeState,
+  clearState,
+  stateFor,
+  startupTreeRefusal,
+  STAGES,
+  DIRT_EXPLAINED_BY,
+  STATE_SCHEMA_VERSION,
   tailOf,
   recordStats,
   readVerdict,

@@ -159,12 +159,12 @@ should be separable. Provider-specific filenames must be thin entry points, not 
 
 ## Definition of done
 
-- [ ] A stage checkpoint is written atomically and is gitignored.
-- [ ] A rate limit resumes the current stage instead of repeating the issue.
-- [ ] `reviewPhase` handles a rate limit instead of ending the run.
-- [ ] A dirty tree without a valid checkpoint stops the loop.
-- [ ] State is cleared only after a verified close.
+- [x] A stage checkpoint is written atomically and is gitignored.
+- [x] A rate limit resumes the current stage instead of repeating the issue.
+- [x] `reviewPhase` handles a rate limit instead of ending the run.
+- [x] A dirty tree without a valid checkpoint stops the loop.
+- [x] State is cleared only after a verified close.
 - [ ] `apps/api/CLAUDE.md` and `apps/web/CLAUDE.md` are substantially smaller with no knowledge lost.
 - [ ] Every rule that was buried inside an inventory bullet survived the move.
 - [ ] Links are checked.
-- [ ] Branching, rollback tags and the human merge gate are unchanged.
+- [x] Branching, rollback tags and the human merge gate are unchanged.

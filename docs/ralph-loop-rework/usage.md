@@ -151,7 +151,81 @@ With no flags every unfinished phase in the config runs.
 
 Stopping is safe. Commits stay on the phase branch, closed issues stay closed, and
 nothing is merged if the phase did not finish. Re-running picks up where it left off:
-closed issues are skipped, the branch is reused, no pull request is duplicated.
+closed issues are skipped, the branch is reused, no pull request is duplicated — and,
+since WO-3, the interrupted issue resumes at the stage it reached rather than starting over.
+
+---
+
+## Resuming: the checkpoint
+
+Before every stage the orchestrator writes `.claude/ralph.state.json` — gitignored, one
+small object, written to a temporary file and renamed, so a run killed mid-write leaves
+either the old checkpoint or the new one and never half of one.
+
+```json
+{
+  "schemaVersion": 1,
+  "feature": "user-profile-page-and-editing",
+  "phase": 4,
+  "milestone": "Phase 4: Avatar streaming & profile response integration",
+  "branch": "feature/user-profile-phase-4",
+  "issue": 41,
+  "issueBaseSha": "7f3a91c2...",
+  "stage": "ISSUE_REVIEW",
+  "reviewRound": 1,
+  "commitSha": null,
+  "commitSubject": "feat(api): stream the profile avatar",
+  "updatedAt": "2026-08-20T14:41:02.001Z"
+}
+```
+
+`stage` is one of `IMPLEMENT`, `ISSUE_GATE`, `ISSUE_REVIEW`, `REPAIR`, `COMMIT`,
+`CLOSE_ISSUE`, `VERIFY_CLOSED` or `PHASE_REVIEW`. The next run resumes **that stage**, not
+the issue:
+
+| What the checkpoint says                | What the next run does                                         |
+| --------------------------------------- | -------------------------------------------------------------- |
+| no checkpoint, clean tree               | starts the next open issue                                     |
+| no checkpoint, dirty tree               | **stops** — it never guesses whose changes those are           |
+| `IMPLEMENT`                             | implements again — that session never finished                 |
+| `ISSUE_GATE` or `REPAIR`                | re-runs the gate; the implementation is **not** repeated        |
+| `ISSUE_REVIEW`                          | re-runs the review only — the gate was green at the checkpoint  |
+| `COMMIT`                                | commits and closes; no model session at all                    |
+| `CLOSE_ISSUE` / `VERIFY_CLOSED`         | closes and verifies only; the commit already exists            |
+| the issue is already closed on GitHub   | marks it done; no model session at all                         |
+| `PHASE_REVIEW`                          | reviews the phase again (a phase review writes nothing)         |
+| `HEAD` is not where the checkpoint says | **stops**, with both SHAs in the message                        |
+
+The checkpoint is deleted **only** after GitHub confirms the issue closed, or once the
+phase is merged. Two consequences worth knowing:
+
+- **The tree may legitimately be dirty at startup.** The clean-tree guard is relaxed
+  exactly when a checkpoint stands at a stage that leaves work in the tree (`IMPLEMENT`
+  through `COMMIT`). At any other stage, or with no checkpoint at all, the loop still
+  refuses to start. The other half of that guard is unchanged: **start the loop from
+  `master`**, never from a phase branch, or it runs that branch's older copy of the
+  orchestrator. `git switch master` carries the uncommitted work across with you; the
+  checkpoint then explains it and the phase branch is re-entered with the work intact.
+- **A checkpoint whose work has been thrown away is noticed.** If you read the leftovers
+  and discard them, the next run finds nothing in the tree and implements the issue again
+  rather than reviewing an empty diff.
+
+To abandon a half-finished issue: discard the working tree and delete
+`.claude/ralph.state.json`. The next run starts that issue from scratch.
+
+### Rate limits
+
+`onRateLimit` decides what a limit does. **The default is `stop`** — which is cheap now,
+because the checkpoint resumes the exact stage instead of repeating the issue. This
+repository's `.claude/ralph.config.json` sets `wait` deliberately, for unattended
+overnight runs; `--stop-on-limit` overrides it for a single run.
+
+Waiting never costs an attempt or a review round, but it is counted and capped:
+`maxRateLimitWaits` (default 4) limits how many resets one run may sit through, and
+`maxRateLimitRetries` (default 3) how many times one issue — or one phase review — may be
+cut off before the run stops. The phase review used to have no rate-limit handling at
+all: a limit during it ended the whole run and threw away every issue the phase had
+already finished.
 
 ---
 
@@ -163,9 +237,16 @@ closed issues are skipped, the branch is reused, no pull request is duplicated.
 | `issue #N is over budget`                    | the issue is too large — split it in two                                                     |
 | `issue #N still does not pass after N repair round(s)` | the gate or the reviewer keeps blocking; the work is in the tree — read it, fix or discard it, then re-run |
 | `the commit ... was refused`                 | the pre-commit hook failed; the work is staged, the reason is in the message                 |
-| `... but closing it failed`                  | the work is committed; close the issue by hand and re-run. **Do not re-implement it**         |
+| `... but closing it failed`                  | the work is committed; just re-run — the checkpoint closes the issue and starts no session   |
 | `reads OPEN on GitHub after being closed`    | same: the commit is safe, GitHub is not; check GitHub, then re-run                            |
 | `the working tree is not clean before issue #N` | something is left over from a previous run; commit or discard it, then re-run              |
+| `Working tree is not clean and no checkpoint ... explains it` | changes nothing accounts for; commit or stash them, then re-run                |
+| `the checkpoint stands at ..., a stage that leaves a clean tree` | the checkpoint is past the commit but the tree is dirty; find out what wrote it |
+| `the checkpoint for issue #N ... expects ... but HEAD is ...` | the branch moved under the checkpoint; work out which is right, then delete `.claude/ralph.state.json` |
+| `.claude/ralph.state.json is not valid JSON` (and the other checkpoint errors) | the checkpoint is unusable; inspect it, then delete it to start that issue over |
+| `is a checkpoint of feature "..." but this run is "..."` | another feature's run was interrupted; finish it or delete its checkpoint      |
+| `already waited out N rate-limit reset(s)`   | the run hit `maxRateLimitWaits`; re-run later and the checkpoint resumes the stage           |
+| `was cut off by the rate limit N times`      | the same stage kept being interrupted; re-run when the window is fresh                       |
 | `the reviewer changed the working tree`      | the reviewer wrote something; its verdict is discarded — check what it left behind            |
 | `did not pass review`                        | the phase branch is not merged and follow-up issues are filed; read them and decide          |
 | `review returned ... and filed no issue`     | the reviewer blocked, or its verdict was unreadable, and left nothing to act on; read `ralph.log` |
@@ -185,8 +266,9 @@ what is already done.
 
 ## Where to look afterwards
 
-Two files, both gitignored:
+Three files, all gitignored:
 
+- **`.claude/ralph.state.json`** — the checkpoint described under [Resuming](#resuming-the-checkpoint). Present means a run was interrupted mid-issue; absent means nothing is half-done. `--dry-run` prints it.
 - **`.claude/ralph.log`** — a copy of the console output. Read it to see what happened and where it stopped.
 - **`.claude/ralph.stats.jsonl`** — one JSON row per session. `kind` is `impl`, `issue-review`, `repair` or `phase-review`, and `stage` names the pipeline step (`IMPLEMENT`, `ISSUE_REVIEW`, `REPAIR`, `PHASE_REVIEW`). An issue costs the sum of its rows, which is what the per-issue estimate groups. `schemaVersion: 2` rows carry `kind`, `phase`, `issue`, `stage`, `model`, `effort`, `terminalReason`, `assistantEvents`, `apiRequests`, `inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, `grossInputTokens`, `outputTokens`, `forkedEvents`, `costUsd`, `usageQuality`, `durationMs`, `exitCode` and the rate-limit state. This is what `--dry-run` derives its median from.
 
@@ -259,8 +341,9 @@ PREPARE -> IMPLEMENT -> ISSUE_GATE -> ISSUE_REVIEW
   runs. After `gh issue close` the orchestrator asks GitHub separately whether the issue
   is closed.
 
-If the close fails the run stops and says so: the work is committed and safe, and it must
-**not** be re-implemented.
+If the close fails the run stops and says so: the work is committed and safe. Just
+re-run — the checkpoint stands at `CLOSE_ISSUE`, so the next run closes the issue and
+starts no session. It must **not** be re-implemented.
 
 Adding `e2e` to the gate is a one-line config change, and worth it once the Postgres
 container is a standing part of your runs:
