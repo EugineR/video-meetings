@@ -1571,6 +1571,56 @@ function runIssueGate(cfg, files) {
   return null;
 }
 
+/**
+ * One log line per finding of a BLOCKED review.
+ *
+ * The verdict alone said that something blocked and never what. The findings went into
+ * the repair session's prompt and nowhere else, so afterwards there was no way to tell
+ * a reviewer that blocked for a good reason from one that blocked for a bad one - and
+ * a reviewer nobody can audit is the rubber stamp this pipeline replaced.
+ *
+ * Parsed against the shape `issueReviewPrompt` asks for. A reply that ignores that
+ * shape still reaches the log, in the raw: a reviewer that will not follow the format
+ * is itself the thing worth seeing.
+ */
+function reviewFindings(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+  const entries = [];
+  let cur = null;
+  for (const line of raw.split('\n')) {
+    if (/^[ \t]*-[ \t]+\S/.test(line)) {
+      if (cur) entries.push(cur);
+      cur = {};
+    }
+    const kv = line.match(
+      /^[ \t]*(?:-[ \t]+)?(id|severity|file|line|problem):[ \t]*(.+?)[ \t]*$/i,
+    );
+    if (cur && kv) cur[kv[1].toLowerCase()] = kv[2];
+  }
+  if (cur) entries.push(cur);
+
+  const named = entries.filter((e) => e.problem);
+  if (named.length > 0) {
+    return named.map((e) => {
+      const where = e.file ? `${e.file}${e.line ? `:${e.line}` : ''}` : '';
+      const head = [e.id, e.severity && `[${e.severity}]`, where]
+        .filter(Boolean)
+        .join(' ');
+      return clip(head ? `${head} - ${e.problem}` : e.problem, 160);
+    });
+  }
+
+  return raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !/^\**VERDICT\b/i.test(l))
+    .slice(0, 8)
+    .map((l) => clip(l, 160));
+}
+
 /** The `COMMIT: <subject>` line a session ends with, if it wrote one. */
 function suggestedCommit(text) {
   const lines = String(text || '').match(/^[ \t]*COMMIT:[ \t]*(.+)$/gim);
@@ -1941,6 +1991,7 @@ async function runIssue(phase, cfg, opts, budget, issue) {
         return { status: 'closed', note: `committed ${commitCloseOut().slice(0, 8)}` };
       }
       findings = rv.resultText.trim();
+      for (const line of reviewFindings(findings)) log(`    ${line}`);
     }
 
     if (round > cfg.maxIssueRepairs) {
@@ -2629,6 +2680,7 @@ module.exports = {
   tailOf,
   recordStats,
   readVerdict,
+  reviewFindings,
   sessionOutcome,
   abortedByRateLimit,
   deniedTools,

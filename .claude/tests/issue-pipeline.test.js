@@ -69,7 +69,8 @@ async function runOne({ fixtures, repo = {}, cfg = {}, exitCode = 0, opts = {} }
       .split('\n')
       .filter(Boolean)
       .map((line) => JSON.parse(line));
-    return { result, error, budget, spawn, repo: spawnSync.state, statsRows };
+    const logText = fs.existsSync(paths.log) ? fs.readFileSync(paths.log, 'utf8') : '';
+    return { result, error, budget, spawn, repo: spawnSync.state, statsRows, logText };
   } finally {
     restore();
     loud();
@@ -229,6 +230,23 @@ test('a blocking verdict sends the work to repair and then reviews it again', as
   assert.match(prompts(spawn)[2], /Fix exactly what is above/);
   assert.equal(repo.gateRuns.length, 4, 'the gate ran again after the repair');
   assert.equal(repo.commits.length, 1, 'and only the approved state was committed');
+});
+
+test('what the reviewer blocked on reaches the log, not only the repair prompt', async () => {
+  // Issue #45 of phase 4 was blocked and repaired, and the log kept nothing but
+  // `review: BLOCKED`. What was wrong lived only inside the repair session's prompt, so
+  // afterwards there was no way to judge whether the block was justified - and a
+  // reviewer nobody can audit is the rubber stamp this pipeline was built to replace.
+  const { logText } = await runOne({
+    fixtures: ['session-impl', 'session-review-blocked', 'session-impl', 'session-review-approved'],
+  });
+
+  assert.match(logText, /review: BLOCKED/);
+  assert.match(
+    logText,
+    /R1 \[blocking\] apps\/api\/src\/meetings\/avatar\.controller\.ts:42 - the ownership check is missing/,
+    logText,
+  );
 });
 
 test('a failing gate is repaired before any reviewer is paid for', async () => {

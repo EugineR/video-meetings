@@ -112,6 +112,19 @@ A gate step that fails, or a review that returns `BLOCKED`, prints a `~ repair 1
 and the issue goes round again. Nothing is committed until the gate is green **and** the
 reviewer said `APPROVED`.
 
+Both say why in the log, one indented line each:
+
+```
+[15:02:11]   review: BLOCKED . $0.54 . 16 req . 2m38s
+[15:02:11]     R1 [blocking] apps/api/src/users/avatar.controller.ts:42 - the ownership check is missing
+[15:02:11] ~ repair 1/2 for issue #45
+```
+
+That is the only record of what the reviewer objected to - the findings otherwise go
+to the repair session and nowhere else, leaving no way to tell a justified block from
+a bad one afterwards. A reviewer that ignores the reply format has its reply logged
+raw instead, which is itself worth seeing.
+
 If a session goes more than two minutes without an event you get a warning. If the
 silence drags on, the session is killed and retried.
 
