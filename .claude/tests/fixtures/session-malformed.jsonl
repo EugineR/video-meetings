@@ -1,0 +1,4 @@
+{"type":"assistant","parent_tool_use_id":null,"session_id":"s-5","message":{"id":"msg_g","role":"assistant","content":[{"type":"text","text":"before"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":5}}}
+{"type":"assistant","message":{"id":"msg_h","content":[{"type":"text","tex
+   
+{"type":"result","subtype":"success","terminal_reason":"completed","is_error":false,"session_id":"s-5","num_turns":1,"duration_ms":1000,"result":"after the broken line","total_cost_usd":0.01,"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":5}}
