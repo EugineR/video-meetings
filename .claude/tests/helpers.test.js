@@ -240,3 +240,57 @@ test('a real batch shim actually runs through shimSpawnArgs', {
   assert.equal(r.status, 0, `pnpm did not run: ${(r.stdout || '') + (r.stderr || '')}`);
   assert.match(r.stdout.trim(), /^\d+\.\d+\.\d+/, r.stdout);
 });
+
+test('reviewFindings turns a BLOCKED reply into one log line per finding', () => {
+  // Issue #45 was blocked in phase 4 and the log kept only `review: BLOCKED`. What was
+  // wrong with the code went into the repair prompt and was then unrecoverable, so
+  // nobody could tell an honest block from a bad one after the fact.
+  const reply = [
+    'FINDINGS:',
+    '- id: R1',
+    '  severity: blocking',
+    '  file: apps/api/src/avatar/avatar.service.ts',
+    '  line: 88',
+    '  problem: the upload path never checks that the profile belongs to the caller',
+    '  reason: any authenticated user can overwrite another profile picture',
+    '  required_fix: compare profile.userId with the request user before writing',
+    '- id: R2',
+    '  severity: blocking',
+    '  file: apps/api/test/avatar.spec.ts',
+    '  problem: no test covers a rejected content type',
+    '  reason: the guard added for this issue is unverified',
+    '  required_fix: add a case posting image/svg+xml',
+    '',
+    'VERDICT: BLOCKED',
+  ].join('\n');
+
+  assert.deepEqual(ralph.reviewFindings(reply), [
+    'R1 [blocking] apps/api/src/avatar/avatar.service.ts:88 - the upload path never ' +
+      'checks that the profile belongs to the caller',
+    'R2 [blocking] apps/api/test/avatar.spec.ts - no test covers a rejected content type',
+  ]);
+});
+
+test('reviewFindings still logs a reply that ignores the format', () => {
+  // A reviewer that will not follow the shape is itself worth seeing, so the fallback
+  // is the reply rather than silence. The verdict line carries nothing new.
+  const lines = ralph.reviewFindings(
+    'The migration drops the column before the backfill runs.\n\nVERDICT: BLOCKED',
+  );
+  assert.deepEqual(lines, ['The migration drops the column before the backfill runs.']);
+  assert.deepEqual(ralph.reviewFindings('   '), []);
+});
+
+test('reviewFindings does not invent findings out of an ordinary bullet list', () => {
+  const lines = ralph.reviewFindings(
+    ['I checked:', '- the guard', '- the tests', '', 'VERDICT: BLOCKED'].join('\n'),
+  );
+  assert.deepEqual(lines, ['I checked:', '- the guard', '- the tests']);
+});
+
+test('reviewFindings clips a finding that would flood the log', () => {
+  const reply = `- id: R1\n  problem: ${'x'.repeat(400)}`;
+  const [only] = ralph.reviewFindings(reply);
+  assert.ok(only.length <= 160, `${only.length} chars`);
+  assert.ok(only.startsWith('R1 - xxx'), only);
+});

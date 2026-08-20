@@ -150,6 +150,7 @@ function withTempPaths(ralph) {
   ralph.paths.state = path.join(dir, 'ralph.state.json');
   return {
     dir,
+    log: ralph.paths.log,
     stats: ralph.paths.stats,
     state: ralph.paths.state,
     restore() {

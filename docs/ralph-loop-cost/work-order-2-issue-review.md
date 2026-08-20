@@ -231,15 +231,21 @@ Only after explicit approval, and only after the fake end-to-end test passes: on
       which it never used.
 - [x] No scratch diff files are written into the repository — no session computes a diff for
       review any more.
-- [x] Median cost per issue is at or below $1.50. **Measured on the canary: $1.44** for issue
-      #41 — $0.93 implementation plus $0.51 review — against a $2.02 baseline, a 29% drop.
-      One issue is one sample, and this one was a test-only change of 126 lines in a single
-      file; the median over a whole phase will move. The figure also excludes the phase
-      review, which the canary did not reach (about $0.27 per issue when amortised).
-- [ ] **No drop in blocking defects found — not established.** The reviewer approved issue
-      #41 and filed nothing, which is one sample and proves nothing either way. The old
-      self-review's findings were never recorded anywhere, so there is no baseline number to
-      compare against; the only honest comparison is over a full phase.
+- [x] Median cost per issue is at or below $1.50. **Measured over phase 4: $1.25**
+      ($0.79, $0.96, $1.25, $1.44, $2.55 across issues #41–#45) against a $2.02
+      baseline — a 38% drop, mean $1.40. Those are the runs no orchestrator defect
+      interfered with; the raw file totals read $2.08 median because the debugging of
+      the three canary defects is charged to #41 ($6.06 over ten sessions) and #42
+      ($2.08). The phase review adds $1.57 over five issues, about $0.31 each.
+- [ ] **No drop in blocking defects found — still not established, but no longer blind.**
+      Over phase 4 the reviewer blocked one issue of five (#45: $0.54 to find it, $0.15
+      to repair, $0.72 to re-review) and approved it only after the repair, which is the
+      first evidence it is not a rubber stamp. The Opus phase review then approved and
+      filed five non-blocking issues (#82–#86), so nothing blocking survived to the
+      backstop. What is still missing is the comparison itself: the old self-review never
+      recorded a finding anywhere, so there is no baseline number, and one blocked issue
+      in five is a rate, not a proof. Since 0de014f the findings reach `ralph.log`, so
+      later phases accumulate the record this criterion needs.
 
 ### What the canary actually proved
 
@@ -263,15 +269,27 @@ than the whole `master...HEAD` diff; the orchestrator committed with the session
 conventional subject, closed the issue, verified it against GitHub and only then cleared the
 checkpoint.
 
+### What the first full phase added
+
+Phase 4 ran end to end on 2026-08-20: five issues, `00ae5b4` merged into
+`feature/user-profile` and tagged `ralph/user-profile/phase-4`, exit code 0 in 24m13s for
+$5.87 including the phase review. Three things it proved that the canary could not:
+
+1. **The reviewer blocks.** Issue #45 came back `BLOCKED`, was repaired and only then
+   approved. One issue in five, and the only round the pipeline paid for twice.
+2. **A stale checkpoint is dropped rather than obeyed.** The run opened with
+   `checkpoint for issue #42 at IMPLEMENT has nothing left in the tree, starting the phase
+   normally` — the resume guard's own path, exercised live for the first time.
+3. **A stale issue list is survivable.** GitHub handed back #42 seconds after it was
+   closed; `budget.done` plus the pre-flight state read meant no session was spent on it.
+
+It also found the fourth defect: the reviewer's findings never reached the log, so a block
+could not be judged after the fact. Fixed in `0de014f`.
+
 ### Still open
 
-**Resume is unreachable whenever an issue adds a file the trunk does not have.** The
-checkpoint stood at `ISSUE_REVIEW` with the work in the tree — the case it exists for — but
-the loop must start from the default branch, and `git switch master` refuses to carry an
-uncommitted new file that master does not know. The only way back is to stash, which throws
-away exactly what the checkpoint was protecting. New files are the common case, not an edge
-one. This belongs to WO-3 and must be fixed before a real phase run: interruptions are
-certain.
+The resume problem this section used to describe — `git switch master` refusing to carry an
+issue's new file back to the trunk — was fixed in WO-3 and exercised in phase 4.
 
 ### Deviations to know about
 
