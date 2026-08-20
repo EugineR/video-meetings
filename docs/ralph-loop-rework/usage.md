@@ -215,7 +215,20 @@ To abandon a half-finished issue: discard the working tree and delete
 
 ### Rate limits
 
-`onRateLimit` decides what a limit does. **The default is `stop`** — which is cheap now,
+A `rate_limit_event` carries one of three statuses — `allowed`, `allowed_warning` or
+`rejected` — and **only a refusal is a limit**. `allowed_warning` is the CLI saying
+"you're close to your usage limit" while letting the request through; the loop logs it
+and carries on:
+
+```
+! close to the seven_day limit (resets 07:00:00), still allowed - carrying on
+```
+
+Take it as a warning that the *next* phase may not finish, not as a reason to stop this
+one. The status is recorded in every stats row, so `jq 'select(.rateLimitStatus)'` tells
+you afterwards which of the two a stopped run actually hit.
+
+`onRateLimit` decides what a refusal does. **The default is `stop`** — which is cheap now,
 because the checkpoint resumes the exact stage instead of repeating the issue. This
 repository's `.claude/ralph.config.json` sets `wait` deliberately, for unattended
 overnight runs; `--stop-on-limit` overrides it for a single run.
