@@ -61,11 +61,16 @@ test('a line split across chunks is not lost or double counted', async () => {
   const restoreB = withFakes(ralph, { spawn: chopped });
   try {
     const split = await session();
-    assert.equal(split.turns, whole.turns);
+    assert.equal(split.assistantEvents, whole.assistantEvents);
+    assert.equal(split.apiRequests, whole.apiRequests);
     assert.equal(split.inputTokens, whole.inputTokens);
+    assert.equal(split.cacheReadInputTokens, whole.cacheReadInputTokens);
+    assert.equal(split.grossInputTokens, whole.grossInputTokens);
     assert.equal(split.outputTokens, whole.outputTokens);
     assert.equal(split.resultText, whole.resultText);
     assert.equal(split.cost, whole.cost);
+    // Guards against both halves being undefined and the test passing vacuously.
+    assert.ok(whole.grossInputTokens > 0, 'fixture carries usage');
   } finally {
     restoreB();
   }

@@ -387,9 +387,26 @@ function describeTool(part) {
 
 function newSessionStats() {
   return {
-    turns: 0,
+    // Raw stream observations. `messages` is keyed by message id because a message is
+    // re-emitted as it grows and each emission repeats that message's running usage:
+    // adding them up counts the same tokens several times over, which is how a session
+    // came to report 15.6M input and 156 "turns" under a 100-turn cap.
+    assistantEvents: 0,
+    messages: new Map(),
+    anonymousUsage: [],
+    resultUsage: null,
+    resultTurns: null,
+
+    // Filled by finalizeUsage once the stream ends.
+    apiRequests: 0,
     inputTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    grossInputTokens: 0,
     outputTokens: 0,
+    forkedEvents: 0,
+    usageQuality: 'estimated',
+
     cost: 0,
     terminalReason: null,
     denials: [],
@@ -398,6 +415,57 @@ function newSessionStats() {
     isError: false,
     lastTool: null,
   };
+}
+
+/** Every usage record seen, one per distinct message rather than per event. */
+function distinctUsage(st) {
+  return [...st.messages.values(), ...st.anonymousUsage];
+}
+
+/** Gross input across distinct messages - the live progress line's only honest number. */
+function currentGrossInput(st) {
+  return distinctUsage(st).reduce(
+    (n, u) => n + u.input + u.cacheCreate + u.cacheRead,
+    0,
+  );
+}
+
+/**
+ * Settles the token counts once the stream has ended.
+ *
+ * The aggregate on the final `result` event is the API's own accounting and wins
+ * whenever it is there. De-duplicating by message id is the fallback for a session cut
+ * off before its result event; if there is nothing at all, the counts stay zero and say
+ * so rather than pretending to a number. Cost is not computed here - `total_cost_usd`
+ * is reported directly by the CLI and was always correct.
+ */
+function finalizeUsage(st) {
+  const seen = distinctUsage(st);
+
+  if (st.resultUsage) {
+    const u = st.resultUsage;
+    st.inputTokens = u.input_tokens || 0;
+    st.cacheCreationInputTokens = u.cache_creation_input_tokens || 0;
+    st.cacheReadInputTokens = u.cache_read_input_tokens || 0;
+    st.outputTokens = u.output_tokens || 0;
+    st.usageQuality = 'result';
+  } else if (seen.length > 0) {
+    const sum = (key) => seen.reduce((n, u) => n + u[key], 0);
+    st.inputTokens = sum('input');
+    st.cacheCreationInputTokens = sum('cacheCreate');
+    st.cacheReadInputTokens = sum('cacheRead');
+    st.outputTokens = sum('output');
+    st.usageQuality = 'deduplicated';
+  } else {
+    st.usageQuality = 'estimated';
+  }
+
+  st.grossInputTokens =
+    st.inputTokens + st.cacheCreationInputTokens + st.cacheReadInputTokens;
+  st.apiRequests =
+    st.resultTurns === null ? st.messages.size + st.anonymousUsage.length : st.resultTurns;
+  st.forkedEvents = seen.filter((u) => u.fork).length;
+  return st;
 }
 
 /** A stream-json line, or null for a blank or malformed one - never a throw. */
@@ -422,13 +490,22 @@ function applyStreamEvent(st, ev) {
     st.rateLimit = ev.rate_limit_info;
   }
   if (ev.type === 'assistant' && ev.message) {
-    st.turns++;
+    st.assistantEvents++;
     const u = ev.message.usage || {};
-    st.inputTokens +=
-      (u.input_tokens || 0) +
-      (u.cache_creation_input_tokens || 0) +
-      (u.cache_read_input_tokens || 0);
-    st.outputTokens += u.output_tokens || 0;
+    const usage = {
+      input: u.input_tokens || 0,
+      cacheCreate: u.cache_creation_input_tokens || 0,
+      cacheRead: u.cache_read_input_tokens || 0,
+      output: u.output_tokens || 0,
+      // A subagent's events carry the tool call that spawned it; keeping the flag lets
+      // a run show how much of its spend went to forks rather than to the session.
+      fork: !!ev.parent_tool_use_id,
+    };
+    // Last emission of a message supersedes the earlier ones - its usage is that
+    // message's running total, not the increment since the previous event.
+    if (ev.message.id) st.messages.set(ev.message.id, usage);
+    else st.anonymousUsage.push(usage);
+
     for (const part of ev.message.content || []) {
       if (part.type === 'tool_use') st.lastTool = describeTool(part);
     }
@@ -439,6 +516,8 @@ function applyStreamEvent(st, ev) {
     st.cost = ev.total_cost_usd || 0;
     st.isError = !!ev.is_error;
     st.resultText = typeof ev.result === 'string' ? ev.result : '';
+    if (ev.usage && typeof ev.usage === 'object') st.resultUsage = ev.usage;
+    if (Number.isFinite(ev.num_turns)) st.resultTurns = ev.num_turns;
   }
 }
 
@@ -508,6 +587,7 @@ function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
       currentChild = null;
       currentKill = null;
       st.durationMs = Date.now() - started;
+      finalizeUsage(st);
       resolve(st);
     };
 
@@ -562,8 +642,10 @@ function runSession({ model, maxTurns, prompt, stallSeconds, allowedTools }) {
           Date.now() - lastPrintAt > 20000
         ) {
           lastPrintAt = Date.now();
+          // "events", not "turns": this counts stream emissions, which is not what
+          // --max-turns limits. The cost is only known from the result event.
           log(
-            `  . ${st.turns} turns . ${fmtTokens(st.inputTokens)} in . ${fmtTokens(st.outputTokens)} out . ${st.lastTool || '...'}`,
+            `  . ${st.assistantEvents} events . ${fmtTokens(currentGrossInput(st))} gross in . ${st.lastTool || '...'}`,
           );
         }
       }
@@ -632,24 +714,82 @@ function readVerdict(text) {
   return tokens[tokens.length - 1];
 }
 
-function buildStatsRow(kind, phase, issueNumber, st) {
+const STATS_SCHEMA_VERSION = 2;
+
+/**
+ * A v2 stats row. `inputTokens` now means what the API means by it - the all-three sum
+ * that used to live under that name is `grossInputTokens`, so a v1 row and a v2 row
+ * must never be averaged together without normalising first (see readStatsRows).
+ */
+function buildStatsRow(kind, phase, issueNumber, st, meta = {}) {
   return {
+    schemaVersion: STATS_SCHEMA_VERSION,
     at: new Date().toISOString(),
     kind,
     phase: phase.milestone,
     issue: issueNumber,
+    stage: meta.stage || null,
+    model: meta.model || null,
+    effort: meta.effort || null,
     terminalReason: st.terminalReason,
-    turns: st.turns,
+    assistantEvents: st.assistantEvents,
+    apiRequests: st.apiRequests,
     inputTokens: st.inputTokens,
+    cacheCreationInputTokens: st.cacheCreationInputTokens,
+    cacheReadInputTokens: st.cacheReadInputTokens,
+    grossInputTokens: st.grossInputTokens,
     outputTokens: st.outputTokens,
+    forkedEvents: st.forkedEvents,
     costUsd: st.cost,
+    usageQuality: st.usageQuality,
     durationMs: st.durationMs,
     exitCode: st.exitCode,
+    rateLimitType: st.rateLimit ? st.rateLimit.rateLimitType || null : null,
+    rateLimitResetsAt: st.rateLimit ? st.rateLimit.resetsAt || null : null,
   };
 }
 
-function recordStats(kind, phase, issueNumber, st) {
-  const row = buildStatsRow(kind, phase, issueNumber, st);
+/**
+ * Reads the stats file, normalising v1 rows instead of dropping them.
+ *
+ * A v1 row's `inputTokens` was the gross sum, so it is carried over as
+ * `grossInputTokens` and its own `inputTokens` is cleared: leaving it in place would
+ * make a legacy row look like an enormous non-cached input. Its usage is marked
+ * `estimated` because the underlying number double-counted re-emitted messages.
+ */
+function readStatsRows(file = STATS_FILE) {
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .map((row) => {
+      if (row.schemaVersion >= 2) return row;
+      return {
+        ...row,
+        schemaVersion: 1,
+        kind: row.kind === 'review' ? 'phase-review' : row.kind,
+        apiRequests: null,
+        assistantEvents: row.turns || 0,
+        inputTokens: null,
+        cacheCreationInputTokens: null,
+        cacheReadInputTokens: null,
+        grossInputTokens: row.inputTokens || 0,
+        usageQuality: 'estimated',
+      };
+    });
+}
+
+function recordStats(kind, phase, issueNumber, st, meta) {
+  const row = buildStatsRow(kind, phase, issueNumber, st, meta);
   try {
     fs.appendFileSync(STATS_FILE, JSON.stringify(row) + '\n');
   } catch {
@@ -657,22 +797,16 @@ function recordStats(kind, phase, issueNumber, st) {
   }
 }
 
-/** Median input tokens of past implementation sessions, or the §3 baseline. */
+/**
+ * Median gross input of past implementation sessions, or the §3 baseline.
+ *
+ * Gross is the one quantity a v1 and a v2 row both express, so it is what the estimate
+ * is built from while the file holds a mix of the two.
+ */
 function estimateIssueTokens() {
-  if (!fs.existsSync(STATS_FILE)) return BASELINE_ISSUE_TOKENS;
-  const samples = fs
-    .readFileSync(STATS_FILE, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map((l) => {
-      try {
-        return JSON.parse(l);
-      } catch {
-        return null;
-      }
-    })
-    .filter((r) => r && r.kind === 'impl' && r.inputTokens > 0)
-    .map((r) => r.inputTokens)
+  const samples = readStatsRows()
+    .filter((r) => r.kind === 'impl' && r.grossInputTokens > 0)
+    .map((r) => r.grossInputTokens)
     .sort((a, b) => a - b);
   if (samples.length < 3) return BASELINE_ISSUE_TOKENS;
   return samples[Math.floor(samples.length / 2)];
@@ -866,13 +1000,17 @@ async function drainIssues(phase, cfg, opts, budget) {
         title: issue.title,
       }),
     });
-    recordStats('impl', phase, issue.number, st);
-    budget.phaseTokens += st.inputTokens;
-    budget.runTokens += st.inputTokens;
+    recordStats('impl', phase, issue.number, st, {
+      stage: 'IMPLEMENT',
+      model: cfg.implModel,
+      effort: cfg.implEffort,
+    });
+    budget.phaseTokens += st.grossInputTokens;
+    budget.runTokens += st.grossInputTokens;
     budget.runCost += st.cost;
 
     const issueTokens =
-      (budget.perIssue.get(issue.number) || 0) + st.inputTokens;
+      (budget.perIssue.get(issue.number) || 0) + st.grossInputTokens;
     budget.perIssue.set(issue.number, issueTokens);
 
     const outcome = sessionOutcome(st);
@@ -889,7 +1027,7 @@ async function drainIssues(phase, cfg, opts, budget) {
     const stillOpen = new Set(open.map((i) => i.number));
     budget.issuesClosed += [...before].filter((n) => !stillOpen.has(n)).length;
     const closed = !stillOpen.has(issue.number);
-    const summary = `${st.turns} turns . ${fmtTokens(st.inputTokens)} in . ${fmtTokens(st.outputTokens)} out . ${fmtDuration(st.durationMs)} . ${st.terminalReason || 'no result event'} . run total ${fmtTokens(budget.runTokens)}`;
+    const summary = `$${st.cost.toFixed(2)} . ${fmtDuration(st.durationMs)} . ${st.apiRequests} req . ${fmtTokens(st.grossInputTokens)} gross in . ${st.terminalReason || 'no result event'} . run total $${budget.runCost.toFixed(2)}`;
 
     if (closed) {
       attempts.set(issue.number, 0);
@@ -954,9 +1092,13 @@ async function reviewPhase(phase, cfg, opts, budget) {
         niceToHaveLabel: cfg.niceToHaveLabel,
       }),
     });
-    recordStats('review', phase, null, st);
-    budget.phaseTokens += st.inputTokens;
-    budget.runTokens += st.inputTokens;
+    recordStats('phase-review', phase, null, st, {
+      stage: 'PHASE_REVIEW',
+      model: cfg.reviewModel,
+      effort: cfg.reviewEffort,
+    });
+    budget.phaseTokens += st.grossInputTokens;
+    budget.runTokens += st.grossInputTokens;
     budget.runCost += st.cost;
 
     reportDenials(st, 'review');
@@ -971,7 +1113,7 @@ async function reviewPhase(phase, cfg, opts, budget) {
 
     const verdict = readVerdict(st.resultText);
     log(
-      `  review: ${verdict} . ${st.turns} turns . ${fmtTokens(st.inputTokens)} in . ${fmtDuration(st.durationMs)}`,
+      `  review: ${verdict} . $${st.cost.toFixed(2)} . ${st.apiRequests} req . ${fmtDuration(st.durationMs)}`,
     );
 
     const stillOpen = openIssues(phase.milestone);
@@ -1312,6 +1454,9 @@ module.exports = {
   newSessionStats,
   parseStreamLine,
   applyStreamEvent,
+  finalizeUsage,
+  currentGrossInput,
+  readStatsRows,
   runSession,
   readVerdict,
   sessionOutcome,

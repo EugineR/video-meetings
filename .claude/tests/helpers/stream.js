@@ -25,15 +25,17 @@ function fixtureLines(name) {
 
 /**
  * Folds a whole fixture through the orchestrator's own parser and returns the stats it
- * ends up with - the same path runSession takes, minus the child process.
+ * ends up with - the same path runSession takes, minus the child process. Finalised by
+ * default, because a fixture stands for a session that ended; pass finalize: false to
+ * inspect the accumulator mid-stream.
  */
-function replay(ralph, name) {
+function replay(ralph, name, { finalize = true } = {}) {
   const st = ralph.newSessionStats();
   for (const line of fixtureLines(name)) {
     const ev = ralph.parseStreamLine(line);
     if (ev) ralph.applyStreamEvent(st, ev);
   }
-  return st;
+  return finalize ? ralph.finalizeUsage(st) : st;
 }
 
 /**

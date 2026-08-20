@@ -18,7 +18,7 @@ test('a malformed line in the middle does not lose the events around it', () => 
   assert.equal(st.resultText, 'after the broken line');
   assert.equal(st.terminalReason, 'completed');
   // The one well-formed assistant event before the break still counted.
-  assert.equal(st.turns, 1);
+  assert.equal(st.assistantEvents, 1);
 });
 
 test('applyStreamEvent ignores anything that is not an event object', () => {
