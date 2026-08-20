@@ -1159,6 +1159,71 @@ const DIRT_EXPLAINED_BY = new Set([
 ]);
 
 /**
+ * A checkpoint is worth honouring only while it still has something at stake: a commit
+ * it left behind, or work sitting in the tree. One with neither is not contradicted by a
+ * moved HEAD, it is simply older than the branch - the loop merges the trunk in at the
+ * start of every phase, so that is the ordinary case after an interruption rather than
+ * an anomaly. Pinning an anchor from such a checkpoint is what stopped a canary run that
+ * had done nothing wrong.
+ */
+const checkpointAtStake = (saved, dirty) =>
+  !!(saved && saved.issue && (saved.commitSha || dirty));
+
+/**
+ * The files a run's behaviour actually comes out of. A branch whose copies match the
+ * trunk's runs the same loop the trunk would, which is the only thing the branch guard
+ * is really protecting.
+ */
+const ORCHESTRATOR_FILES = [
+  '.claude/ralph-start.js',
+  '.claude/ralph.config.json',
+  '.claude/ralph.md',
+];
+
+/** Which of those files this branch has in a different version from the trunk. */
+function orchestratorDrift(base) {
+  const trunk = refExists(`refs/remotes/origin/${base}`) ? `origin/${base}` : base;
+  return ORCHESTRATOR_FILES.filter((file) => {
+    const here = gitTry('rev-parse', `HEAD:${file}`);
+    const there = gitTry('rev-parse', `${trunk}:${file}`);
+    // A file one side does not have at all is a difference worth stopping for.
+    return here.code !== 0 || there.code !== 0 || here.stdout !== there.stdout;
+  });
+}
+
+/**
+ * Where a run may start.
+ *
+ * Normally the trunk and nowhere else: the orchestrator lives in .claude/, which is
+ * versioned per branch, and a finished run leaves the tree on a phase branch - starting
+ * from there would silently execute that branch's older copy of this file.
+ *
+ * A resume is the exception, and it has to be, because the two rules are otherwise
+ * incompatible. An interrupted issue's work is uncommitted on the phase branch, and git
+ * refuses to carry a file the trunk does not have back to the trunk - which is every
+ * issue that adds one. The canary hit exactly this: the checkpoint stood at
+ * ISSUE_REVIEW, and the only way back to the trunk was to stash away the very work the
+ * checkpoint existed to protect.
+ *
+ * So the loop may start from the branch its own checkpoint names - once the files that
+ * decide its behaviour are shown to be the trunk's, which is what the guard was for.
+ */
+function startupBranchRefusal(current, base, checkpoint, drift) {
+  if (current === base) return null;
+  const from = `Start the loop from ${base}, not ${current}.`;
+  if (!checkpoint) {
+    return `${from} A previous run leaves the tree on its phase branch, and running from there would use that branch's copy of the orchestrator.`;
+  }
+  if (checkpoint.branch !== current) {
+    return `${from} The checkpoint in ${paths.state} belongs to ${checkpoint.branch}, so this is neither the trunk nor the branch being resumed.`;
+  }
+  if (drift.length > 0) {
+    return `${current} carries its own version of ${drift.join(', ')}, so resuming here would run a different loop than ${base} does. Merge ${base} into ${current} first, then re-run.`;
+  }
+  return null;
+}
+
+/**
  * Writes the checkpoint atomically: a temporary file in the same directory, then a
  * rename, so a run killed mid-write leaves either the old checkpoint or the new one and
  * never a half-written one. A failure here is logged rather than thrown - losing the
@@ -2096,8 +2161,17 @@ async function runPhase(phase, cfg, opts, base, budget) {
   // it here is what lets prepareIssue accept the tree the interrupted attempt left: the
   // dirt is that issue's own work, and re-anchoring on HEAD would hide it from the gate,
   // the reviewer and the commit.
-  const resume = stateFor(cfg, phase);
-  if (resume && resume.issue && resume.issueBaseSha) {
+  const saved = stateFor(cfg, phase);
+  const resume = checkpointAtStake(saved, git('status', '--porcelain').stdout)
+    ? saved
+    : null;
+  if (saved && !resume) {
+    log(
+      `  checkpoint for issue #${saved.issue} at ${saved.stage} has nothing left in the tree, starting the phase normally`,
+    );
+    clearState();
+  }
+  if (resume) {
     budget.baseSha.set(resume.issue, resume.issueBaseSha);
     log(
       `  checkpoint: issue #${resume.issue} at ${resume.stage}, base ${resume.issueBaseSha.slice(0, 8)}, written ${resume.updatedAt}`,
@@ -2112,8 +2186,19 @@ async function runPhase(phase, cfg, opts, base, budget) {
     `> Phase ${phase.index} "${phase.milestone}" . branch ${phase.branch} . ${openBefore.length} open issue(s) . budget ${fmtTokens(budget.phaseLimit)}`,
   );
 
-  prepareFeatureBranch(cfg, base);
-  preparePhaseBranch(phase, cfg);
+  if (resume) {
+    // Re-syncing the branches merges the trunk in, and that moves HEAD - out from under
+    // the anchor the checkpoint measured its issue from, so the resume then refuses
+    // itself. Those merges belong to the start of a phase, not to the middle of an
+    // issue; the next phase picks them up.
+    if (git('rev-parse', '--abbrev-ref', 'HEAD').stdout !== phase.branch) {
+      git('switch', phase.branch);
+    }
+    log(`  mid-issue: leaving ${phase.branch} where the checkpoint left it, no trunk merge`);
+  } else {
+    prepareFeatureBranch(cfg, base);
+    preparePhaseBranch(phase, cfg);
+  }
 
   await drainIssues(phase, cfg, opts, budget);
   await reviewPhase(phase, cfg, opts, budget);
@@ -2360,13 +2445,15 @@ async function main() {
     return;
   }
 
-  // The orchestrator lives in .claude/, which is versioned per branch, and a finished
-  // run leaves the tree on a phase branch. Starting from there would silently execute
-  // that branch's older copy of this file and its config.
   const current = git('rev-parse', '--abbrev-ref', 'HEAD').stdout;
   if (current !== base) {
-    fail(
-      `Start the loop from ${base}, not ${current}. A previous run leaves the tree on its phase branch, and running from there would use that branch's copy of the orchestrator.`,
+    // Only worth the round trip when the answer might be yes, but then it has to be
+    // fresh: a stale origin/<base> would compare against a trunk nobody is running.
+    git('fetch', 'origin', '--prune', '--quiet');
+    const refusal = startupBranchRefusal(current, base, checkpoint, orchestratorDrift(base));
+    if (refusal) fail(refusal);
+    log(
+      `| resuming on ${current}: its ${ORCHESTRATOR_FILES.length} orchestrator files match ${base}`,
     );
   }
 
@@ -2508,6 +2595,11 @@ module.exports = {
   clearState,
   stateFor,
   startupTreeRefusal,
+  startupBranchRefusal,
+  checkpointAtStake,
+  runPhase,
+  orchestratorDrift,
+  ORCHESTRATOR_FILES,
   STAGES,
   DIRT_EXPLAINED_BY,
   STATE_SCHEMA_VERSION,
