@@ -39,6 +39,38 @@ const BASELINE_REVIEW_TOKENS = 4_000_000;
 const BASELINE_ISSUE_COST_USD = 2.02;
 const BASELINE_REVIEW_COST_USD = 1.23;
 
+// Everything an issue is charged to. A per-issue figure that counted implementation
+// alone would understate what the loop actually spends on one issue.
+const ISSUE_KINDS = ['impl', 'issue-review', 'repair'];
+
+/**
+ * The per-issue gate, run by the orchestrator between implementation and review.
+ *
+ * `when` is a path prefix - the step runs only when the change touches that workspace.
+ * `files` appends the changed files to the command. Every step here was run against
+ * this repository before it was made a default; e2e is deliberately not among them,
+ * because it needs the Postgres container and a step that fails when Docker is down
+ * would block every issue. Add it to `issueGate` in the config once the container is
+ * part of the run: { "name": "e2e", "run": ["pnpm","--filter","api","run","test:e2e"],
+ * "when": "apps/api/" }.
+ */
+const DEFAULT_ISSUE_GATE = [
+  { name: 'format', run: ['pnpm', 'exec', 'prettier', '--write'], files: true },
+  { name: 'lint:api', run: ['pnpm', 'lint:api'], when: 'apps/api/' },
+  { name: 'lint:web', run: ['pnpm', 'lint:web'], when: 'apps/web/' },
+  {
+    name: 'typecheck:api',
+    run: ['pnpm', '--filter', 'api', 'exec', 'tsc', '--noEmit'],
+    when: 'apps/api/',
+  },
+  {
+    name: 'typecheck:web',
+    run: ['pnpm', '--filter', 'web', 'exec', 'tsc', '--noEmit'],
+    when: 'apps/web/',
+  },
+  { name: 'test:api', run: ['pnpm', 'test:api'], when: 'apps/api/' },
+];
+
 let stopRequested = false;
 let currentChild = null;
 let currentKill = null;
@@ -239,15 +271,27 @@ function loadConfig(file) {
   const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!cfg.feature) fail(`${file} has no feature key`);
   if (!cfg.featureBranch) fail(`${file} has no featureBranch`);
-  return {
+  // A missing prompt used to reach the CLI as the string "undefined".
+  for (const key of ['implPrompt', 'issueReviewPrompt', 'repairPrompt', 'reviewPrompt']) {
+    if (!cfg[key]) fail(`${file} has no ${key}`);
+  }
+
+  const out = {
     feature: cfg.feature,
     featureBranch: cfg.featureBranch,
     featureTitle: cfg.featureTitle || cfg.featureBranch,
     niceToHaveLabel: cfg.niceToHaveLabel || 'nice-to-have',
     implModel: cfg.implModel || 'sonnet',
     reviewModel: cfg.reviewModel || 'opus',
+    // The issue reviewer is a stage that did not exist before, so naming its model and
+    // effort sets a baseline rather than changing one - which is why it carries an
+    // explicit effort while implEffort and reviewEffort stay inherited. A reviewer is
+    // also the last place worth saving on: one that thinks less finds less.
+    issueReviewModel: cfg.issueReviewModel || 'sonnet',
+    issueReviewEffort: cfg.issueReviewEffort || 'high',
     maxTurns: cfg.maxTurns || 100,
     maxIssueAttempts: cfg.maxIssueAttempts || 2,
+    maxIssueRepairs: cfg.maxIssueRepairs || 2,
     maxReviewRounds: cfg.maxReviewRounds || 3,
     maxRateLimitRetries: cfg.maxRateLimitRetries || 3,
     issueBudgetTokens: cfg.issueBudgetTokens || 6_000_000,
@@ -262,8 +306,15 @@ function loadConfig(file) {
     // Runaway detectors, not throttles: the dearest healthy session on record cost
     // $4.42, so these sit well above it and only catch a session that has lost its way.
     implMaxCostUsd: cfg.implMaxCostUsd || 6,
+    issueReviewMaxCostUsd: cfg.issueReviewMaxCostUsd || 2,
+    repairMaxCostUsd: cfg.repairMaxCostUsd || 3,
     phaseReviewMaxCostUsd: cfg.phaseReviewMaxCostUsd || 4,
     stallSeconds: cfg.stallSeconds || 120,
+    issueBodyChars: cfg.issueBodyChars || 6000,
+    issueDiffWarnLines: cfg.issueDiffWarnLines || 1200,
+    // Permission to run unattended. `Skill` is deliberately absent: the skills a
+    // session used to reach for forked a subagent, and the one it was told to run
+    // reviewed its own work.
     allowedTools: cfg.allowedTools || [
       'Bash',
       'Read',
@@ -271,13 +322,60 @@ function loadConfig(file) {
       'Edit',
       'Glob',
       'Grep',
-      'Skill',
       'TodoWrite',
     ],
+    // Availability, which is a different thing: --tools decides what the session can
+    // see at all. An implementation session has no reason to fork, and a reviewer must
+    // not be able to write.
+    implTools: cfg.implTools || [
+      'Bash',
+      'PowerShell',
+      'Read',
+      'Write',
+      'Edit',
+      'Glob',
+      'Grep',
+      'TodoWrite',
+    ],
+    implDisallowedTools: cfg.implDisallowedTools || ['Task', 'Skill'],
+    issueReviewTools: cfg.issueReviewTools || ['Read', 'Grep', 'Glob', 'Bash'],
+    issueReviewDisallowedTools: cfg.issueReviewDisallowedTools || [
+      'Task',
+      'Skill',
+      'Edit',
+      'Write',
+      'NotebookEdit',
+      'WebSearch',
+      'WebFetch',
+    ],
+    // A browser is handed only to an issue that is about the browser. Anything that
+    // can drive Playwright eventually does.
+    browserTools: cfg.browserTools || ['mcp__playwright'],
+    browserIssueLabels: cfg.browserIssueLabels || ['web', 'frontend', 'ui', 'e2e'],
+    issueGate: cfg.issueGate || DEFAULT_ISSUE_GATE,
     onRateLimit: cfg.onRateLimit || 'wait',
     implPrompt: cfg.implPrompt,
+    issueReviewPrompt: cfg.issueReviewPrompt,
+    repairPrompt: cfg.repairPrompt,
     reviewPrompt: cfg.reviewPrompt,
   };
+
+  // A tool a session can see but may not run is how a session stalls: it asks for
+  // permission nobody is there to give. The other way round is harmless.
+  const permitted = (tool) =>
+    out.allowedTools.some((a) => a === tool || a.startsWith(`${tool}(`));
+  for (const [name, list] of [
+    ['implTools', out.implTools],
+    ['issueReviewTools', out.issueReviewTools],
+  ]) {
+    const orphans = list.filter((t) => !permitted(t));
+    if (orphans.length > 0) {
+      console.log(
+        `! ${name} offers ${orphans.join(', ')} but allowedTools does not permit it - a session asking for it will stall`,
+      );
+    }
+  }
+  return out;
 }
 
 /**
@@ -867,10 +965,13 @@ function recordStats(kind, phase, issueNumber, st, meta) {
  * is built from while the file holds a mix of the two.
  */
 function estimateIssueTokens() {
-  const samples = readStatsRows()
-    .filter((r) => r.kind === 'impl' && r.grossInputTokens > 0)
-    .map((r) => r.grossInputTokens)
-    .sort((a, b) => a - b);
+  const byIssue = new Map();
+  for (const r of readStatsRows()) {
+    if (!ISSUE_KINDS.includes(r.kind) || !(r.grossInputTokens > 0)) continue;
+    const key = r.issue === null || r.issue === undefined ? r.at : r.issue;
+    byIssue.set(key, (byIssue.get(key) || 0) + r.grossInputTokens);
+  }
+  const samples = [...byIssue.values()].sort((a, b) => a - b);
   if (samples.length < 3) return BASELINE_ISSUE_TOKENS;
   return samples[Math.floor(samples.length / 2)];
 }
@@ -894,7 +995,10 @@ function median(values) {
  * $2.02 actually spent.
  */
 function estimateCost(kind, fallbackUsd, { perIssue = false } = {}) {
-  const rows = readStatsRows().filter((r) => r.kind === kind && r.costUsd > 0);
+  const kinds = Array.isArray(kind) ? kind : [kind];
+  const rows = readStatsRows().filter(
+    (r) => kinds.includes(r.kind) && r.costUsd > 0,
+  );
 
   let samples;
   if (perIssue) {
@@ -1072,9 +1176,385 @@ function runGreenGate() {
   return null;
 }
 
+// ─── issue pipeline ────────────────────────────────────────────────────────────
+
+const FORMATTABLE = /\.(ts|tsx|js|jsx|mjs|cjs|json|md|css|scss|ya?ml)$/i;
+const CONVENTIONAL_SUBJECT =
+  /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9._/-]+\))?!?: .{3,}$/;
+
+/** The end of a command's output: a repair prompt wants the error, not the whole run. */
+function tailOf(text, lines = 60, chars = 6000) {
+  const kept = String(text || '')
+    .trimEnd()
+    .split('\n')
+    .slice(-lines)
+    .join('\n');
+  return kept.length > chars ? `...\n${kept.slice(-chars)}` : kept;
+}
+
+/**
+ * PREPARE. The base commit is the anchor everything downstream speaks in terms of: the
+ * gate, the reviewer's diff and the commit. Without it the session reviewed
+ * `master...HEAD` and read tens of kilobytes of code no one had asked about.
+ *
+ * A dirty tree is accepted only for an issue that already has a base recorded - that is
+ * a retry, and what is in the tree is the previous attempt at this same issue. Anything
+ * else belongs to somebody else and must not be swept into this commit.
+ */
+function prepareIssue(phase, cfg, budget, issue) {
+  const branch = git('rev-parse', '--abbrev-ref', 'HEAD').stdout;
+  if (branch !== phase.branch) {
+    throw new Stop(
+      `expected to be on ${phase.branch} for issue #${issue.number} but the checkout is on ${branch}`,
+    );
+  }
+
+  let baseSha = budget.baseSha.get(issue.number) || null;
+  if (!baseSha) {
+    const dirty = git('status', '--porcelain').stdout;
+    if (dirty) {
+      throw new Stop(
+        `the working tree is not clean before issue #${issue.number}, refusing to start:\n${dirty}`,
+      );
+    }
+    baseSha = git('rev-parse', 'HEAD').stdout;
+    budget.baseSha.set(issue.number, baseSha);
+  }
+
+  // One narrow read of the issue. The session is handed the body rather than sent to
+  // fetch it, which also stops it wandering into comments and linked issues.
+  let body = '';
+  let labels = [];
+  try {
+    const parsed = JSON.parse(
+      ghTry('issue', 'view', String(issue.number), '--json', 'body,labels').stdout ||
+        '{}',
+    );
+    body = String(parsed.body || '');
+    labels = (parsed.labels || []).map((l) => String(l.name || l));
+  } catch {
+    /* the title alone still names the work; the session can ask for nothing more */
+  }
+  if (body.length > cfg.issueBodyChars) {
+    body = `${body.slice(0, cfg.issueBodyChars)}\n[body truncated by the orchestrator]`;
+  }
+  return { baseSha, body, labels, suggestion: null };
+}
+
+/**
+ * Everything the session touched. Staged first, because `git diff <sha>` does not see a
+ * file that is not tracked yet and most issues create files.
+ */
+function changedFiles(baseSha) {
+  git('add', '-A');
+  return git('diff', '--name-only', baseSha)
+    .stdout.split('\n')
+    .map((f) => f.trim())
+    .filter(Boolean);
+}
+
+/**
+ * ISSUE_GATE - the deterministic half of the review, run by the orchestrator.
+ *
+ * Output is captured, not inherited: a step that passes must leave nothing behind for a
+ * model to read. Today the session runs these commands itself and every one of their
+ * outputs rides along in the rest of that session's context.
+ *
+ * A step declares `when` (a path prefix - it runs only if the change touches that
+ * workspace) and `files` (the changed files are appended to the command).
+ */
+function runIssueGate(cfg, files) {
+  for (const step of cfg.issueGate) {
+    if (step.when && !files.some((f) => f.startsWith(step.when))) continue;
+
+    let args = step.run.slice(1);
+    if (step.files) {
+      const targets = files.filter((f) => FORMATTABLE.test(f) && fs.existsSync(f));
+      if (targets.length === 0) continue;
+      args = [...args, ...targets];
+    }
+
+    const [file, spawnArgs, extra] = shimSpawnArgs(step.run[0], args);
+    const r = runtime.spawnSync(file, spawnArgs, {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      ...extra,
+    });
+    if (r.error || r.status !== 0) {
+      const output = r.error ? r.error.message : `${r.stdout || ''}\n${r.stderr || ''}`;
+      log(`  x gate ${step.name} failed`);
+      return {
+        step: step.name,
+        command: [step.run[0], ...args].join(' '),
+        output: tailOf(output),
+      };
+    }
+    log(`  . gate ${step.name} ok`);
+  }
+  return null;
+}
+
+/** The `COMMIT: <subject>` line a session ends with, if it wrote one. */
+function suggestedCommit(text) {
+  const lines = String(text || '').match(/^[ \t]*COMMIT:[ \t]*(.+)$/gim);
+  if (!lines) return null;
+  return lines[lines.length - 1].replace(/^[ \t]*COMMIT:[ \t]*/i, '').trim();
+}
+
+/**
+ * The session may suggest a subject, and it is used only if it really is a conventional
+ * commit subject. Otherwise the message is built from the issue. No session is ever
+ * spawned just to write a commit message.
+ */
+function commitMessageFor(suggestion, issue, labels) {
+  const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim();
+  const subject = suggestion ? oneLine(suggestion) : '';
+  if (subject.length > 0 && subject.length <= 100 && CONVENTIONAL_SUBJECT.test(subject)) {
+    return `${subject}\n\nCloses #${issue.number}`;
+  }
+  const type = labels.some((l) => /^(bug|fix|defect)$/i.test(l)) ? 'fix' : 'feat';
+  return `${type}: ${oneLine(issue.title).slice(0, 72)}\n\nCloses #${issue.number}`;
+}
+
+/**
+ * COMMIT, CLOSE_ISSUE and VERIFY_CLOSED, all by the orchestrator.
+ *
+ * Issues #35 and #37 were implemented and committed by their session, which then did
+ * not close them, and the loop spent a whole further session on each to find that out.
+ * GitHub state is still the source of truth - nothing now depends on a model
+ * remembering to write it.
+ */
+function commitAndClose(issue, ctx) {
+  git('add', '-A');
+  if (!git('diff', '--cached', '--name-only').stdout) {
+    throw new Stop(`nothing to commit for issue #${issue.number} after a green gate`);
+  }
+
+  // The pre-commit hook runs here exactly as it does for a human. It costs nothing in
+  // context any more: the orchestrator reads its output, not a session.
+  const commit = gitTry(
+    'commit',
+    '-m',
+    commitMessageFor(ctx.suggestion, issue, ctx.labels),
+  );
+  if (commit.code !== 0) {
+    throw new Stop(
+      `the commit for issue #${issue.number} was refused, the work is staged and left in place:\n${tailOf(`${commit.stdout}\n${commit.stderr}`, 30)}`,
+    );
+  }
+  const sha = git('rev-parse', 'HEAD').stdout;
+
+  const closed = ghTry(
+    'issue',
+    'close',
+    String(issue.number),
+    '--comment',
+    `Implemented in ${sha}`,
+  );
+  if (closed.code !== 0) {
+    throw new Stop(
+      `issue #${issue.number} is implemented and committed as ${sha.slice(0, 8)} but closing it failed (${tailOf(closed.stderr, 3)}) - close it by hand and re-run, do not re-implement it`,
+    );
+  }
+
+  let state = '';
+  try {
+    state = String(
+      JSON.parse(
+        ghTry('issue', 'view', String(issue.number), '--json', 'state').stdout || '{}',
+      ).state || '',
+    );
+  } catch {
+    /* an unreadable answer is not a closed issue */
+  }
+  if (state.toUpperCase() !== 'CLOSED') {
+    throw new Stop(
+      `issue #${issue.number} reads ${state || 'unknown'} on GitHub after being closed, the work is committed as ${sha.slice(0, 8)} - check GitHub before re-running, do not re-implement it`,
+    );
+  }
+  return sha;
+}
+
+/**
+ * What to make of a finished session, before anything is read out of it. Fail-closed: a
+ * session that did not complete yields no verdict, no commit and no close.
+ */
+async function settleSession(st, cfg, opts, what) {
+  const outcome = sessionOutcome(st);
+  if (st.denials.length > 0 && outcome && !abortedByRateLimit(st)) {
+    throw new Stop(
+      `${what} was denied ${deniedTools(st)} and did not complete (${outcome}) - add it to allowedTools in ${CONFIG_DEFAULT} and re-run`,
+    );
+  }
+  reportDenials(st, what);
+  await handleRateLimit(st, cfg, opts);
+  if (abortedByRateLimit(st)) {
+    return { status: 'rate-limited', note: `${what} was cut off by the rate limit` };
+  }
+  if (outcome) return { status: 'open', note: `${what} did not complete (${outcome})` };
+  return null;
+}
+
+/**
+ * One issue, end to end:
+ *
+ *   PREPARE -> IMPLEMENT -> ISSUE_GATE -> ISSUE_REVIEW
+ *           -> REPAIR (only when the gate or the review blocks) -> back to the gate
+ *           -> COMMIT -> CLOSE_ISSUE -> VERIFY_CLOSED
+ *
+ * The implementation session no longer reviews itself, commits or closes anything. The
+ * review it used to run on its own diff was self-review over the wrong range whose
+ * verdict bound nothing; this reviewer is a separate read-only session over exactly the
+ * issue's diff, and its verdict decides whether a commit happens at all.
+ */
+async function runIssue(phase, cfg, opts, budget, issue) {
+  const ctx = prepareIssue(phase, cfg, budget, issue);
+  const slots = (extra) => ({
+    issue: issue.number,
+    title: issue.title,
+    milestone: phase.milestone,
+    branch: phase.branch,
+    featureBranch: cfg.featureBranch,
+    baseSha: ctx.baseSha,
+    body: ctx.body,
+    ...extra,
+  });
+
+  const charge = (kind, stage, st, model, effort) => {
+    recordStats(kind, phase, issue.number, st, { stage, model, effort });
+    budget.phaseTokens += st.grossInputTokens;
+    budget.runTokens += st.grossInputTokens;
+    budget.runCost += st.cost;
+    budget.perIssue.set(
+      issue.number,
+      (budget.perIssue.get(issue.number) || 0) + st.grossInputTokens,
+    );
+  };
+
+  // Browser tools only for an issue that is about the browser. A storage or schema
+  // issue that can reach for Playwright eventually does.
+  const browser = ctx.labels.some((have) =>
+    cfg.browserIssueLabels.some((l) => l.toLowerCase() === have.toLowerCase()),
+  );
+  const implAllowed = cfg.allowedTools.filter(
+    (t) => browser || !cfg.browserTools.some((b) => t.startsWith(b)),
+  );
+  const implSession = (prompt) => ({
+    model: cfg.implModel,
+    maxTurns: cfg.maxTurns,
+    stallSeconds: cfg.stallSeconds,
+    allowedTools: implAllowed,
+    tools: cfg.implTools,
+    disallowedTools: cfg.implDisallowedTools,
+    disableSlashCommands: true,
+    effort: cfg.implEffort,
+    prompt,
+  });
+
+  let st = await runSession({
+    ...implSession(fillPrompt(cfg.implPrompt, slots())),
+    maxCostUsd: cfg.implMaxCostUsd,
+  });
+  charge('impl', 'IMPLEMENT', st, cfg.implModel, cfg.implEffort);
+  let settled = await settleSession(st, cfg, opts, 'the implementation session');
+  if (settled) return settled;
+  ctx.suggestion = suggestedCommit(st.resultText);
+
+  for (let round = 1; ; round++) {
+    checkInterrupt();
+    const files = changedFiles(ctx.baseSha);
+    if (files.length === 0) {
+      return { status: 'open', note: 'the session changed nothing' };
+    }
+
+    let findings = null;
+    const failure = runIssueGate(cfg, files);
+    if (failure) {
+      findings = [
+        `The gate step "${failure.step}" failed.`,
+        `Command: ${failure.command}`,
+        '',
+        failure.output,
+      ].join('\n');
+    } else {
+      const treeBefore = git('status', '--porcelain').stdout;
+      const stat = git('diff', '--shortstat', ctx.baseSha).stdout;
+      log(
+        `> issue review . ${files.length} file(s) . ${stat || 'no change reported'} . ${cfg.issueReviewModel} . effort ${cfg.issueReviewEffort}`,
+      );
+      // Not a limit, a warning: an issue whose diff is this big was filed too large,
+      // and any review of it is shallower than it looks.
+      const changed =
+        Number((stat.match(/(\d+) insertion/) || [])[1] || 0) +
+        Number((stat.match(/(\d+) deletion/) || [])[1] || 0);
+      if (changed > cfg.issueDiffWarnLines) {
+        log(
+          `  ! ${changed} changed lines for one issue - the review will be shallower than it looks, consider splitting the issue`,
+        );
+      }
+      const rv = await runSession({
+        model: cfg.issueReviewModel,
+        maxTurns: cfg.maxTurns,
+        stallSeconds: cfg.stallSeconds,
+        allowedTools: cfg.issueReviewTools,
+        tools: cfg.issueReviewTools,
+        disallowedTools: cfg.issueReviewDisallowedTools,
+        disableSlashCommands: true,
+        effort: cfg.issueReviewEffort,
+        maxCostUsd: cfg.issueReviewMaxCostUsd,
+        prompt: fillPrompt(cfg.issueReviewPrompt, slots({ files: files.join('\n') })),
+      });
+      charge(
+        'issue-review',
+        'ISSUE_REVIEW',
+        rv,
+        cfg.issueReviewModel,
+        cfg.issueReviewEffort,
+      );
+      settled = await settleSession(rv, cfg, opts, 'the issue review');
+      if (settled) return settled;
+
+      // Read-only is asserted at the CLI; this is the check that it held.
+      if (git('status', '--porcelain').stdout !== treeBefore) {
+        throw new Stop(
+          `the reviewer changed the working tree while reviewing issue #${issue.number}, its verdict is not trusted`,
+        );
+      }
+
+      const verdict = readVerdict(rv.resultText);
+      log(
+        `  review: ${verdict} . $${rv.cost.toFixed(2)} . ${rv.apiRequests} req . ${fmtDuration(rv.durationMs)}`,
+      );
+      if (verdict === 'APPROVED') {
+        return {
+          status: 'closed',
+          note: `committed ${commitAndClose(issue, ctx).slice(0, 8)}`,
+        };
+      }
+      findings = rv.resultText.trim();
+    }
+
+    if (round > cfg.maxIssueRepairs) {
+      throw new Stop(
+        `issue #${issue.number} still does not pass after ${cfg.maxIssueRepairs} repair round(s), nothing was committed and the work is left in the tree - see ${paths.log}`,
+      );
+    }
+    log(`~ repair ${round}/${cfg.maxIssueRepairs} for issue #${issue.number}`);
+
+    st = await runSession({
+      ...implSession(fillPrompt(cfg.repairPrompt, slots({ findings }))),
+      maxCostUsd: cfg.repairMaxCostUsd,
+    });
+    charge('repair', 'REPAIR', st, cfg.implModel, cfg.implEffort);
+    settled = await settleSession(st, cfg, opts, 'the repair session');
+    if (settled) return settled;
+    ctx.suggestion = suggestedCommit(st.resultText) || ctx.suggestion;
+  }
+}
+
 // ─── phase execution ───────────────────────────────────────────────────────────
 
-/** Runs implementation sessions until the milestone has no open issues left. */
+/** Runs the issue pipeline until the milestone has no open issues left. */
 async function drainIssues(phase, cfg, opts, budget) {
   const attempts = budget.attempts;
   let open = openIssues(phase.milestone);
@@ -1098,48 +1578,13 @@ async function drainIssues(phase, cfg, opts, budget) {
       `> issue #${issue.number} "${issue.title}" . attempt ${attempt}/${cfg.maxIssueAttempts} . ${cfg.implModel} . maxTurns ${cfg.maxTurns}`,
     );
 
-    const st = await runSession({
-      model: cfg.implModel,
-      maxTurns: cfg.maxTurns,
-      stallSeconds: cfg.stallSeconds,
-      allowedTools: cfg.allowedTools,
-      effort: cfg.implEffort,
-      maxCostUsd: cfg.implMaxCostUsd,
-      prompt: fillPrompt(cfg.implPrompt, {
-        milestone: phase.milestone,
-        branch: phase.branch,
-        issue: issue.number,
-        title: issue.title,
-      }),
-    });
-    recordStats('impl', phase, issue.number, st, {
-      stage: 'IMPLEMENT',
-      model: cfg.implModel,
-      effort: cfg.implEffort,
-    });
-    budget.phaseTokens += st.grossInputTokens;
-    budget.runTokens += st.grossInputTokens;
-    budget.runCost += st.cost;
+    const costBefore = budget.runCost;
+    const startedAt = Date.now();
+    const result = await runIssue(phase, cfg, opts, budget, issue);
 
-    const issueTokens =
-      (budget.perIssue.get(issue.number) || 0) + st.grossInputTokens;
-    budget.perIssue.set(issue.number, issueTokens);
-
-    const outcome = sessionOutcome(st);
-    if (st.denials.length > 0 && outcome && !abortedByRateLimit(st)) {
-      throw new Stop(
-        `session was denied ${deniedTools(st)} and did not complete (${outcome}) - add it to allowedTools in ${CONFIG_DEFAULT} and re-run`,
-      );
-    }
-    reportDenials(st, 'session');
-    await handleRateLimit(st, cfg, opts);
-
-    const before = new Set(open.map((i) => i.number));
-    open = openIssues(phase.milestone);
-    const stillOpen = new Set(open.map((i) => i.number));
-    budget.issuesClosed += [...before].filter((n) => !stillOpen.has(n)).length;
-    const closed = !stillOpen.has(issue.number);
-    const summary = `$${st.cost.toFixed(2)} . ${fmtDuration(st.durationMs)} . ${st.apiRequests} req . ${fmtTokens(st.grossInputTokens)} gross in . ${st.terminalReason || 'no result event'} . run total $${budget.runCost.toFixed(2)}`;
+    const issueTokens = budget.perIssue.get(issue.number) || 0;
+    const summary = `$${(budget.runCost - costBefore).toFixed(2)} . ${fmtDuration(Date.now() - startedAt)} . ${fmtTokens(issueTokens)} gross in . ${result.note} . run total $${budget.runCost.toFixed(2)}`;
+    const closed = result.status === 'closed';
 
     // The budget applies however the session ended. It used to be checked only after
     // the closed and rate-limited branches had already continued, which is how issue
@@ -1154,15 +1599,20 @@ async function drainIssues(phase, cfg, opts, budget) {
 
     if (closed) {
       attempts.set(issue.number, 0);
+      budget.baseSha.delete(issue.number);
+      budget.issuesClosed++;
       log(`+ issue #${issue.number} closed . ${summary}`);
       if (overBudget) throw budgetStop();
+      // GitHub stays the source of truth even though the orchestrator did the closing:
+      // re-reading also picks up an issue somebody closed by hand meanwhile.
+      open = openIssues(phase.milestone);
       continue;
     }
 
     // A session the rate limit cut off did not fail at the task, it never got to
     // finish it. Charging it an attempt means a limit arriving twice looks exactly
     // like an issue that cannot be implemented.
-    if (abortedByRateLimit(st)) {
+    if (result.status === 'rate-limited') {
       const aborts = (budget.limitAborts.get(issue.number) || 0) + 1;
       budget.limitAborts.set(issue.number, aborts);
       if (aborts > cfg.maxRateLimitRetries) {
@@ -1274,6 +1724,7 @@ async function runPhase(phase, cfg, opts, base, budget) {
 
   budget.attempts = new Map();
   budget.limitAborts = new Map();
+  budget.baseSha = new Map();
   budget.phaseTokens = 0;
   budget.phaseLimit =
     cfg.issueBudgetTokens * Math.max(1, openBefore.length) +
@@ -1399,7 +1850,7 @@ function maybeOpenFeaturePr(cfg, allPhases, base) {
 // ─── dry run ───────────────────────────────────────────────────────────────────
 
 function printPlan(phases, cfg, base) {
-  const issueCost = estimateCost('impl', BASELINE_ISSUE_COST_USD, {
+  const issueCost = estimateCost(ISSUE_KINDS, BASELINE_ISSUE_COST_USD, {
     perIssue: true,
   });
   const reviewCost = estimateCost('phase-review', BASELINE_REVIEW_COST_USD);
@@ -1440,8 +1891,10 @@ function printPlan(phases, cfg, base) {
     planned++;
     const phaseUsd = issueCost.usd * open.length + reviewCost.usd;
     const phaseTokens = perIssueTokens * open.length + BASELINE_REVIEW_TOKENS;
-    const phaseSessions =
-      open.length * cfg.maxIssueAttempts + cfg.maxReviewRounds;
+    // Per attempt: one implementation, up to maxIssueRepairs repairs, and one review
+    // after each of them.
+    const perIssueSessions = cfg.maxIssueAttempts * (2 * cfg.maxIssueRepairs + 2);
+    const phaseSessions = open.length * perIssueSessions + cfg.maxReviewRounds;
     issues += open.length;
     usd += phaseUsd;
     tokens += phaseTokens;
@@ -1548,12 +2001,13 @@ async function main() {
     perIssue: new Map(),
     attempts: new Map(),
     limitAborts: new Map(),
+    baseSha: new Map(),
   };
   const startedAt = Date.now();
   let executed = 0;
 
   log(
-    `> Ralph Loop . feature "${cfg.feature}" . branch ${cfg.featureBranch} . trunk ${base} . models ${cfg.implModel}/${cfg.reviewModel} . effort ${cfg.implEffort || 'default'}/${cfg.reviewEffort || 'default'} . cost cap $${cfg.implMaxCostUsd}/$${cfg.phaseReviewMaxCostUsd} per session`,
+    `> Ralph Loop . feature "${cfg.feature}" . branch ${cfg.featureBranch} . trunk ${base} . impl ${cfg.implModel} (effort ${cfg.implEffort || 'default'}, cap $${cfg.implMaxCostUsd}) . issue review ${cfg.issueReviewModel} (effort ${cfg.issueReviewEffort}, cap $${cfg.issueReviewMaxCostUsd}) . phase review ${cfg.reviewModel} (effort ${cfg.reviewEffort || 'default'}, cap $${cfg.phaseReviewMaxCostUsd})`,
   );
   ensureNiceToHaveLabel(cfg.niceToHaveLabel);
 
@@ -1609,6 +2063,16 @@ module.exports = {
   readStatsRows,
   runSession,
   drainIssues,
+  reviewPhase,
+  runIssue,
+  prepareIssue,
+  changedFiles,
+  runIssueGate,
+  settleSession,
+  suggestedCommit,
+  commitMessageFor,
+  commitAndClose,
+  tailOf,
   recordStats,
   readVerdict,
   sessionOutcome,

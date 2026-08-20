@@ -219,13 +219,26 @@ Only after explicit approval, and only after the fake end-to-end test passes: on
 
 ## Definition of done
 
-- [ ] The implementing agent never calls `/code-review`, `Skill` or `Agent`.
-- [ ] A separate, bounded, read-only reviewer sees exactly the issue diff.
-- [ ] Reviewer model and effort are explicit.
-- [ ] A per-issue deterministic gate runs before every commit, and its success output stays out of
+- [x] The implementing agent never calls `/code-review`, `Skill` or `Agent` — enforced by
+      `--disallowedTools`, `--tools` and `--disable-slash-commands`, and by the prompt.
+- [x] A separate, bounded, read-only reviewer sees exactly the issue diff.
+- [x] Reviewer model and effort are explicit (`sonnet`, `--effort high`, `--max-budget-usd 2`).
+- [x] A per-issue deterministic gate runs before every commit, and its success output stays out of
       the model context.
-- [ ] The orchestrator performs the commit and the issue close, and verifies GitHub state.
-- [ ] A close failure never restarts implementation.
-- [ ] The Opus phase review is untouched.
-- [ ] No scratch diff files are written into the repository.
+- [x] The orchestrator performs the commit and the issue close, and verifies GitHub state.
+- [x] A close failure never restarts implementation — it stops the run and says so.
+- [x] The Opus phase review is untouched, apart from losing `Skill` from the shared tool list,
+      which it never used.
+- [x] No scratch diff files are written into the repository — no session computes a diff for
+      review any more.
 - [ ] Median cost per issue is at or below $1.50 with no drop in blocking defects found.
+      **Open: this can only be measured by the canary, which needs explicit approval.**
+
+### Deviations to know about
+
+- **e2e is not a default gate step.** It needs the Postgres container, and a step that fails
+  whenever Docker is down would block every issue of every phase. The one-line config to enable it
+  is in `docs/ralph-loop-rework/usage.md`; every other default gate step was run against this
+  repository before being made a default.
+- **`implEffort` and `reviewEffort` stay unset** for the reason given in WO-1: those stages have a
+  baseline nobody has measured. `issueReviewEffort` is set because that stage is new.
