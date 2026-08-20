@@ -175,3 +175,40 @@ test('shimSpawnArgs quotes arguments that would otherwise reach the shell', {
   );
   assert.ok(line.includes('--model sonnet'), line);
 });
+
+test('shimSpawnArgs survives cmd.exe eating the last quote on the line', {
+  skip: process.platform !== 'win32' && 'cmd.exe quoting is Windows-only',
+}, () => {
+  // The bug this guards: with /s, cmd strips the first quote and the LAST quote on the
+  // command line and runs the rest verbatim. As long as the only quotes were the pair
+  // around the program name that was harmless. Add a quoted argument - a comma-joined
+  // --tools list is one - and cmd instead ate that argument's closing quote, leaving
+  // `claude" -p ... --tools "Bash` as the program name. Nothing ran.
+  const [, args] = ralph.shimSpawnArgs('claude', [
+    '-p',
+    '--tools',
+    'Bash,PowerShell,Read',
+    '--disallowedTools',
+    'Task,Skill',
+    '--allowedTools',
+    'Bash',
+    'Read',
+  ]);
+  const command = args[args.length - 1];
+
+  assert.ok(command.startsWith('"'), `no leading quote to sacrifice: ${command}`);
+  assert.ok(command.endsWith('"'), `no trailing quote to sacrifice: ${command}`);
+
+  // What cmd.exe /s does, applied here: drop the first quote, drop the last quote.
+  const afterCmd = command.slice(1, command.lastIndexOf('"'));
+  assert.ok(afterCmd.startsWith('"claude"'), `program name mangled: ${afterCmd}`);
+  assert.ok(
+    afterCmd.includes('--tools "Bash,PowerShell,Read"'),
+    `tool list lost a quote: ${afterCmd}`,
+  );
+  assert.ok(
+    afterCmd.includes('--disallowedTools "Task,Skill"'),
+    `deny list lost a quote: ${afterCmd}`,
+  );
+  assert.ok(afterCmd.trimEnd().endsWith('--allowedTools Bash Read'), afterCmd);
+});

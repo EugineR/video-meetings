@@ -174,7 +174,8 @@ test('--allowedTools stays last, because it is variadic', async () => {
     assert.ok(at >= 0);
     const tail = flat.slice(at + '--allowedTools'.length);
     assert.doesNotMatch(tail, /--/, `a flag follows --allowedTools: ${tail}`);
-    assert.ok(flat.trimEnd().endsWith('Bash'), flat);
+    // On Windows the last character is the wrapper quote cmd.exe /s consumes.
+    assert.ok(flat.trimEnd().replace(/"$/, '').endsWith('Bash'), flat);
   } finally {
     restore();
   }
