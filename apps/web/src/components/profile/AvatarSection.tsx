@@ -1,14 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { Avatar, Button, Card, Label, ProgressBar } from '@heroui/react';
+import { Avatar, Button, Card, Label, Modal, ProgressBar } from '@heroui/react';
 import {
   ApiError,
   UploadCancelledError,
+  deleteAvatar,
   uploadAvatar,
   type Profile,
 } from '@/lib/api';
-import { UploadIcon } from '@/components/icons';
+import { TrashIcon, UploadIcon } from '@/components/icons';
 import { UserAvatar } from '@/components/profile/UserAvatar';
 
 interface AvatarSectionProps {
@@ -46,6 +47,9 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isRemoved, setIsRemoved] = useState(false);
+  const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
+  const [isRemoving, setIsRemoving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const objectUrlRef = useRef<string | null>(null);
 
@@ -58,6 +62,31 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
   }, []);
 
   const isUploading = progress !== null;
+  const hasStoredAvatar = profile.hasAvatar && !isRemoved;
+  const canRemove = previewUrl !== null || hasStoredAvatar;
+
+  const handleConfirmRemove = async () => {
+    setIsRemoving(true);
+    setError(null);
+    try {
+      await deleteAvatar();
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+      setPreviewUrl(null);
+      setIsRemoved(true);
+      setIsRemoveModalOpen(false);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not remove the avatar. Please try again.',
+      );
+    } finally {
+      setIsRemoving(false);
+    }
+  };
 
   const startUpload = (file: File) => {
     const validationError = validateFile(file);
@@ -73,6 +102,7 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
     objectUrlRef.current = url;
     setPreviewUrl(url);
     setError(null);
+    setIsRemoved(false);
     setProgress(0);
 
     uploadAvatar(file, { onProgress: setProgress })
@@ -84,6 +114,11 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
         if (err instanceof UploadCancelledError) {
           return;
         }
+        if (objectUrlRef.current) {
+          URL.revokeObjectURL(objectUrlRef.current);
+          objectUrlRef.current = null;
+        }
+        setPreviewUrl(null);
         setError(
           err instanceof ApiError
             ? err.message
@@ -121,22 +156,36 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
               <UserAvatar
                 avatarUpdatedAt={profile.avatarUpdatedAt}
                 email={profile.email}
-                hasAvatar={profile.hasAvatar}
+                hasAvatar={hasStoredAvatar}
                 name={profile.name}
                 size="profile"
               />
             )}
 
             <div className="flex flex-col gap-2">
-              <Button
-                className="h-11 self-start md:h-10"
-                isDisabled={isUploading}
-                onPress={() => inputRef.current?.click()}
-                variant="secondary"
-              >
-                <UploadIcon aria-hidden="true" className="size-4" />
-                Choose photo
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  className="h-11 self-start md:h-10"
+                  isDisabled={isUploading || isRemoving}
+                  onPress={() => inputRef.current?.click()}
+                  variant="secondary"
+                >
+                  <UploadIcon aria-hidden="true" className="size-4" />
+                  Choose photo
+                </Button>
+
+                {canRemove ? (
+                  <Button
+                    className="h-11 self-start md:h-10"
+                    isDisabled={isUploading || isRemoving}
+                    onPress={() => setIsRemoveModalOpen(true)}
+                    variant="danger"
+                  >
+                    <TrashIcon aria-hidden="true" className="size-4" />
+                    Remove avatar
+                  </Button>
+                ) : null}
+              </div>
 
               <p className="text-xs text-muted">
                 {ALLOWED_EXTENSIONS_LABEL} · up to {MAX_SIZE_LABEL}
@@ -158,7 +207,7 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
             </div>
           </div>
 
-          {error ? (
+          {error && !isRemoveModalOpen ? (
             <p className="text-sm text-danger" role="alert">
               {error}
             </p>
@@ -174,6 +223,43 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
           />
         </div>
       </Card.Content>
+
+      <Modal.Backdrop
+        isOpen={isRemoveModalOpen}
+        onOpenChange={setIsRemoveModalOpen}
+      >
+        <Modal.Container>
+          <Modal.Dialog className="sm:max-w-[400px]">
+            <Modal.CloseTrigger />
+            <Modal.Header>
+              <Modal.Heading>Remove avatar?</Modal.Heading>
+            </Modal.Header>
+            <Modal.Body>
+              <p>
+                This will remove your profile photo. You can upload a new one at
+                any time.
+              </p>
+              {error ? (
+                <p className="text-sm text-danger" role="alert">
+                  {error}
+                </p>
+              ) : null}
+            </Modal.Body>
+            <Modal.Footer>
+              <Button slot="close" variant="secondary">
+                Cancel
+              </Button>
+              <Button
+                isPending={isRemoving}
+                onPress={() => void handleConfirmRemove()}
+                variant="danger"
+              >
+                Remove
+              </Button>
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
     </Card>
   );
 }
