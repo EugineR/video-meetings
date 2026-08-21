@@ -18,6 +18,8 @@ export interface UseAuthenticatedUserResult {
   signOut: () => void;
   /** Swaps in a freshly issued token (e.g. after a password change) without a re-login. */
   applyAccessToken: (token: string) => void;
+  /** Swaps in a freshly saved profile (e.g. after a name change) without refetching. */
+  applyProfile: (profile: Profile) => void;
 }
 
 /**
@@ -88,5 +90,16 @@ export function useAuthenticatedUser(): UseAuthenticatedUserResult {
     setUser(refreshAccessToken(token));
   }, []);
 
-  return { user, profile, profileError, signOut, applyAccessToken };
+  const applyProfile = useCallback((updatedProfile: Profile) => {
+    setProfile(updatedProfile);
+  }, []);
+
+  return {
+    user,
+    profile,
+    profileError,
+    signOut,
+    applyAccessToken,
+    applyProfile,
+  };
 }

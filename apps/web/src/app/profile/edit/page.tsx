@@ -8,7 +8,8 @@ import { DisplayNameSection } from '@/components/profile/DisplayNameSection';
 
 export default function ProfileEditPage() {
   const router = useRouter();
-  const { user, profile, profileError, signOut } = useAuthenticatedUser();
+  const { user, profile, profileError, signOut, applyProfile } =
+    useAuthenticatedUser();
 
   if (!user) {
     return (
@@ -52,7 +53,7 @@ export default function ProfileEditPage() {
               <Spinner aria-label="Loading profile" />
             </div>
           ) : (
-            <DisplayNameSection name={profile.name} />
+            <DisplayNameSection name={profile.name} onSaved={applyProfile} />
           )}
         </div>
       </div>

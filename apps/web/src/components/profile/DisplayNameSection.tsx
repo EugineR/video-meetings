@@ -10,10 +10,12 @@ import {
   Label,
   TextField,
 } from '@heroui/react';
-import { ApiError, updateProfile } from '@/lib/api';
+import { ApiError, updateProfile, type Profile } from '@/lib/api';
 
 interface DisplayNameSectionProps {
   name: string | null;
+  /** Called with the API's response right after a successful save, so the caller can propagate it (e.g. to the header) without refetching. */
+  onSaved: (profile: Profile) => void;
 }
 
 /**
@@ -22,7 +24,7 @@ interface DisplayNameSectionProps {
  * disables itself again right after a successful save, without needing the
  * parent to refetch the profile.
  */
-export function DisplayNameSection({ name }: DisplayNameSectionProps) {
+export function DisplayNameSection({ name, onSaved }: DisplayNameSectionProps) {
   const [value, setValue] = useState(name ?? '');
   const [savedValue, setSavedValue] = useState(name ?? '');
   const [isPending, setIsPending] = useState(false);
@@ -39,6 +41,7 @@ export function DisplayNameSection({ name }: DisplayNameSectionProps) {
       setValue(updated.name ?? '');
       setSavedValue(updated.name ?? '');
       setIsSaved(true);
+      onSaved(updated);
     } catch (err) {
       setError(
         err instanceof ApiError
