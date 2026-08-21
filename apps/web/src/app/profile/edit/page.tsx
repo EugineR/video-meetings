@@ -5,11 +5,18 @@ import { useRouter } from 'next/navigation';
 import { useAuthenticatedUser } from '@/lib/useAuthenticatedUser';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { DisplayNameSection } from '@/components/profile/DisplayNameSection';
+import { PasswordSection } from '@/components/profile/PasswordSection';
 
 export default function ProfileEditPage() {
   const router = useRouter();
-  const { user, profile, profileError, signOut, applyProfile } =
-    useAuthenticatedUser();
+  const {
+    user,
+    profile,
+    profileError,
+    signOut,
+    applyProfile,
+    applyAccessToken,
+  } = useAuthenticatedUser();
 
   if (!user) {
     return (
@@ -53,7 +60,10 @@ export default function ProfileEditPage() {
               <Spinner aria-label="Loading profile" />
             </div>
           ) : (
-            <DisplayNameSection name={profile.name} onSaved={applyProfile} />
+            <>
+              <DisplayNameSection name={profile.name} onSaved={applyProfile} />
+              <PasswordSection onChanged={applyAccessToken} />
+            </>
           )}
         </div>
       </div>
