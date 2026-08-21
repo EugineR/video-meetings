@@ -21,10 +21,10 @@ port 3000) · `build` · `start` · `lint` (`eslint.config.mjs` composes `eslint
 Next.js App Router on Tailwind CSS v4 and HeroUI v3; nothing of the `create-next-app` scaffold
 remains. Every page is a client component and auth is client-side only.
 
-- `src/app/` — routes `/`, `/login`, `/register`, `/meetings/[id]`, plus `layout.tsx` and
-  `globals.css`
+- `src/app/` — routes `/`, `/login`, `/register`, `/meetings/[id]`, `/profile`, `/profile/edit`,
+  plus `layout.tsx` and `globals.css`
 - `src/components/` — one component per file, in subfolders **by kind** (`layout/`, `meetings/`,
-  `icons/`), not flat; icons are re-exported through `icons/index.ts`
+  `profile/`, `icons/`), not flat; icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
   `format.ts`
 
