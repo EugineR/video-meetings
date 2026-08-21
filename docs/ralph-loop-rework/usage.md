@@ -366,8 +366,11 @@ PREPARE -> IMPLEMENT -> ISSUE_GATE -> ISSUE_REVIEW
   the previous attempt's own work.
 - **IMPLEMENT** gets the issue body in its prompt, so it does not fetch it. It cannot
   reach `Task` or `Skill` (`--disallowedTools`, `--disable-slash-commands`), and browser
-  tools are handed only to an issue labelled `web`, `frontend`, `ui` or `e2e`. It leaves
-  the work uncommitted and ends with `FILES:` / `TESTS:` / `COMMIT:` lines.
+  tools are handed only to an issue labelled `web`, `frontend`, `ui` or `e2e`. Every other
+  session runs with `--strict-mcp-config` and no `--mcp-config`, so it loads no MCP server
+  at all — `--tools` cannot limit MCP tools, and `--allowedTools` is never consulted for a
+  tool `settings.local.json` has already permitted. It leaves the work uncommitted and
+  ends with `FILES:` / `TESTS:` / `COMMIT:` lines.
 - **ISSUE_GATE** is run by the orchestrator, not by a model: prettier over the changed
   files, then lint, typecheck and the unit suite of each workspace the change touched.
   Its output is captured, and **a passing step's output never reaches a session** — that

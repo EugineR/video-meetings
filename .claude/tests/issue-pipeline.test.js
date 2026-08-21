@@ -212,6 +212,43 @@ test('a backend issue gets no browser tools, a web-labelled one does', async () 
   assert.doesNotMatch(argvs(web.spawn)[1], /playwright/, 'never for the reviewer');
 });
 
+test('a reviewer cannot reach a browser even when the human has already permitted one', async () => {
+  // The hole the argv assertion above could not see: Playwright is an MCP server, so
+  // --tools never touches it and settings.local.json had already granted every
+  // mcp__playwright__* tool, which means --allowedTools is not consulted either. The
+  // reviewer of issue #49 drove a browser and left appheader-review.png in the
+  // repository, and the read-only guard stopped the whole phase over it.
+  // --strict-mcp-config with no --mcp-config loads no server at all.
+  const backend = await runOne({ fixtures: ['session-impl', 'session-review-approved'] });
+  for (const argv of argvs(backend.spawn)) {
+    assert.match(argv, /--strict-mcp-config/);
+  }
+
+  const web = await runOne({
+    fixtures: ['session-impl', 'session-review-approved'],
+    repo: { labels: ['web'] },
+  });
+  assert.doesNotMatch(
+    argvs(web.spawn)[0],
+    /--strict-mcp-config/,
+    'a web issue is the one case that needs the browser',
+  );
+  assert.match(argvs(web.spawn)[1], /--strict-mcp-config/, 'its reviewer still does not');
+});
+
+test('a repair session keeps whatever the implementation was allowed', async () => {
+  const web = await runOne({
+    fixtures: ['session-impl', 'session-review-blocked', 'session-impl', 'session-review-approved'],
+    repo: { labels: ['web'] },
+  });
+  assert.doesNotMatch(argvs(web.spawn)[2], /--strict-mcp-config/, 'the repair, on a web issue');
+
+  const backend = await runOne({
+    fixtures: ['session-impl', 'session-review-blocked', 'session-impl', 'session-review-approved'],
+  });
+  assert.match(argvs(backend.spawn)[2], /--strict-mcp-config/);
+});
+
 // ─── nothing is committed without a green gate and an explicit approval ────────
 
 test('a blocking verdict sends the work to repair and then reviews it again', async () => {

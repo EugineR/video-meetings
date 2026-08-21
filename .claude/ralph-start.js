@@ -682,6 +682,7 @@ function runSession({
   tools,
   disallowedTools,
   disableSlashCommands,
+  strictMcp,
   effort,
   maxCostUsd,
 }) {
@@ -712,6 +713,14 @@ function runSession({
     // Skills are the other door to a subagent: /code-review forked one per issue and
     // it was the single most expensive thing in a session.
     if (disableSlashCommands) args.push('--disable-slash-commands');
+
+    // MCP tools are not built-in, so --tools does not reach them, and a tool the
+    // human's own settings.local.json already permits is never asked about again.
+    // That is how a read-only reviewer drove a browser and left a screenshot in the
+    // repository. With no --mcp-config to point at, this loads no MCP server at all -
+    // which also keeps 24 tool definitions out of every request of every session that
+    // has no business with a browser.
+    if (strictMcp) args.push('--strict-mcp-config');
 
     // Effort was previously whatever a session inherited; a reviewer that quietly
     // thought less than intended is not a reviewer anyone can rely on.
@@ -1880,6 +1889,7 @@ async function runIssue(phase, cfg, opts, budget, issue) {
     tools: cfg.implTools,
     disallowedTools: cfg.implDisallowedTools,
     disableSlashCommands: true,
+    strictMcp: !browser,
     effort: cfg.implEffort,
     prompt,
   });
@@ -1962,6 +1972,7 @@ async function runIssue(phase, cfg, opts, budget, issue) {
         tools: cfg.issueReviewTools,
         disallowedTools: cfg.issueReviewDisallowedTools,
         disableSlashCommands: true,
+        strictMcp: true,
         effort: cfg.issueReviewEffort,
         maxCostUsd: cfg.issueReviewMaxCostUsd,
         prompt: fillPrompt(cfg.issueReviewPrompt, slots({ files: files.join('\n') })),
@@ -2137,6 +2148,10 @@ async function reviewPhase(phase, cfg, opts, budget) {
       maxTurns: cfg.maxTurns,
       stallSeconds: cfg.stallSeconds,
       allowedTools: cfg.allowedTools,
+      // The phase review reads a diff and files issues; it has never needed a
+      // browser, and a screenshot dropped in the tree here would fail the merge that
+      // follows it rather than one issue.
+      strictMcp: true,
       effort: cfg.reviewEffort,
       maxCostUsd: cfg.phaseReviewMaxCostUsd,
       prompt: fillPrompt(cfg.reviewPrompt, {

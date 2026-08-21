@@ -8,7 +8,7 @@ import { AppHeader } from '@/components/layout/AppHeader';
 import { MeetingRow } from '@/components/meetings/MeetingRow';
 
 export default function Home() {
-  const { user, signOut } = useAuthenticatedUser();
+  const { user, profile, signOut } = useAuthenticatedUser();
   const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
   const [meetingsError, setMeetingsError] = useState<string | null>(null);
 
@@ -56,7 +56,13 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen flex-col bg-linear-to-br from-accent/10 via-background to-background">
-      <AppHeader email={user.email} onSignOut={signOut} />
+      <AppHeader
+        avatarUpdatedAt={profile?.avatarUpdatedAt}
+        email={user.email}
+        hasAvatar={profile?.hasAvatar}
+        name={profile?.name}
+        onSignOut={signOut}
+      />
       <div className="flex justify-center px-4 py-12">
         <div className="flex w-full max-w-2xl flex-col gap-6">
           {recentMeetings.length > 0 ? (
