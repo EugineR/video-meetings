@@ -41,4 +41,28 @@ export class UsersRepository {
       throw err;
     }
   }
+
+  /**
+   * Returns `null` (instead of throwing) if the user row is already gone,
+   * mirroring `updateName`.
+   */
+  async updatePassword(
+    id: string,
+    hashedPassword: string,
+  ): Promise<User | null> {
+    try {
+      return await this.prisma.user.update({
+        where: { id },
+        data: { password: hashedPassword },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === PRISMA_NOT_FOUND_CODE
+      ) {
+        return null;
+      }
+      throw err;
+    }
+  }
 }

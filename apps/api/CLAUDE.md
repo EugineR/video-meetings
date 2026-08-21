@@ -2,86 +2,121 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Rules and boundaries only. The per-file inventory is in `docs/architecture/api.md` and
+`docs/testing/api.md` — read them when you need them, by plain path, never as an `@` import.
+
 ## Commands
 
-Run from `apps/api/` (or via `pnpm --filter api <script>` from the repo root):
+From `apps/api/`, or `pnpm --filter api <script>` from the root: `pnpm dev` (watch) · `start` ·
+`start:debug` · `start:prod` · `build` · `lint` · `test` (Jest units, `*.spec.ts` under `src`) ·
+`test:watch` · `test:cov` · `test:e2e` (`*.e2e-spec.ts` under `test/`, needs
+`docker compose up -d postgres`) · `prisma:generate` (after editing `prisma/schema.prisma`; also
+runs on `pnpm install`) · `prisma:migrate`.
 
-- `pnpm dev` (alias `start:dev`) — start with watch mode
-- `pnpm start` — start once, no watch
-- `pnpm start:debug` — watch mode with `--inspect-brk`
-- `pnpm build` — Nest build to `dist/`
-- `pnpm start:prod` — run the built `dist/main.js`
-- `pnpm lint` — ESLint with `--fix` over `src`, `apps`, `libs`, `test`
-- `pnpm test` — Jest unit tests (`*.spec.ts` under `src`); see [Testing](#testing)
-- `pnpm test:watch` / `pnpm test:cov` — watch mode / coverage
-- `pnpm test:e2e` — e2e tests via `test/jest-e2e.json` (`*.e2e-spec.ts` under `test`, requires `docker compose up -d postgres`); see [Testing](#testing)
-- `pnpm prisma:generate` (alias for `prisma generate`) — regenerate the Prisma Client after editing `prisma/schema.prisma`; also runs automatically on `pnpm install` via `postinstall`
-- `pnpm prisma:migrate` (alias for `prisma migrate dev`) — create/apply a migration against the local database
+Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "case"`,
+`pnpm test:e2e -- auth.e2e-spec.ts`. The pre-commit hook runs the full suite, so don't pre-run it.
 
-## Architecture
+## Layout
 
-- `src/main.ts` — bootstraps `AppModule` via `NestFactory`; enables CORS restricted to `WEB_URL` (default `http://localhost:3000`) so `apps/web` can call this API from the browser
-- `src/app.module.ts` — root module. Imports `ConfigModule` (global), `PrismaModule`, `StorageModule`, `UsersModule`, `AuthModule`, `MeetingsModule`; registers a global `ValidationPipe` (`whitelist: true, transform: true`) via `APP_PIPE`
-- `src/prisma/` — `PrismaModule` (`@Global()`) and `PrismaService`, a `PrismaClient` subclass connected via the `@prisma/adapter-pg` driver adapter (Prisma 7 requires a driver adapter; the connection string can no longer live in `schema.prisma`), reading `DATABASE_URL` through `ConfigService`. Connects on `onModuleInit`, disconnects on `onModuleDestroy`
-- `src/storage/` — `StorageModule` (`@Global()`) and `StorageService`, a single local-filesystem implementation (`save`/`createReadStream`/`delete`/`exists`) reading `UPLOADS_DIR` through `ConfigService`. `save(meetingId, { originalFilename, buffer })` writes to `{UPLOADS_DIR}/{meetingId}/{uuid}{ext}` (extension derived from `originalFilename`) and returns the resulting absolute `storagePath`; `createReadStream` accepts an optional `{ start, end }` byte range for future HTTP Range support; `exists`/`delete` operate on a `storagePath` previously returned by `save`; `delete` also removes the `{meetingId}` directory if it's left empty (silently keeps it if other files remain). Deliberately HTTP-agnostic (no dependency on `Express.Multer.File` or any route) so it can be unit-tested and reused by whichever upload/streaming routes are wired on top of it
-- `src/users/` — `UsersModule`, the sole owner of user persistence, importing `AuthModule` to reuse `JwtAuthGuard`/`@CurrentUser()`. `users.repository.ts` (`UsersRepository`, a thin Prisma wrapper: `findByEmail`, `findById`, `create`, `updateName`) is a module-private provider — it is **not exported**; other modules reach it only by dispatching `CreateUserCommand` (`commands/create-user.command.ts` + `commands/handlers/create-user.handler.ts`) or `FindUserByEmailQuery` (`queries/find-user-by-email.query.ts` + `queries/handlers/find-user-by-email.handler.ts`) through `CommandBus`/`QueryBus`. `UsersModule` is imported directly by `AppModule` (not by `AuthModule`) so its handlers are registered in the module graph independently of who calls them. It also owns the own-profile read/write path: `GetProfileQuery` (`queries/get-profile.query.ts` + `queries/handlers/get-profile.handler.ts`) looks up a user by id (404 if missing) and `UpdateProfileCommand` (`commands/update-profile.command.ts` + `commands/handlers/update-profile.handler.ts`) persists a new display name via `updateName`; both return a `ProfileResponse` (`interfaces/profile-response.interface.ts`, via `toProfileResponse`). `dto/update-profile.dto.ts`'s `UpdateProfileDto` validates the HTTP body (`name?: string | null`, `@MaxLength(100)`) and trims it via a `class-transformer` `@Transform`, collapsing a blank string to `null` before validation runs. `UsersRepository.updateName` returns `null` (rather than throwing) if the user row is already gone — mirrors `RecordingsRepository.delete`'s P2025-swallowing pattern — so `UpdateProfileHandler` can turn that into the same `NotFoundException` (404) `GetProfileHandler` throws for a missing user, instead of letting Prisma's error surface as a 500. `UsersController`, guarded with `@UseGuards(JwtAuthGuard)` at the class level (`GET /users/me` → 200, `PATCH /users/me` → 200/400/404), resolves the target user strictly from `@CurrentUser()`'s `user.sub` — never from a route param — so a caller can only ever read/write their own profile; it depends only on `CommandBus`/`QueryBus`, dispatching `GetProfileQuery`/`UpdateProfileCommand`. A `PATCH` body that omits `name` entirely (`dto.name === undefined`, distinct from an explicit blank string, which the DTO's `@Transform` already normalizes to `null`) is treated as a no-op read — the controller dispatches `GetProfileQuery` instead of `UpdateProfileCommand` — so a partial-update request can never accidentally wipe a previously-set name.
-- `src/auth/` — `AuthModule`, built with CQRS (`@nestjs/cqrs`); see [CQRS pattern](#cqrs-pattern) for the general convention it establishes:
-  - `AuthController` (`POST /auth/register` → 201, `POST /auth/login` → 200, both returning `{ accessToken }`) depends only on `CommandBus`/`QueryBus`, not on a service.
-  - `commands/register-user.command.ts` + `commands/handlers/register-user.handler.ts` — `RegisterUserCommand`/`RegisterUserHandler` (mutates state: dispatches `users`' `FindUserByEmailQuery` to check email uniqueness, hashes the password with `bcryptjs`, then dispatches `users`' `CreateUserCommand` to create the user). It never imports `UsersRepository` directly — the only coupling to `users/` is the shared `CreateUserCommand`/`FindUserByEmailQuery` message classes, dispatched via `CommandBus`/`QueryBus`.
-  - `queries/login-user.query.ts` + `queries/handlers/login-user.handler.ts` — `LoginUserQuery`/`LoginUserHandler` (read-only: dispatches `users`' `FindUserByEmailQuery` to look up the user, verifies the password). Modeled as a query rather than a command because it doesn't mutate persisted state.
-  - `token.service.ts` — `TokenService`, the shared JWT-signing provider (`@nestjs/jwt`, `JWT_SECRET`/1h expiry from `ConfigService`) used by both handlers.
-  - `dto/` — `RegisterDto`/`LoginDto`, validated by `class-validator`.
-  - `interfaces/access-token-response.interface.ts` — shared `{ accessToken: string }` response shape.
-  - `interfaces/jwt-payload.interface.ts` — the decoded JWT shape, `{ sub: string; email: string }` (matches what `TokenService.sign` puts in the token).
-  - `guards/jwt-auth.guard.ts` — `JwtAuthGuard`, a `CanActivate` guard that reads the `Authorization: Bearer <token>` header, verifies it via `JwtService.verifyAsync`, and attaches the decoded `JwtPayload` to `request.user`; throws `UnauthorizedException` (401) when the header is missing or the token is invalid/expired. Falls back to a `?token=` query param — the same token, verified the same way — only on routes decorated `@AllowQueryToken()` (`decorators/allow-query-token.decorator.ts`, read via `Reflector`), since a `<video>`/`<audio>` element's `src` can't set request headers; this is what lets `GET /meetings/:id/recording/content` stay behind the guard while still being usable as a player `src`. Deliberately opt-in per route rather than a blanket fallback, so a token leaked via a recording URL (browser history, proxy logs, a `Referer` header) can't also authenticate the rest of the API.
-  - `decorators/current-user.decorator.ts` — `@CurrentUser()` param decorator, reads `request.user` (set by `JwtAuthGuard`) and returns it typed as `JwtPayload`.
-  - Register on a taken email throws `ConflictException` (409); bad login credentials throw `UnauthorizedException` (401).
-  - `AuthModule` exports `JwtModule` and `JwtAuthGuard` so other feature modules can import `AuthModule` to protect their own routes with the same guard/decorator pair instead of re-registering `JwtModule`. It does **not** import `UsersModule` — `auth` and `users` are siblings under `AppModule`, communicating only through commands/queries dispatched on the shared `CommandBus`/`QueryBus`.
-- `src/meetings/` — `MeetingsModule`, built with CQRS, importing `AuthModule` to reuse `JwtAuthGuard`/`@CurrentUser()`:
-  - `MeetingsController`, guarded with `@UseGuards(JwtAuthGuard)` at the class level (`POST /meetings` → 201, `GET /meetings` → 200, `GET /meetings/:id` → 200/404, `GET /meetings/:id/recording/content` → 200/206/404, `POST /meetings/:id/recording` → 201, `DELETE /meetings/:id/recording` → 204), every route reads the caller's id via `@CurrentUser()`.
-  - `commands/create-meeting.command.ts` + `commands/handlers/create-meeting.handler.ts` — `CreateMeetingCommand`/`CreateMeetingHandler` (mutates state: creates a meeting owned by the current user).
-  - `queries/get-meetings.query.ts` + `queries/handlers/get-meetings.handler.ts` — lists meetings owned by the current user; each item is a `MeetingListItemResponse` (`interfaces/meeting-list-item-response.interface.ts`) — the `Meeting` fields plus a `hasRecording: boolean` collapsed from the loaded recording relation, for the list badge.
-  - `queries/get-meeting-by-id.query.ts` + `queries/handlers/get-meeting-by-id.handler.ts` — looks up a single meeting scoped to `(id, ownerId)`; throws `NotFoundException` (404) both when the id doesn't exist and when it belongs to a different user, so ownership is never leaked via the status code. Returns a `MeetingDetailResponse` (`interfaces/meeting-detail-response.interface.ts`) — the `Meeting` fields plus a `recording` field (the serialized `RecordingResponse`, or `null` when there is none).
-  - `queries/get-recording.query.ts` + `queries/handlers/get-recording.handler.ts` — `GetRecordingQuery`/`GetRecordingHandler`: 404 for a missing/foreign meeting or a meeting with no recording; otherwise reads `MeetingRecording.sizeBytes`/`storagePath`/`mimeType` off the recording relation already loaded by `findByIdAndOwnerWithRecording` (no second repository call), parses an optional `Range` header via `range-parser.ts`'s `parseRange` (single `bytes=start-end` ranges only — malformed or unsatisfiable ranges fall back to serving the whole file), and returns a `RecordingContent` (`interfaces/recording-content.interface.ts`: a `StorageService.createReadStream` `ReadStream` plus `mimeType`/`totalSize`/`range`) for `MeetingsController.getRecordingContent` to turn into the actual HTTP response — the handler stays HTTP-agnostic (no `Response`/header logic), consistent with the rest of this module's handlers.
-  - `MeetingsController.getRecordingContent` (`GET /meetings/:id/recording/content`, `@AllowQueryToken()`) sets `Content-Type`/`Accept-Ranges` from the `RecordingContent`, and either `Content-Length` (200, full file) or `Content-Range`/`Content-Length` plus a 206 status (when a satisfiable `Range` was parsed) via `@Res({ passthrough: true })`, then returns a `StreamableFile` wrapping the stream — Nest pipes it through without overwriting headers already set on `res`. The one route in this controller whose handler isn't a single `execute()` call (see the CQRS pattern note below) — the header/status logic is inherently HTTP-layer and can't move into an HTTP-agnostic query handler.
-  - `meetings.repository.ts` — `MeetingsRepository` (thin Prisma wrapper: `create`, `findAllByOwner`, `findByIdAndOwner`, `findByIdAndOwnerWithRecording`), declared directly in `MeetingsModule` (no other module currently needs it). `findByIdAndOwner` is a lean ownership/existence check (no join), used by the upload/delete handlers, which never read the recording relation; `findAllByOwner`/`findByIdAndOwnerWithRecording` both `include: { recording: true }`, returning `MeetingWithRecording` (`Meeting & { recording: MeetingRecording | null }`) for the two callers that actually need it — `get-meetings`/`get-recording` and `get-meeting-by-id` respectively — via the response-shaping functions `toMeetingListItemResponse`/`toMeetingDetailResponse`.
-  - `recordings.repository.ts` — `RecordingsRepository` (thin Prisma wrapper: `createOrReplace` — an upsert keyed on the unique `meetingId` — `findByMeetingId`, `delete`), declared directly in `MeetingsModule`.
-  - `dto/create-meeting.dto.ts` — `CreateMeetingDto` (`title`: non-empty string, `date`: ISO-8601 date string, `participants`: array of email strings), validated by `class-validator`.
-  - No request-body DTOs beyond `CreateMeetingDto` — response shapes are the Prisma `Meeting`/`MeetingRecording` models (or the thin `MeetingListItemResponse`/`MeetingDetailResponse`/`RecordingResponse` wrappers above, for the fields those models can't represent directly — `hasRecording`, a nested `recording`, and `BigInt` serialization).
-  - **Recording upload/delete:**
-    - `MeetingsModule` imports `MulterModule.registerAsync({ inject: [ConfigService, StorageService], useFactory: ... })` (mirrors `AuthModule`'s `JwtModule.registerAsync` pattern) to build a `diskStorage` config from env at runtime: `destination` creates/uses `StorageService.resolveMeetingDir(meetingId)` (read from `req.params.id`), `filename` uses `StorageService.generateFilename(originalname)` — the same `{UPLOADS_DIR}/{meetingId}/{uuid}{ext}` convention `StorageService` documents, kept in one place instead of duplicated. `resolveMeetingDir` rejects any `meetingId` that isn't a plain UUID (400) — `:id` reaches it straight from the URL, before any ownership check runs, so without this a value like `..\..\Temp` would `path.join` outside `UPLOADS_DIR`. `limits.fileSize` reads `MAX_UPLOAD_SIZE_BYTES`; `fileFilter` validates both MIME type and extension against `ALLOWED_RECORDING_MIME_TYPES` (via `recording-file-filter.ts`'s `isAllowedRecordingFile`, allowlist parsed once at factory time by `parseAllowedMimeTypes`), rejecting with `UnsupportedMediaTypeException` (415) on mismatch. `assertKnownRecordingMimeTypes` runs once in the same factory and throws at bootstrap if `ALLOWED_RECORDING_MIME_TYPES` names a MIME type the extension map doesn't know — otherwise that misconfiguration would silently 415 every upload of it instead of failing loudly.
-    - `MeetingsController.uploadRecording` (`@UseInterceptors(FileInterceptor('file'))`) throws `BadRequestException` (400) when `req.file` is `undefined` — multer doesn't error on a missing field, so this is the one case Nest's built-in Multer error mapping can't cover. Oversized (413) and malformed-multipart (400) requests are mapped automatically by Nest (`@nestjs/platform-express`'s `transformException`); no custom exception filter needed.
-    - `commands/upload-recording.command.ts` + `commands/handlers/upload-recording.handler.ts` — `UploadRecordingCommand`/`UploadRecordingHandler`: checks meeting ownership via `MeetingsRepository.findByIdAndOwner` (404 for missing/foreign meetings — since the interceptor already wrote the file to disk before the handler runs, a 404 here also deletes that now-orphaned file via `StorageService.delete`), then `RecordingsRepository.createOrReplace`s the DB row (an atomic upsert keyed on `meetingId`), then calls `StorageService.pruneMeetingDir(meetingId, recording.storagePath)` to remove any other file left in the meeting's directory — based on the real directory listing taken _after_ the upsert commits (not a pre-upsert read of the old row), so a losing concurrent upload's file is still cleaned up even though nothing ever read its metadata.
-    - `commands/delete-recording.command.ts` + `commands/handlers/delete-recording.handler.ts` — `DeleteRecordingCommand`/`DeleteRecordingHandler`: 404 for a missing/foreign meeting; otherwise calls `RecordingsRepository.delete`, which itself returns `null` (rather than throwing) if the row is already gone — e.g. a concurrent delete request won the race — so that case also 404s instead of surfacing Prisma's `P2025` as an unhandled 500. Deletes the DB row before the file on disk (so a mid-failure never leaves a DB row pointing at a deleted file).
-    - `interfaces/recording-response.interface.ts` — `RecordingResponse`/`toRecordingResponse`: the one place `MeetingRecording.sizeBytes` (a Prisma `BigInt`) is serialized to a JSON-safe `string`, since `res.json()` throws on a raw `BigInt`. Consistent with the "no DTO layer, handlers return the model directly" convention — the model is just cloned with `sizeBytes` converted at the return boundary, not wrapped in a class.
+`src/main.ts` bootstraps `AppModule` and restricts CORS to `WEB_URL`. `AppModule` imports
+`ConfigModule` (global), `PrismaModule`, `StorageModule`, `UsersModule`, `AuthModule`,
+`MeetingsModule`, and registers a global `ValidationPipe` (`whitelist`, `transform`).
+
+- `src/prisma/` — `@Global()` `PrismaService`, the only `PrismaClient` in the app
+- `src/storage/` — `@Global()` `StorageService` (local filesystem) and the shared Multer factory
+- `src/users/` — user persistence, own-profile read/write, password change, avatar routes (upload, stream, delete);
+  `GET /users/me`'s `ProfileResponse` reports `hasAvatar`/`avatarUpdatedAt`
+- `src/auth/` — register/login, `TokenService`, `JwtAuthGuard`, `@CurrentUser()`
+- `src/meetings/` — meetings and their one recording (upload, stream, delete)
 
 ## CQRS pattern
 
-Every feature module that mutates or reads persisted state follows the `@nestjs/cqrs` convention established by `auth/` (see above) and reused by later modules (e.g. `meetings/`). New feature modules should follow the same shape rather than inventing a new one:
+Every module that reads or mutates persisted state follows the `@nestjs/cqrs` convention `auth/`
+established; new modules follow it rather than inventing one.
 
-- **Commands** (`commands/<name>.command.ts` + `commands/handlers/<name>.handler.ts`) are for anything that mutates state (create/update/delete). The command class is a plain constructor-only data carrier with no logic. Its handler is decorated `@CommandHandler(XCommand)` and implements `ICommandHandler<XCommand, TResult>`.
-- **Queries** (`queries/<name>.query.ts` + `queries/handlers/<name>.handler.ts`) are for anything read-only — including reads that do non-trivial work, as long as they don't persist anything. `LoginUserQuery` is the reference example: it looks up a user and verifies a password hash, but is a query (not a command) because nothing is written to the database.
-- **Controllers stay thin.** They inject `CommandBus`/`QueryBus` only — never a repository or a handler directly — and each route handler is a single `commandBus.execute(new XCommand(...))` or `queryBus.execute(new XQuery(...))` call, typed to return the handler's result. The sanctioned exception is a streaming response (`MeetingsController.getRecordingContent`): the `execute()` call still does all the business logic, but the controller also translates its result into response headers/status via `@Res({ passthrough: true })`, since that's inherently HTTP-layer work an HTTP-agnostic handler can't do.
-- **Handlers hold the logic.** They inject one or more thin repositories (one per aggregate, e.g. `UsersRepository`, `MeetingsRepository` — each a near-1:1 wrapper around a `PrismaService` call, returning the Prisma model type directly) plus any shared services (e.g. `TokenService`). Handlers throw Nest's built-in HTTP exceptions directly where a business rule is violated (`ConflictException`, `UnauthorizedException`, `NotFoundException`, …) — there is no separate exception-mapping layer.
-- **Module wiring:** each feature module imports `CqrsModule`, declares local `CommandHandlers`/`QueryHandlers` arrays, and registers `providers: [...CommandHandlers, ...QueryHandlers]` alongside its controller and any module-local services. `@nestjs/cqrs`'s explorer scans the whole application for `@CommandHandler`/`@QueryHandler` providers regardless of which module declared `CqrsModule`, so `CommandBus`/`QueryBus` dispatch works across module boundaries as long as every feature module is reachable from `AppModule`.
-- **Cross-module communication goes through the bus, not direct imports.** `MeetingsRepository` is declared directly in `MeetingsModule` (no other module currently needs it) — that's the simple case. But `users/` is a dependency of `auth/`, and that dependency is expressed as commands/queries (`CreateUserCommand`, `FindUserByEmailQuery`), not as an exported repository: `UsersRepository` is a module-private provider, `auth/` handlers only import the `users/` command/query _classes_ (plain data carriers) and dispatch them via `CommandBus`/`QueryBus`. This keeps `AuthModule` from importing `UsersModule` at all — both are imported side-by-side by `AppModule`. Reach for this pattern (bus-mediated command/query, no cross-module repository export) whenever a new feature module needs another module's persisted data; keep the direct-declaration pattern (`MeetingsRepository`'s) only for a repository nothing outside its own module touches.
-- **DTOs vs commands/queries:** HTTP-facing validation lives in `dto/*.ts` (`class-validator` decorators); controllers map a validated DTO onto a command/query instance. Commands/queries themselves carry no validation logic — by the time a handler sees one, the shape is already trusted.
+- **Commands** (`commands/<n>.command.ts` + `commands/handlers/<n>.handler.ts`) mutate state;
+  **queries** (`queries/…`) are read-only even when they do real work — `LoginUserQuery` verifies a
+  password hash and is still a query, because nothing is persisted.
+- **Controllers stay thin**: `CommandBus`/`QueryBus` only, one `execute(new XCommand(...))` per
+  route, never a repository or a handler. The sanctioned exception is a streaming response
+  (`MeetingsController.getRecordingContent`), which also maps the result onto headers/status via
+  `@Res({ passthrough: true })` — HTTP work a handler must not do.
+- **Handlers hold the logic**: thin repositories (one per aggregate, near-1:1 over `PrismaService`)
+  plus shared services, throwing Nest's HTTP exceptions directly. There is no mapping layer.
+- **Cross-module communication goes through the bus, not direct imports.** A repository another
+  module needs stays module-private and is reached by dispatching that module's command/query
+  classes — `AuthModule` does not import `UsersModule`. Declare a repository directly in its own
+  module only while nothing outside it touches that data.
+- **DTOs vs commands**: `class-validator` lives in `dto/*.ts`; controllers map a validated DTO onto
+  a command/query, which carries no validation of its own.
+
+## Invariants
+
+Rules no amount of reading the code makes obvious, each of which a change can break silently.
+The reasoning behind them is in `docs/architecture/api.md`.
+
+- **Any id that becomes a path must be a plain UUID** (`StorageService.assertValidId`) — the id
+  arrives from a URL param or a JWT payload before any ownership check, and `..\..\Temp` would
+  otherwise `path.join` outside `UPLOADS_DIR`.
+- **`StorageService` stays HTTP-agnostic** — no `Express.Multer.File`, no route, no `Response`.
+- **A foreign resource 404s, never 403s** — ownership must not leak through a status code.
+- **Own-profile routes resolve the user from `@CurrentUser()`'s `sub`, never a route param.**
+- **`BigInt` becomes a `string` at the response boundary** — `res.json()` throws on a raw one.
+- **A row already gone returns `null`, not a throw**, so a lost race is a 404 rather than Prisma's
+  `P2025` surfacing as a 500.
+- **Delete the DB row before the file on disk**; **prune after the upsert commits**, from the real
+  directory listing rather than a pre-upsert snapshot — that is what makes concurrent uploads to
+  the same meeting or user race-free.
+- **Upload limits live in env and are enforced by the Multer factory**, not by `StorageService`:
+  `MAX_UPLOAD_SIZE_BYTES`/`ALLOWED_RECORDING_MIME_TYPES`, `MAX_AVATAR_SIZE_BYTES`/`ALLOWED_AVATAR_MIME_TYPES`.
+  `assertKnown*MimeTypes` runs at bootstrap and throws if the allowlist names a MIME type the
+  extension map does not know — otherwise it silently 415s every upload of that type.
+- **`ALLOWED_RECORDING_MIME_TYPES` and `MAX_UPLOAD_SIZE_BYTES` must stay in sync with
+  `ALLOWED_MIME_TYPES` and `MAX_SIZE_BYTES` in
+  `apps/web/src/components/meetings/RecordingUploader.tsx`**, the client-side mirror of the same
+  allowlist and cap. Change one, change the other, or the browser accepts a file the API rejects.
+- **`@AllowQueryToken()` is opt-in per route.** The `?token=` fallback exists only because a
+  `<video>`/`<audio>`/`<img>` `src` cannot set headers; blanket, it would let a token leaked through
+  a recording or avatar URL authenticate the rest of the API.
+- **Register and change-password hash with the shared `PASSWORD_SALT_ROUNDS`** (`auth/password-rules.ts`).
+- **A `POST` that answers 200 needs `@HttpCode(HttpStatus.OK)`** — Nest defaults `POST` to 201.
+- **Prisma 7 requires a driver adapter** (`@prisma/adapter-pg`); the connection string cannot live
+  in `schema.prisma`. `PrismaService` reads `DATABASE_URL` via `ConfigService`, `prisma.config.ts`
+  via `dotenv/config` for the CLI.
 
 ## Testing
 
-- **Unit tests** (`pnpm test` / `pnpm test:watch` / `pnpm test:cov`): Jest config lives inline in `package.json` (`rootDir: "src"`, `testRegex: ".*\\.spec\\.ts$"` — matches `*.spec.ts` colocated with the code under `src`). `src/storage/storage.service.spec.ts` is the first real unit suite (exercises `save`/`createReadStream`/`exists`/`delete` against a temp directory, independent of Nest's DI or HTTP) — no unit tests exist yet for the `auth`/`users`/`meetings` CQRS handlers. Run a single unit test file: `pnpm test -- <name>.spec.ts` (Jest pattern match); a single test case: `pnpm test -- -t "test name"`.
-- **E2e tests** (`pnpm test:e2e`): separate config at `test/jest-e2e.json` (matches `*.e2e-spec.ts` under `test/`). Requires `docker compose up -d postgres` running first — `test/auth.e2e-spec.ts`, `test/users-profile.e2e-spec.ts`, `test/meetings.e2e-spec.ts` and `test/meetings-recording.e2e-spec.ts` boot the real `AppModule` and hit the actual Postgres database from `docker-compose.yml` (via Prisma), truncating their tables (`users`; `users`; `meetings`+`users`; `meetingRecording`+`meetings`+`users`) in a `beforeEach` for isolation. `users-profile.e2e-spec.ts` covers `GET /users/me`/`PATCH /users/me`: own-profile fields, name trimming/blank-to-null, explicit `name: null` clearing an already-set name, an omitted `name` leaving it untouched, the 100-char validation error, auth rejection, and cross-user isolation (one user's request never reads/writes another's row). Because multiple e2e spec files share and truncate the same real database, `test/jest-e2e.json` sets `"maxWorkers": 1` so suites run serially; without it, Jest's default parallel workers can interleave one file's `deleteMany()` with another file's in-flight test and cause spurious foreign-key errors. `meetings-recording.e2e-spec.ts` additionally points `UPLOADS_DIR` at a dedicated temp directory (set in `beforeAll`, before any test compiles the `AppModule`, since `dotenv` never overwrites an already-set env var) so it doesn't write real recording files into the repo, and wipes that directory in `afterAll`; its 413 (size-limit) case builds its own one-off app with a temporarily tiny `MAX_UPLOAD_SIZE_BYTES` rather than reusing the shared `app`. Beyond upload/delete, it also covers `GET /meetings/:id/recording/content` (full-file checksum match, `Range` → 206 with the correct `Content-Range`/`Content-Length`, the `?token=` query-param auth fallback, 404s), the `recording`/`hasRecording` fields on the two read routes, and cascade delete of a `meeting_recordings` row on both `prisma.meeting.delete` and `prisma.user.delete` (there is no HTTP route for either, so those two cases call Prisma directly). Run a single e2e file: `pnpm test:e2e -- auth.e2e-spec.ts`; a single test case: `pnpm test:e2e -- -t "test name"`.
-- Both suites currently cover `auth` and `meetings` behavior only through the e2e layer (HTTP-level, real DB) — there is no unit-level coverage of individual CQRS handlers (e.g. `RegisterUserHandler`, `LoginUserHandler`, `CreateUserHandler`) in isolation.
+Jest units are configured inline in `package.json` (`rootDir: "src"`, `*.spec.ts` colocated with
+the code). E2e specs boot the real `AppModule` against the Postgres from `docker-compose.yml` and
+truncate their tables in `beforeEach`. Two rules follow:
 
-ESLint (`eslint.config.mjs`) uses `typescript-eslint` recommendedTypeChecked + `eslint-plugin-prettier`; notably `@typescript-eslint/no-explicit-any` is off, and `no-floating-promises` / `no-unsafe-argument` are warnings, not errors.
+- **`test/jest-e2e.json` sets `"maxWorkers": 1`** — the specs share one real database, and in
+  parallel one file's `deleteMany()` interleaves with another's in-flight test and throws spurious
+  foreign-key errors. Do not raise it.
+- **An e2e spec that writes files points `UPLOADS_DIR` at its own temp directory in `beforeAll`** —
+  before anything compiles `AppModule`, since `dotenv` never overwrites an already-set var — and
+  wipes it in `afterAll`. A size-limit case builds a one-off app with a tiny limit instead of
+  mutating the shared one.
 
-## Database (Prisma)
+What each spec covers: `docs/testing/api.md`. ESLint is `typescript-eslint` recommendedTypeChecked
+plus `eslint-plugin-prettier`; `no-explicit-any` is off,
+`no-floating-promises`/`no-unsafe-argument` are warnings.
 
-- Schema: `prisma/schema.prisma` — `User` (mapped to `users`), `Meeting` (mapped to `meetings`, `ownerId` FK to `User` with `onDelete: Cascade`, `participants` stored as a native Postgres `String[]` column rather than a separate join table), and `MeetingRecording` (mapped to `meeting_recordings`, `meetingId` FK to `Meeting` with `onDelete: Cascade` and `@unique` — a meeting has at most one recording — `originalFilename`, `storagePath`, `mimeType`, `sizeBytes` as `BigInt`, `status` as the `RecordingStatus` enum (`UPLOADED | PROCESSING | READY | FAILED`, default `UPLOADED`)). Migrations live in `prisma/migrations/`.
-- CLI config: `prisma.config.ts` (reads `DATABASE_URL` via `dotenv/config`) — used by `prisma migrate`/`prisma generate`, separate from the app's own `ConfigModule`-based runtime connection in `PrismaService`.
-- Generated client: `generated/prisma`-style output is not used here — the schema uses the classic `prisma-client-js` generator, so the client is generated into `node_modules/@prisma/client` and imported as `import { PrismaClient } from '@prisma/client'`.
-- Required env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (Postgres connection string — must match the credentials in the root `docker-compose.yml`/`​.env.example`) and `JWT_SECRET`. `PORT` (default `3001` in `.env`/`.env.example`) sets the HTTP listen port in `src/main.ts` — it must differ from `apps/web`'s port (3000) since both apps are run together via `pnpm dev`. `WEB_URL` (default `http://localhost:3000`) sets the allowed CORS origin in `src/main.ts` — it must match wherever `apps/web` is actually served from. `UPLOADS_DIR` (default `uploads`, relative to `apps/api/`) is where `StorageService` writes recording files — gitignored/dockerignored, created on demand. `MAX_UPLOAD_SIZE_BYTES` and `ALLOWED_RECORDING_MIME_TYPES` (comma-separated MIME list) enforce the upload route's size/type validation via `MeetingsModule`'s `MulterModule.registerAsync` config (`StorageService` itself doesn't check them — see the recording upload/delete bullet below).
+## Database
 
-## Recording upload research
+`prisma/schema.prisma` + `prisma/migrations/`: `User` → `users`, `Meeting` → `meetings`,
+`MeetingRecording` → `meeting_recordings` (at most one per meeting), `UserAvatar` → `user_avatars`
+(at most one per user); every child FK is `onDelete: Cascade`.
 
-Design notes behind the recording upload flow: `docs/meeting-recording-upload/research.md`. Referenced by plain path on purpose — an `@` import would load all 15 KB of it into every session that touches this app.
+Env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (must match the root
+`docker-compose.yml` credentials), `JWT_SECRET`, `PORT` (default `3001` — **must differ from
+`apps/web`'s 3000**, both run under `pnpm dev`), `WEB_URL` (default `http://localhost:3000`, the
+CORS origin — **must match where `apps/web` is served**), `UPLOADS_DIR` (default `uploads`, relative
+to `apps/api/`, gitignored, created on demand), plus the four upload-limit vars above.
+
+## Reference
+
+- `docs/architecture/api.md` — every module, file, class and method
+- `docs/testing/api.md` — what each unit and e2e spec covers
+- `docs/meeting-recording-upload/research.md` — design notes behind the recording upload flow
+- `apps/web/CLAUDE.md` — the frontend that calls this API
