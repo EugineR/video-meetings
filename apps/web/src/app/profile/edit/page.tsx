@@ -62,7 +62,7 @@ export default function ProfileEditPage() {
             </div>
           ) : (
             <>
-              <AvatarSection profile={profile} />
+              <AvatarSection onProfileChange={applyProfile} profile={profile} />
               <DisplayNameSection name={profile.name} onSaved={applyProfile} />
               <PasswordSection onChanged={applyAccessToken} />
             </>

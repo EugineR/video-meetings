@@ -14,6 +14,16 @@ import { UserAvatar } from '@/components/profile/UserAvatar';
 
 interface AvatarSectionProps {
   profile: Profile;
+  /**
+   * Called with only the avatar-specific fields right after a successful
+   * upload or removal, so the caller can merge them (e.g. into the header)
+   * without refetching. Deliberately a delta, not a full `Profile` built from
+   * the `profile` prop: this callback can resolve well after it captured
+   * `profile` (an upload has its own progress bar), by which point another
+   * section may have saved a newer profile — spreading the stale `profile`
+   * here would clobber that update.
+   */
+  onProfileChange: (profile: Partial<Profile>) => void;
 }
 
 /**
@@ -40,10 +50,15 @@ function validateFile(file: File): string | null {
  * Uploads automatically on file selection (no separate "Upload" step), mirroring
  * RecordingUploader's UX. A local `URL.createObjectURL` preview replaces the
  * current-avatar/initials placeholder as soon as a file is picked, and stays up
- * through the upload's progress bar; propagating the result to the header and
- * /profile without a reload is a separate piece of work.
+ * through the upload's progress bar. On success, `onProfileChange` is called with
+ * just the avatar fields (derived from the upload/delete response, not a refetch,
+ * and not merged with the `profile` prop here — see `AvatarSectionProps`) so the
+ * header and /profile pick up the change immediately.
  */
-export function AvatarSection({ profile }: AvatarSectionProps) {
+export function AvatarSection({
+  profile,
+  onProfileChange,
+}: AvatarSectionProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +92,7 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
       setPreviewUrl(null);
       setIsRemoved(true);
       setIsRemoveModalOpen(false);
+      onProfileChange({ hasAvatar: false, avatarUpdatedAt: null });
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -106,8 +122,12 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
     setProgress(0);
 
     uploadAvatar(file, { onProgress: setProgress })
-      .then(() => {
+      .then((avatar) => {
         setProgress(null);
+        onProfileChange({
+          hasAvatar: true,
+          avatarUpdatedAt: avatar.updatedAt,
+        });
       })
       .catch((err: unknown) => {
         setProgress(null);

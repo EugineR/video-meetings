@@ -52,7 +52,16 @@ export function UserAvatar({
   const label = name?.trim() || email;
 
   return (
-    <Avatar color="accent" size={HEROUI_SIZE[size]} variant="soft">
+    // Keyed on `hasAvatar`: Radix's Avatar tracks image-loading status on the
+    // root and never resets it when `Avatar.Image` unmounts, so without a key
+    // change a removed avatar would leave the root stuck reporting "loaded"
+    // and the fallback initials would never render.
+    <Avatar
+      color="accent"
+      key={hasAvatar ? 'image' : 'fallback'}
+      size={HEROUI_SIZE[size]}
+      variant="soft"
+    >
       {hasAvatar ? (
         <Avatar.Image alt={label} src={getAvatarUrl(avatarUpdatedAt)} />
       ) : null}
