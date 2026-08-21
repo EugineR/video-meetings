@@ -47,19 +47,21 @@ function validateFile(file: File): string | null {
 }
 
 /**
- * Uploads automatically on file selection (no separate "Upload" step), mirroring
- * RecordingUploader's UX. A local `URL.createObjectURL` preview replaces the
- * current-avatar/initials placeholder as soon as a file is picked, and stays up
- * through the upload's progress bar. On success, `onProfileChange` is called with
- * just the avatar fields (derived from the upload/delete response, not a refetch,
- * and not merged with the `profile` prop here — see `AvatarSectionProps`) so the
- * header and /profile pick up the change immediately.
+ * Selecting a file only stages a local preview (via `URL.createObjectURL`) and a
+ * pending `File` — it does not upload. The upload only starts once the user presses
+ * "Upload"; "Cancel" discards the pending selection (revoking the object URL) and
+ * restores the current avatar/initials placeholder without touching the server. On
+ * a successful upload, `onProfileChange` is called with just the avatar fields
+ * (derived from the upload/delete response, not a refetch, and not merged with the
+ * `profile` prop here — see `AvatarSectionProps`) so the header and /profile pick up
+ * the change immediately.
  */
 export function AvatarSection({
   profile,
   onProfileChange,
 }: AvatarSectionProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRemoved, setIsRemoved] = useState(false);
@@ -78,7 +80,7 @@ export function AvatarSection({
 
   const isUploading = progress !== null;
   const hasStoredAvatar = profile.hasAvatar && !isRemoved;
-  const canRemove = previewUrl !== null || hasStoredAvatar;
+  const canRemove = hasStoredAvatar;
 
   const handleConfirmRemove = async () => {
     setIsRemoving(true);
@@ -104,7 +106,7 @@ export function AvatarSection({
     }
   };
 
-  const startUpload = (file: File) => {
+  const stageFile = (file: File) => {
     const validationError = validateFile(file);
     if (validationError) {
       setError(validationError);
@@ -117,13 +119,41 @@ export function AvatarSection({
     const url = URL.createObjectURL(file);
     objectUrlRef.current = url;
     setPreviewUrl(url);
+    setPendingFile(file);
     setError(null);
-    setIsRemoved(false);
+  };
+
+  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    // Guards against a second file slipping in while an upload is still in flight.
+    if (file && !isUploading) {
+      stageFile(file);
+    }
+  };
+
+  const handleCancelSelection = () => {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    setPreviewUrl(null);
+    setPendingFile(null);
+    setError(null);
+  };
+
+  const handleUpload = () => {
+    if (!pendingFile) {
+      return;
+    }
+    setError(null);
     setProgress(0);
 
-    uploadAvatar(file, { onProgress: setProgress })
+    uploadAvatar(pendingFile, { onProgress: setProgress })
       .then((avatar) => {
         setProgress(null);
+        setPendingFile(null);
+        setIsRemoved(false);
         onProfileChange({
           hasAvatar: true,
           avatarUpdatedAt: avatar.updatedAt,
@@ -139,21 +169,13 @@ export function AvatarSection({
           objectUrlRef.current = null;
         }
         setPreviewUrl(null);
+        setPendingFile(null);
         setError(
           err instanceof ApiError
             ? err.message
             : 'Upload failed. Please try again.',
         );
       });
-  };
-
-  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    // Guards against a second file slipping in while the first upload is still in flight.
-    if (file && !isUploading) {
-      startUpload(file);
-    }
   };
 
   return (
@@ -184,27 +206,52 @@ export function AvatarSection({
 
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
-                <Button
-                  className="h-11 self-start md:h-10"
-                  isDisabled={isUploading || isRemoving}
-                  onPress={() => inputRef.current?.click()}
-                  variant="secondary"
-                >
-                  <UploadIcon aria-hidden="true" className="size-4" />
-                  Choose photo
-                </Button>
+                {pendingFile ? (
+                  <>
+                    <Button
+                      className="h-11 self-start md:h-10"
+                      isDisabled={isUploading}
+                      isPending={isUploading}
+                      onPress={handleUpload}
+                    >
+                      <UploadIcon aria-hidden="true" className="size-4" />
+                      Upload
+                    </Button>
 
-                {canRemove ? (
-                  <Button
-                    className="h-11 self-start md:h-10"
-                    isDisabled={isUploading || isRemoving}
-                    onPress={() => setIsRemoveModalOpen(true)}
-                    variant="danger"
-                  >
-                    <TrashIcon aria-hidden="true" className="size-4" />
-                    Remove avatar
-                  </Button>
-                ) : null}
+                    <Button
+                      className="h-11 self-start md:h-10"
+                      isDisabled={isUploading}
+                      onPress={handleCancelSelection}
+                      variant="secondary"
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      className="h-11 self-start md:h-10"
+                      isDisabled={isRemoving}
+                      onPress={() => inputRef.current?.click()}
+                      variant="secondary"
+                    >
+                      <UploadIcon aria-hidden="true" className="size-4" />
+                      Choose photo
+                    </Button>
+
+                    {canRemove ? (
+                      <Button
+                        className="h-11 self-start md:h-10"
+                        isDisabled={isRemoving}
+                        onPress={() => setIsRemoveModalOpen(true)}
+                        variant="danger"
+                      >
+                        <TrashIcon aria-hidden="true" className="size-4" />
+                        Remove avatar
+                      </Button>
+                    ) : null}
+                  </>
+                )}
               </div>
 
               <p className="text-xs text-muted">
