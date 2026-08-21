@@ -16,6 +16,26 @@ interface AvatarSectionProps {
 }
 
 /**
+ * Mirrors apps/api/.env's ALLOWED_AVATAR_MIME_TYPES / MAX_AVATAR_SIZE_BYTES
+ * defaults. This is a client-side UX check only — the API enforces the real
+ * limits and is the source of truth.
+ */
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const ALLOWED_EXTENSIONS_LABEL = 'JPEG, PNG, WebP';
+const MAX_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_SIZE_LABEL = '5 MB';
+
+function validateFile(file: File): string | null {
+  if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+    return `Unsupported file type. Allowed types: ${ALLOWED_EXTENSIONS_LABEL}.`;
+  }
+  if (file.size > MAX_SIZE_BYTES) {
+    return `File is too large. Maximum size is ${MAX_SIZE_LABEL}.`;
+  }
+  return null;
+}
+
+/**
  * Uploads automatically on file selection (no separate "Upload" step), mirroring
  * RecordingUploader's UX. A local `URL.createObjectURL` preview replaces the
  * current-avatar/initials placeholder as soon as a file is picked, and stays up
@@ -40,6 +60,12 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
   const isUploading = progress !== null;
 
   const startUpload = (file: File) => {
+    const validationError = validateFile(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
     }
@@ -112,6 +138,10 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
                 Choose photo
               </Button>
 
+              <p className="text-xs text-muted">
+                {ALLOWED_EXTENSIONS_LABEL} · up to {MAX_SIZE_LABEL}
+              </p>
+
               {isUploading ? (
                 <ProgressBar
                   aria-label="Avatar upload progress"
@@ -135,7 +165,7 @@ export function AvatarSection({ profile }: AvatarSectionProps) {
           ) : null}
 
           <input
-            accept="image/*"
+            accept={ALLOWED_MIME_TYPES.join(',')}
             className="hidden"
             disabled={isUploading}
             onChange={handleFileInputChange}
