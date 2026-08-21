@@ -212,6 +212,17 @@ test('a backend issue gets no browser tools, a web-labelled one does', async () 
   assert.doesNotMatch(argvs(web.spawn)[1], /playwright/, 'never for the reviewer');
 });
 
+test('the reviewer is told to write in English', async () => {
+  // It wrote a blocking finding for issue #51 in Russian. Nothing in its prompt said
+  // otherwise, and CLAUDE.md - which the repository rule lives in - is not loaded into
+  // a session whose tools cannot read it. The finding is logged verbatim and handed to
+  // the repair session, so the language of the reply is the language of the tooling.
+  const { spawn } = await runOne({
+    fixtures: ['session-impl', 'session-review-approved'],
+  });
+  assert.match(prompts(spawn)[1], /in English/i);
+});
+
 test('a reviewer cannot reach a browser even when the human has already permitted one', async () => {
   // The hole the argv assertion above could not see: Playwright is an MCP server, so
   // --tools never touches it and settings.local.json had already granted every
@@ -330,14 +341,62 @@ test('a review with no result event is a failure, not an approval', async () => 
   assert.equal(repo.commits.length, 0);
 });
 
-test('an implementation that changed nothing is a failed attempt', async () => {
+test('an implementation that changed nothing is still a failed attempt', async () => {
+  // Unchanged, except that the loop now asks before giving up. A BLOCKED answer means
+  // the work really is missing, and everything after that is what it always was.
   const { result, repo } = await runOne({
-    fixtures: ['session-impl', 'session-review-approved'],
+    fixtures: ['session-impl', 'session-already-done-no'],
     repo: { files: [] },
   });
   assert.equal(result.status, 'open');
   assert.match(result.note, /changed nothing/);
   assert.equal(repo.commits.length, 0);
+  assert.deepEqual(repo.open.length, 1, 'and the issue stays open');
+});
+
+test('an issue an earlier one already implemented is closed, not implemented twice', async () => {
+  // Issue #52 of phase 6 was implemented by #51's repair round. Two implementation
+  // sessions correctly changed nothing, the loop read that as no progress and stopped
+  // the phase, and $1.68 bought the discovery that a human then had to make by hand.
+  const { result, repo, spawn, logText } = await runOne({
+    fixtures: ['session-impl', 'session-already-done-yes'],
+    repo: { files: [] },
+  });
+
+  assert.equal(result.status, 'closed');
+  assert.match(result.note, /already implemented/);
+  assert.equal(spawn.calls.length, 2, 'one implementation, one check - not a second attempt');
+  assert.equal(repo.commits.length, 0, 'there is nothing to commit');
+  assert.deepEqual(repo.open, [], 'but the issue is closed');
+  assert.ok(
+    repo.calls.some((c) => c.includes('issue view 41 --json state')),
+    'and the close is verified against GitHub, as any other close is',
+  );
+  // Why it was closed has to survive the run, exactly as a BLOCKED verdict does.
+  assert.match(logText, /already done: APPROVED/);
+  assert.match(logText, /A1 \[evidence\] apps\/web\/src\/app\/profile\/page\.tsx:44/);
+});
+
+test('the already-done check is read-only, capped and never sees a browser', async () => {
+  const { spawn } = await runOne({
+    fixtures: ['session-impl', 'session-already-done-yes'],
+    repo: { files: [], labels: ['web'] },
+  });
+  const argv = argvs(spawn)[1];
+  assert.match(argv, /--tools "?Read,Grep,Glob,Bash"?/);
+  assert.doesNotMatch(toolArgs(argv), /Edit|Write/);
+  assert.match(argv, /--strict-mcp-config/, 'even on a web issue');
+  assert.match(argv, /--max-budget-usd 2/);
+});
+
+test('an unreadable answer from the check never closes an issue', async () => {
+  // Fail-closed, like every other verdict in this pipeline: silence is not consent.
+  const { result, repo } = await runOne({
+    fixtures: ['session-impl', 'session-malformed'],
+    repo: { files: [] },
+  });
+  assert.equal(result.status, 'open');
+  assert.deepEqual(repo.open.length, 1);
 });
 
 // ─── the outcome belongs to the orchestrator ───────────────────────────────────

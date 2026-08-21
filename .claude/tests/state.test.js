@@ -293,8 +293,12 @@ test('a checkpoint whose work is no longer in the tree implements again', async 
     // Somebody read the leftovers and threw them away, which is exactly what the stop
     // message tells them they may do. Reviewing nothing would be worse than redoing it.
     l.repo.files = [];
-    const second = await l.run({ fixtures: ['session-impl', 'session-review-approved'] });
-    assert.equal(second.spawn.calls.length, 1, 'the implementation session ran again');
+    const second = await l.run({ fixtures: ['session-impl', 'session-already-done-no'] });
+    assert.equal(
+      second.spawn.calls.length,
+      2,
+      'the implementation session ran again, then the already-done check',
+    );
     assert.match(second.result.note, /changed nothing/);
   } finally {
     l.end();
@@ -521,6 +525,7 @@ test('stop is what a config that says nothing gets', () => {
         issueReviewPrompt: 'x',
         repairPrompt: 'x',
         reviewPrompt: 'x',
+        alreadyDonePrompt: 'x',
       }),
     );
     const bare = ralph.loadConfig(file);
@@ -556,9 +561,41 @@ test('no test ever leaves a checkpoint in the repository', async () => {
 
 const CHECKPOINT = { branch: 'feature/user-profile-phase-4', stage: 'ISSUE_REVIEW', issue: 41 };
 
-test('the trunk is always a valid place to start', () => {
-  assert.equal(ralph.startupBranchRefusal('master', 'master', null, []), null);
-  assert.equal(ralph.startupBranchRefusal('master', 'master', CHECKPOINT, ['x']), null);
+test('the trunk is a valid place to start when it is the current one', () => {
+  assert.equal(ralph.startupBranchRefusal('master', 'master', null, [], false), null);
+  assert.equal(ralph.startupBranchRefusal('master', 'master', CHECKPOINT, [], true), null);
+});
+
+test('a trunk behind origin is refused, because the loop is loaded from it', () => {
+  // This test used to assert the opposite - that the trunk is always safe. It is not.
+  // node reads .claude/ralph-start.js once, at startup, from whatever the trunk has
+  // checked out, so a trunk one merge behind origin runs the older orchestrator for
+  // the whole phase however new the branches it checks out later are. Phase 6 paid
+  // $3.96 for one issue whose fix was in the tree and not in the process.
+  const refusal = ralph.startupBranchRefusal(
+    'master',
+    'master',
+    null,
+    ['.claude/ralph-start.js'],
+    true,
+  );
+  assert.match(refusal, /master is behind origin\/master/);
+  assert.match(refusal, /\.claude\/ralph-start\.js is not the current one/);
+  assert.match(refusal, /git merge --ff-only origin\/master/);
+});
+
+test('a trunk that is ahead or diverged says so instead', () => {
+  // Not staleness: someone is iterating on the loop locally. Same refusal, because the
+  // loop that runs must be the loop under review, but a different instruction.
+  const refusal = ralph.startupBranchRefusal(
+    'master',
+    'master',
+    null,
+    ['.claude/ralph.config.json'],
+    false,
+  );
+  assert.match(refusal, /carries its own version of \.claude\/ralph\.config\.json/);
+  assert.doesNotMatch(refusal, /--ff-only/);
 });
 
 test('without a checkpoint a phase branch is still refused', () => {

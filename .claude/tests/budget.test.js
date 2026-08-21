@@ -102,8 +102,16 @@ test('an issue left open over budget is still caught', async () => {
 });
 
 test('an issue that will not progress stops the run after its attempts', async () => {
+  // Each attempt is an implementation that changes nothing plus the check that says
+  // the work really is missing; only then is the attempt counted as a failure.
   const { error, repo } = await drainOne({
     cfg: config({ maxIssueAttempts: 2 }),
+    fixtures: [
+      'session-impl',
+      'session-already-done-no',
+      'session-impl',
+      'session-already-done-no',
+    ],
     repo: { files: [] },
   });
 
