@@ -4,6 +4,7 @@ import { Button, Card, Spinner } from '@heroui/react';
 import { useRouter } from 'next/navigation';
 import { useAuthenticatedUser } from '@/lib/useAuthenticatedUser';
 import { AppHeader } from '@/components/layout/AppHeader';
+import { AvatarSection } from '@/components/profile/AvatarSection';
 import { DisplayNameSection } from '@/components/profile/DisplayNameSection';
 import { PasswordSection } from '@/components/profile/PasswordSection';
 
@@ -61,6 +62,7 @@ export default function ProfileEditPage() {
             </div>
           ) : (
             <>
+              <AvatarSection onProfileChange={applyProfile} profile={profile} />
               <DisplayNameSection name={profile.name} onSaved={applyProfile} />
               <PasswordSection onChanged={applyAccessToken} />
             </>

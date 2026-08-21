@@ -18,8 +18,14 @@ export interface UseAuthenticatedUserResult {
   signOut: () => void;
   /** Swaps in a freshly issued token (e.g. after a password change) without a re-login. */
   applyAccessToken: (token: string) => void;
-  /** Swaps in a freshly saved profile (e.g. after a name change) without refetching. */
-  applyProfile: (profile: Profile) => void;
+  /**
+   * Merges freshly saved fields (e.g. after a name change, or an avatar
+   * upload/removal) into the current profile, without refetching. Takes a
+   * `Partial<Profile>` and merges functionally against the latest state, so
+   * an in-flight caller that captured a stale `profile` (e.g. a pending
+   * avatar upload) can't clobber a concurrent update from another section.
+   */
+  applyProfile: (profile: Partial<Profile>) => void;
 }
 
 /**
@@ -90,8 +96,8 @@ export function useAuthenticatedUser(): UseAuthenticatedUserResult {
     setUser(refreshAccessToken(token));
   }, []);
 
-  const applyProfile = useCallback((updatedProfile: Profile) => {
-    setProfile(updatedProfile);
+  const applyProfile = useCallback((updatedProfile: Partial<Profile>) => {
+    setProfile((prev) => (prev ? { ...prev, ...updatedProfile } : prev));
   }, []);
 
   return {

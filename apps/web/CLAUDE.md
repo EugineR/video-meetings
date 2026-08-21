@@ -21,10 +21,10 @@ port 3000) · `build` · `start` · `lint` (`eslint.config.mjs` composes `eslint
 Next.js App Router on Tailwind CSS v4 and HeroUI v3; nothing of the `create-next-app` scaffold
 remains. Every page is a client component and auth is client-side only.
 
-- `src/app/` — routes `/`, `/login`, `/register`, `/meetings/[id]`, plus `layout.tsx` and
-  `globals.css`
+- `src/app/` — routes `/`, `/login`, `/register`, `/meetings/[id]`, `/profile`, `/profile/edit`,
+  plus `layout.tsx` and `globals.css`
 - `src/components/` — one component per file, in subfolders **by kind** (`layout/`, `meetings/`,
-  `icons/`), not flat; icons are re-exported through `icons/index.ts`
+  `profile/`, `icons/`), not flat; icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
   `format.ts`
 
@@ -35,9 +35,10 @@ remains. Every page is a client component and auth is client-side only.
   non-2xx. A component reaching for `fetch` itself is a bug.
 - **`ALLOWED_MIME_TYPES` and `MAX_SIZE_BYTES` in
   `src/components/meetings/RecordingUploader.tsx` must stay in sync with
-  `ALLOWED_RECORDING_MIME_TYPES` and `MAX_UPLOAD_SIZE_BYTES` in `apps/api/.env`** — they are the
-  client-side mirror of the server's allowlist and size cap. Change one, change the other, or the
-  browser accepts a file the API then rejects.
+  `ALLOWED_RECORDING_MIME_TYPES` and `MAX_UPLOAD_SIZE_BYTES` in `apps/api/.env`, and the same
+  constants in `src/components/profile/AvatarSection.tsx` with `ALLOWED_AVATAR_MIME_TYPES` and
+  `MAX_AVATAR_SIZE_BYTES`** — they are the client-side mirror of the server's allowlist and size
+  cap. Change one, change the other, or the browser accepts a file the API then rejects.
 - **`NEXT_PUBLIC_API_URL` must keep the `NEXT_PUBLIC_` prefix** (Next.js inlines only those into
   the browser bundle) and must point at `apps/api`'s `PORT`, default `3001`. It falls back to
   `http://localhost:3001` in `src/lib/api.ts`; see `.env.example`.
