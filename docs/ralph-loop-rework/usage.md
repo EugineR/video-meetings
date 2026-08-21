@@ -235,6 +235,16 @@ phase is merged. Three consequences worth knowing:
   The trunk merge is skipped on purpose while an issue is open: it would move `HEAD` out
   from under the commit the checkpoint measured that issue's diff from, and the resume
   would then refuse itself. The merges happen at the start of the next phase.
+- **The trunk itself is checked too.** `node` reads `.claude/ralph-start.js` once, at
+  startup, from whatever the trunk has checked out — so a `master` one merge behind
+  `origin/master` runs the older orchestrator for the whole phase however new the branches
+  it checks out later are. Phase 6 paid $3.96 for one issue whose fix was in the tree and
+  not in the process. The run now fetches first and refuses:
+
+  ```
+  x master is behind origin/master, and its .claude/ralph-start.js is not the current one.
+    Run `git merge --ff-only origin/master` first.
+  ```
 - **A stale checkpoint does not hold a phase back.** One that left no commit and has
   nothing in the tree is not contradicted by a moved `HEAD` — it is just older than the
   branch — so the loop says so, drops it and starts the phase normally.
@@ -371,6 +381,13 @@ PREPARE -> IMPLEMENT -> ISSUE_GATE -> ISSUE_REVIEW
   at all — `--tools` cannot limit MCP tools, and `--allowedTools` is never consulted for a
   tool `settings.local.json` has already permitted. It leaves the work uncommitted and
   ends with `FILES:` / `TESTS:` / `COMMIT:` lines.
+- **ALREADY_DONE** runs only when the implementation session changed nothing. Instead of
+  buying a second identical attempt, a read-only capped session is asked whether the code
+  already satisfies every acceptance criterion, naming file and line for each. Only an
+  explicit `VERDICT: APPROVED` closes the issue — with no commit, because there is nothing
+  to commit — and the answer is logged either way. Anything else and the loop behaves as it
+  always did: the attempt counts as failed. It does not run after a repair, where an empty
+  diff means the repair failed.
 - **ISSUE_GATE** is run by the orchestrator, not by a model: prettier over the changed
   files, then lint, typecheck and the unit suite of each workspace the change touched.
   Its output is captured, and **a passing step's output never reaches a session** — that

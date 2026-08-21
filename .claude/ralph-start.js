@@ -291,7 +291,13 @@ function loadConfig(file) {
   if (!cfg.feature) fail(`${file} has no feature key`);
   if (!cfg.featureBranch) fail(`${file} has no featureBranch`);
   // A missing prompt used to reach the CLI as the string "undefined".
-  for (const key of ['implPrompt', 'issueReviewPrompt', 'repairPrompt', 'reviewPrompt']) {
+  for (const key of [
+    'implPrompt',
+    'issueReviewPrompt',
+    'repairPrompt',
+    'reviewPrompt',
+    'alreadyDonePrompt',
+  ]) {
     if (!cfg[key]) fail(`${file} has no ${key}`);
   }
 
@@ -381,6 +387,7 @@ function loadConfig(file) {
     // still ask for `wait` - .claude/ralph.config.json does, for unattended runs.
     onRateLimit: cfg.onRateLimit || 'stop',
     implPrompt: cfg.implPrompt,
+    alreadyDonePrompt: cfg.alreadyDonePrompt,
     issueReviewPrompt: cfg.issueReviewPrompt,
     repairPrompt: cfg.repairPrompt,
     reviewPrompt: cfg.reviewPrompt,
@@ -1145,6 +1152,9 @@ const STATE_SCHEMA_VERSION = 1;
 const STAGES = [
   'PREPARE',
   'IMPLEMENT',
+  // Reached only when the implementation changed nothing. Nothing of its own resumes:
+  // the tree is empty at that point, so a resume implements the issue again.
+  'ALREADY_DONE',
   'ISSUE_GATE',
   'ISSUE_REVIEW',
   'REPAIR',
@@ -1217,8 +1227,20 @@ function orchestratorDrift(base) {
  * So the loop may start from the branch its own checkpoint names - once the files that
  * decide its behaviour are shown to be the trunk's, which is what the guard was for.
  */
-function startupBranchRefusal(current, base, checkpoint, drift) {
-  if (current === base) return null;
+function startupBranchRefusal(current, base, checkpoint, drift, trunkBehind) {
+  if (current === base) {
+    if (drift.length === 0) return null;
+    // The trunk was treated as always safe, and it is not. node loads this file once,
+    // at startup, from whatever the trunk had checked out - so a trunk one merge
+    // behind origin runs the older orchestrator for the whole phase, no matter what
+    // the branches it later checks out contain. That is not theoretical: a fix that
+    // was in the tree but not in the process cost $3.96 on one issue.
+    const stale = `${base} is behind origin/${base}, and its ${drift.join(', ')} is not the current one.`;
+    const own = `${base} carries its own version of ${drift.join(', ')}, which is not what origin/${base} has.`;
+    return trunkBehind
+      ? `${stale} The loop is loaded from here at startup, so this run would execute the older orchestrator whatever it checks out later. Run \`git merge --ff-only origin/${base}\` first.`
+      : `${own} Push it or reset it before running, so the loop that runs is the loop under review.`;
+  }
   const from = `Start the loop from ${base}, not ${current}.`;
   if (!checkpoint) {
     return `${from} A previous run leaves the tree on its phase branch, and running from there would use that branch's copy of the orchestrator.`;
@@ -1681,13 +1703,13 @@ function commitIssue(issue, ctx) {
   return git('rev-parse', 'HEAD').stdout;
 }
 
-function closeIssue(issue, sha) {
+function closeIssue(issue, sha, comment) {
   const closed = ghTry(
     'issue',
     'close',
     String(issue.number),
     '--comment',
-    `Implemented in ${sha}`,
+    comment || `Implemented in ${sha}`,
   );
   if (closed.code !== 0) {
     throw new Stop(
@@ -1799,9 +1821,9 @@ async function runIssue(phase, cfg, opts, budget, issue) {
     });
   };
 
-  const closeOut = (sha) => {
+  const closeOut = (sha, comment) => {
     mark('CLOSE_ISSUE', { commitSha: sha });
-    closeIssue(issue, sha);
+    closeIssue(issue, sha, comment);
     mark('VERIFY_CLOSED');
     verifyClosed(issue, sha);
     // The only place the checkpoint is dropped: GitHub has confirmed the close.
@@ -1841,7 +1863,10 @@ async function runIssue(phase, cfg, opts, budget, issue) {
   // A checkpoint past IMPLEMENT is worth honouring only while the work it describes is
   // still in the tree; if somebody discarded it, the honest thing is to implement again.
   let entry = 'IMPLEMENT';
-  if (resume && !['PREPARE', 'IMPLEMENT', 'PHASE_REVIEW'].includes(resume.stage)) {
+  if (
+    resume &&
+    !['PREPARE', 'IMPLEMENT', 'ALREADY_DONE', 'PHASE_REVIEW'].includes(resume.stage)
+  ) {
     if (changedFiles(ctx.baseSha).length === 0) {
       log(
         `~ the checkpoint for issue #${issue.number} stands at ${resume.stage} but nothing is left in the tree - implementing it again`,
@@ -1894,6 +1919,64 @@ async function runIssue(phase, cfg, opts, budget, issue) {
     prompt,
   });
 
+  /**
+   * The question a second identical implementation attempt cannot answer: is the issue
+   * already done?
+   *
+   * Read-only, capped and fail-closed. Only an explicit APPROVED closes anything, and
+   * it closes without a commit because there is nothing to commit - the code that
+   * satisfies the issue is already in the branch, put there by an earlier one.
+   * Anything else returns null and the caller behaves exactly as it did before.
+   */
+  const alreadyDone = async (round) => {
+    // After a repair, an empty diff means the repair failed, not that the work exists.
+    if (round > 1) return null;
+
+    mark('ALREADY_DONE');
+    log(
+      `> already-done check . ${cfg.issueReviewModel} . effort ${cfg.issueReviewEffort}`,
+    );
+    const ck = await runSession({
+      model: cfg.issueReviewModel,
+      maxTurns: cfg.maxTurns,
+      stallSeconds: cfg.stallSeconds,
+      allowedTools: cfg.issueReviewTools,
+      tools: cfg.issueReviewTools,
+      disallowedTools: cfg.issueReviewDisallowedTools,
+      disableSlashCommands: true,
+      strictMcp: true,
+      effort: cfg.issueReviewEffort,
+      maxCostUsd: cfg.issueReviewMaxCostUsd,
+      prompt: fillPrompt(cfg.alreadyDonePrompt, slots()),
+    });
+    charge(
+      'already-done',
+      'ALREADY_DONE',
+      ck,
+      cfg.issueReviewModel,
+      cfg.issueReviewEffort,
+    );
+    const stopped = await settleSession(ck, cfg, opts, 'the already-done check', budget);
+    if (stopped) return stopped;
+
+    const verdict = readVerdict(ck.resultText);
+    log(
+      `  already done: ${verdict} . $${ck.cost.toFixed(2)} . ${ck.apiRequests} req . ${fmtDuration(ck.durationMs)}`,
+    );
+    for (const line of reviewFindings(ck.resultText)) log(`    ${line}`);
+    if (verdict !== 'APPROVED') return null;
+
+    const head = git('rev-parse', 'HEAD').stdout;
+    closeOut(
+      head,
+      `Already implemented at ${head.slice(0, 8)}. The implementation session for this issue changed nothing, and an independent read-only check found every acceptance criterion already met by the code on this branch.`,
+    );
+    return {
+      status: 'closed',
+      note: `already implemented at ${head.slice(0, 8)}, nothing to commit`,
+    };
+  };
+
   // Review approved, no commit: nothing left to think about, and no session to pay for.
   if (entry === 'COMMIT') {
     log(
@@ -1928,6 +2011,14 @@ async function runIssue(phase, cfg, opts, budget, issue) {
     checkInterrupt();
     const files = changedFiles(ctx.baseSha);
     if (files.length === 0) {
+      // An empty diff used to buy a second identical attempt and then stop the phase.
+      // Twice now the sessions were right and the work was simply already there: #52
+      // was implemented by #51's repair round, and two attempts spent $1.68 proving
+      // it before a human read the code and closed the issue by hand. Asking costs one
+      // cheap read-only session - less than the attempt it replaces - and it is
+      // fail-closed, so the old behaviour is still what happens on any answer but yes.
+      const settledOut = await alreadyDone(round);
+      if (settledOut) return settledOut;
       return { status: 'open', note: 'the session changed nothing' };
     }
 
@@ -2532,12 +2623,20 @@ async function main() {
   }
 
   const current = git('rev-parse', '--abbrev-ref', 'HEAD').stdout;
+  // Unconditional, and it has to be: a stale origin/<base> compares against a trunk
+  // nobody is running, and the trunk itself is what the older check trusted blindly.
+  git('fetch', 'origin', '--prune', '--quiet');
+  const trunkBehind =
+    gitTry('merge-base', '--is-ancestor', 'HEAD', `origin/${base}`).code === 0;
+  const branchRefusal = startupBranchRefusal(
+    current,
+    base,
+    checkpoint,
+    orchestratorDrift(base),
+    trunkBehind,
+  );
+  if (branchRefusal) fail(branchRefusal);
   if (current !== base) {
-    // Only worth the round trip when the answer might be yes, but then it has to be
-    // fresh: a stale origin/<base> would compare against a trunk nobody is running.
-    git('fetch', 'origin', '--prune', '--quiet');
-    const refusal = startupBranchRefusal(current, base, checkpoint, orchestratorDrift(base));
-    if (refusal) fail(refusal);
     log(
       `| resuming on ${current}: its ${ORCHESTRATOR_FILES.length} orchestrator files match ${base}`,
     );
