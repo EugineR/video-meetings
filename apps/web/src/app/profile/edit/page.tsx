@@ -4,6 +4,7 @@ import { Button, Card, Spinner } from '@heroui/react';
 import { useRouter } from 'next/navigation';
 import { useAuthenticatedUser } from '@/lib/useAuthenticatedUser';
 import { AppHeader } from '@/components/layout/AppHeader';
+import { DisplayNameSection } from '@/components/profile/DisplayNameSection';
 
 export default function ProfileEditPage() {
   const router = useRouter();
@@ -50,7 +51,9 @@ export default function ProfileEditPage() {
             <div className="flex justify-center py-12">
               <Spinner aria-label="Loading profile" />
             </div>
-          ) : null}
+          ) : (
+            <DisplayNameSection name={profile.name} />
+          )}
         </div>
       </div>
     </div>
