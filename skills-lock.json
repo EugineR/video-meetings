@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "firebase-security-rules-auditor": {
+      "source": "firebase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/firebase-security-rules-auditor/SKILL.md",
+      "computedHash": "be877f6c7aaf460791dd6103a08906734036c26bd7c686cfdb8b60e4b2f65742"
+    },
     "git-commit": {
       "source": "github/awesome-copilot",
       "sourceType": "github",
