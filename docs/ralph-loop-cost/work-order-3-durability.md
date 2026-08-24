@@ -164,7 +164,9 @@ should be separable. Provider-specific filenames must be thin entry points, not 
 - [x] `reviewPhase` handles a rate limit instead of ending the run.
 - [x] A dirty tree without a valid checkpoint stops the loop.
 - [x] State is cleared only after a verified close.
-- [ ] `apps/api/CLAUDE.md` and `apps/web/CLAUDE.md` are substantially smaller with no knowledge lost.
-- [ ] Every rule that was buried inside an inventory bullet survived the move.
-- [ ] Links are checked.
+- [x] `apps/api/CLAUDE.md` and `apps/web/CLAUDE.md` are substantially smaller with no knowledge lost.
+      33.3 KB -> 7.8 KB and 13.3 KB -> 5.3 KB. Short of the 5 KB / 4 KB targets: what is left is
+      rules, boundaries and invariants, and cutting further would have dropped one.
+- [x] Every rule that was buried inside an inventory bullet survived the move.
+- [x] Links are checked (`pnpm check:links`, run by the pre-commit hook).
 - [x] Branching, rollback tags and the human merge gate are unchanged.

@@ -120,6 +120,29 @@ describe('StorageService', () => {
     );
   });
 
+  it('resolveAvatarDir() rejects a non-UUID userId to prevent path traversal', () => {
+    expect(() => service.resolveAvatarDir('../../etc')).toThrow(
+      'Invalid user id',
+    );
+    expect(() => service.resolveAvatarDir('..\\..\\Temp')).toThrow(
+      'Invalid user id',
+    );
+  });
+
+  it('resolveAvatarDir() accepts a plain UUID and namespaces it under avatars/', () => {
+    const userId = randomUUID();
+    expect(service.resolveAvatarDir(userId)).toBe(
+      join(uploadsDir, 'avatars', userId),
+    );
+  });
+
+  it('resolveAvatarDir() and resolveMeetingDir() never collide for the same id', () => {
+    const id = randomUUID();
+    expect(service.resolveAvatarDir(id)).not.toBe(
+      service.resolveMeetingDir(id),
+    );
+  });
+
   describe('pruneMeetingDir()', () => {
     it('removes every file except the one to keep', async () => {
       const meetingId = randomUUID();

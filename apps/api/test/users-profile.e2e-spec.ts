@@ -16,13 +16,16 @@ interface ProfileResponseBody {
   createdAt: string;
 }
 
+const REGISTRATION_PASSWORD = 'Password123!';
+
 async function registerAndLogin(
   app: INestApplication<App>,
   email: string,
+  password: string = REGISTRATION_PASSWORD,
 ): Promise<string> {
   const response = await request(app.getHttpServer())
     .post('/auth/register')
-    .send({ email, password: 'Password123!' })
+    .send({ email, password })
     .expect(201);
 
   return (response.body as AccessTokenResponseBody).accessToken;
@@ -217,6 +220,78 @@ describe('Users profile (e2e)', () => {
         .expect(200);
 
       expect((response.body as ProfileResponseBody).name).toBeNull();
+    });
+  });
+
+  describe('/users/me/password (POST)', () => {
+    const email = 'password-owner@example.com';
+    const currentPassword = REGISTRATION_PASSWORD;
+    const newPassword = 'NewPassword456!';
+
+    it('changes the password and returns a new access token that keeps the session usable', async () => {
+      const token = await registerAndLogin(app, email);
+
+      const changeResponse = await request(app.getHttpServer())
+        .post('/users/me/password')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ currentPassword, newPassword })
+        .expect(200);
+
+      const newToken = (changeResponse.body as AccessTokenResponseBody)
+        .accessToken;
+      expect(newToken).toEqual(expect.any(String));
+
+      await request(app.getHttpServer())
+        .get('/users/me')
+        .set('Authorization', `Bearer ${newToken}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email, password: newPassword })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email, password: currentPassword })
+        .expect(401);
+    });
+
+    it('rejects the wrong current password and leaves the stored password unchanged', async () => {
+      const token = await registerAndLogin(app, email);
+
+      await request(app.getHttpServer())
+        .post('/users/me/password')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ currentPassword: 'WrongPassword!', newPassword })
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email, password: currentPassword })
+        .expect(200);
+    });
+
+    it('rejects a new password equal to the current one', async () => {
+      const token = await registerAndLogin(app, email);
+
+      await request(app.getHttpServer())
+        .post('/users/me/password')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ currentPassword, newPassword: currentPassword })
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email, password: currentPassword })
+        .expect(200);
+    });
+
+    it('rejects an unauthenticated request', async () => {
+      await request(app.getHttpServer())
+        .post('/users/me/password')
+        .send({ currentPassword, newPassword })
+        .expect(401);
     });
   });
 });

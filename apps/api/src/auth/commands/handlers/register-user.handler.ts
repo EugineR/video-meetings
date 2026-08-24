@@ -10,10 +10,9 @@ import * as bcrypt from 'bcryptjs';
 import { CreateUserCommand } from '../../../users/commands/create-user.command';
 import { FindUserByEmailQuery } from '../../../users/queries/find-user-by-email.query';
 import { AccessTokenResponse } from '../../interfaces/access-token-response.interface';
+import { PASSWORD_SALT_ROUNDS } from '../../password-rules';
 import { TokenService } from '../../token.service';
 import { RegisterUserCommand } from '../register-user.command';
-
-const PASSWORD_SALT_ROUNDS = 10;
 
 @CommandHandler(RegisterUserCommand)
 export class RegisterUserHandler implements ICommandHandler<

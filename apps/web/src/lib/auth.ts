@@ -44,3 +44,13 @@ export function getStoredUser(): StoredUser | null {
 
   return { email: payload.email };
 }
+
+/**
+ * Stores a freshly issued token (e.g. from a password change) and returns the
+ * user decoded from it, so a page can pick up the new session without sending
+ * the user back through `/login`.
+ */
+export function refreshAccessToken(token: string): StoredUser | null {
+  storeAccessToken(token);
+  return getStoredUser();
+}
