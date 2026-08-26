@@ -5,6 +5,7 @@ import { MulterModule } from '@nestjs/platform-express';
 import { AuthModule } from '../auth/auth.module';
 import { StorageService } from '../storage/storage.service';
 import { createUploadMulterOptions } from '../storage/upload-multer-options.factory';
+import { TranscriptionModule } from '../transcription/transcription.module';
 import { CreateMeetingHandler } from './commands/handlers/create-meeting.handler';
 import { DeleteRecordingHandler } from './commands/handlers/delete-recording.handler';
 import { UploadRecordingHandler } from './commands/handlers/upload-recording.handler';
@@ -35,6 +36,7 @@ const QueryHandlers = [
   imports: [
     CqrsModule,
     AuthModule,
+    TranscriptionModule,
     MulterModule.registerAsync({
       inject: [ConfigService, StorageService],
       useFactory: (config: ConfigService, storage: StorageService) => {

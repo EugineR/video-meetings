@@ -26,6 +26,7 @@ export interface Recording {
   mimeType: string;
   sizeBytes: string;
   status: RecordingStatus;
+  transcriptText: string | null;
   createdAt: string;
   updatedAt: string;
 }

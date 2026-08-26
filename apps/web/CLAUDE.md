@@ -35,10 +35,14 @@ remains. Every page is a client component and auth is client-side only.
   non-2xx. A component reaching for `fetch` itself is a bug.
 - **`ALLOWED_MIME_TYPES` and `MAX_SIZE_BYTES` in
   `src/components/meetings/RecordingUploader.tsx` must stay in sync with
-  `ALLOWED_RECORDING_MIME_TYPES` and `MAX_UPLOAD_SIZE_BYTES` in `apps/api/.env`, and the same
+  `ALLOWED_RECORDING_MIME_TYPES` (which includes `audio/mpeg` alongside the video types) and
+  `MAX_UPLOAD_SIZE_BYTES` in `apps/api/.env`, and the same
   constants in `src/components/profile/AvatarSection.tsx` with `ALLOWED_AVATAR_MIME_TYPES` and
   `MAX_AVATAR_SIZE_BYTES`** — they are the client-side mirror of the server's allowlist and size
   cap. Change one, change the other, or the browser accepts a file the API then rejects.
+- **`RecordingCard` renders an `<audio>` element when `recording.mimeType === 'audio/mpeg'` and a
+  `<video>` element for the other (video) MIME types** — an mp3 upload plays back through the
+  audio element, not a video player with no picture.
 - **`NEXT_PUBLIC_API_URL` must keep the `NEXT_PUBLIC_` prefix** (Next.js inlines only those into
   the browser bundle) and must point at `apps/api`'s `PORT`, default `3001`. It falls back to
   `http://localhost:3001` in `src/lib/api.ts`; see `.env.example`.
@@ -56,6 +60,10 @@ remains. Every page is a client component and auth is client-side only.
 - **`formatDateTime()` in `src/lib/format.ts` is the only date formatter.**
 - **An unknown or another user's meeting is a 404 `ApiError` rendered inline**, never a blank page
   or a redirect.
+- **The meeting page polls while a recording's `status` is `UPLOADED` or `PROCESSING`**, refetching
+  until it settles to `READY` (transcript shown) or `FAILED` (failure notice, no transcript) —
+  transcription runs on the API in the background after upload, so the page must catch up to it
+  without a manual reload.
 
 ## HeroUI v3
 

@@ -14,6 +14,11 @@ export interface CreateOrReplaceRecordingInput {
   status: RecordingStatus;
 }
 
+export interface UpdateRecordingStatusInput {
+  status: RecordingStatus;
+  transcriptText?: string | null;
+}
+
 @Injectable()
 export class RecordingsRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -27,6 +32,7 @@ export class RecordingsRepository {
       mimeType: input.mimeType,
       sizeBytes: input.sizeBytes,
       status: input.status,
+      transcriptText: null,
     };
 
     return this.prisma.meetingRecording.upsert({
@@ -38,6 +44,27 @@ export class RecordingsRepository {
 
   findByMeetingId(meetingId: string): Promise<MeetingRecording | null> {
     return this.prisma.meetingRecording.findUnique({ where: { meetingId } });
+  }
+
+  /**
+   * Updates status/transcriptText for a meeting's recording, but only while it's still the
+   * same file this write started for — matched by `storagePath`, not `id`. A replace keeps
+   * the row's `id` (it's an upsert on `meetingId`) but always gets a fresh `storagePath` (see
+   * `StorageService.generateFilename`), so `storagePath` is what actually distinguishes "the
+   * same upload" here. Returns `false` without writing anything if the recording has since
+   * been replaced or deleted, so a background transcription run started for a prior file can
+   * never clobber a newer one.
+   */
+  async updateStatusIfCurrent(
+    meetingId: string,
+    expectedStoragePath: string,
+    data: UpdateRecordingStatusInput,
+  ): Promise<boolean> {
+    const result = await this.prisma.meetingRecording.updateMany({
+      where: { meetingId, storagePath: expectedStoragePath },
+      data,
+    });
+    return result.count > 0;
   }
 
   /**

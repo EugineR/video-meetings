@@ -63,11 +63,21 @@ export function RecordingCard({
 
   return (
     <div className="flex flex-col gap-4">
-      <video
-        className="w-full rounded-lg bg-black"
-        controls
-        src={getRecordingContentUrl(meetingId)}
-      />
+      {recording.mimeType === 'audio/mpeg' ? (
+        <div className="flex items-center rounded-lg bg-default-50 p-4">
+          <audio
+            className="w-full"
+            controls
+            src={getRecordingContentUrl(meetingId)}
+          />
+        </div>
+      ) : (
+        <video
+          className="w-full rounded-lg bg-black"
+          controls
+          src={getRecordingContentUrl(meetingId)}
+        />
+      )}
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
@@ -79,6 +89,21 @@ export function RecordingCard({
         </div>
         <RecordingStatusChip status={recording.status} />
       </div>
+
+      {recording.status === 'READY' && recording.transcriptText ? (
+        <div className="flex flex-col gap-1.5 rounded-lg bg-muted/10 p-4">
+          <p className="text-sm font-medium">Transcript</p>
+          <p className="max-h-64 overflow-y-auto text-sm whitespace-pre-wrap text-muted">
+            {recording.transcriptText}
+          </p>
+        </div>
+      ) : null}
+
+      {recording.status === 'FAILED' ? (
+        <p className="text-sm text-danger" role="alert">
+          Transcription failed. No transcript is available for this recording.
+        </p>
+      ) : null}
 
       {error ? (
         <p className="text-sm text-danger" role="alert">

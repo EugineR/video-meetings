@@ -49,6 +49,7 @@ model MeetingRecording {
   mimeType         String
   sizeBytes        BigInt
   status           RecordingStatus @default(UPLOADED)
+  transcriptText   String?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 

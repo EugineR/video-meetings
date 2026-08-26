@@ -13,10 +13,16 @@ describe('parseAllowedMimeTypes', () => {
 });
 
 describe('isAllowedRecordingFile', () => {
-  const allowed = ['video/mp4', 'video/webm', 'video/quicktime'];
+  const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'audio/mpeg'];
 
   it('accepts a MIME type + matching extension pair on the allowlist', () => {
     expect(isAllowedRecordingFile('video/mp4', 'clip.mp4', allowed)).toBe(true);
+  });
+
+  it('accepts an mp3 MIME type + extension pair on the allowlist', () => {
+    expect(isAllowedRecordingFile('audio/mpeg', 'clip.mp3', allowed)).toBe(
+      true,
+    );
   });
 
   it('rejects a MIME type not on the allowlist', () => {

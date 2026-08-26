@@ -41,6 +41,27 @@ export default function MeetingDetailPage() {
       });
   }, [meetingId, user]);
 
+  const recordingStatus = meeting?.recording?.status ?? null;
+
+  useEffect(() => {
+    if (
+      !user ||
+      (recordingStatus !== 'UPLOADED' && recordingStatus !== 'PROCESSING')
+    ) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      getMeeting(meetingId)
+        .then(setMeeting)
+        .catch(() => {
+          // Transient polling error — keep the last known state and retry on the next tick.
+        });
+    }, 4000);
+
+    return () => clearInterval(intervalId);
+  }, [meetingId, user, recordingStatus]);
+
   const handleUploaded = useCallback((recording: Recording) => {
     setIsReplacing(false);
     setMeeting((current) => (current ? { ...current, recording } : current));

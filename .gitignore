@@ -62,6 +62,9 @@ apps/api/generated/
 # Uploaded recording files (local UPLOADS_DIR)
 apps/api/uploads/
 
+# Downloaded local Whisper model weights (local WHISPER_MODEL_DIR)
+apps/api/whisper-models/
+
 # Claude Code local settings
 .claude/settings.local.json
 
