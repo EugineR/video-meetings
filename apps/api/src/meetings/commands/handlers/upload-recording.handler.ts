@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { Logger, NotFoundException } from '@nestjs/common';
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 import { RecordingStatus } from '@prisma/client';
 import {
@@ -6,8 +6,12 @@ import {
   toRecordingResponse,
 } from '../../interfaces/recording-response.interface';
 import { MeetingsRepository } from '../../meetings.repository';
-import { RecordingsRepository } from '../../recordings.repository';
+import {
+  RecordingsRepository,
+  UpdateRecordingStatusInput,
+} from '../../recordings.repository';
 import { StorageService } from '../../../storage/storage.service';
+import { TranscriptionService } from '../../../transcription/transcription.service';
 import { UploadRecordingCommand } from '../upload-recording.command';
 
 @CommandHandler(UploadRecordingCommand)
@@ -15,10 +19,13 @@ export class UploadRecordingHandler implements ICommandHandler<
   UploadRecordingCommand,
   RecordingResponse
 > {
+  private readonly logger = new Logger(UploadRecordingHandler.name);
+
   constructor(
     private readonly meetingsRepository: MeetingsRepository,
     private readonly recordingsRepository: RecordingsRepository,
     private readonly storageService: StorageService,
+    private readonly transcriptionService: TranscriptionService,
   ) {}
 
   async execute(command: UploadRecordingCommand): Promise<RecordingResponse> {
@@ -51,6 +58,56 @@ export class UploadRecordingHandler implements ICommandHandler<
       recording.storagePath,
     );
 
+    // Fire-and-forget: transcription runs long enough that it must not block
+    // this HTTP response. Errors are handled inside transcribeInBackground
+    // (persisted as a FAILED status); this .catch only guards against an
+    // unexpected throw escaping that method and becoming an unhandled rejection.
+    this.transcribeInBackground(command.meetingId, recording.storagePath).catch(
+      (err: unknown) => {
+        this.logger.error(
+          `Background transcription crashed for meeting ${command.meetingId}`,
+          err instanceof Error ? err.stack : err,
+        );
+      },
+    );
+
     return toRecordingResponse(recording);
+  }
+
+  /**
+   * Runs after the HTTP response, so the recording this run started for may already have
+   * been replaced or deleted by the time each step below is ready to write — every write is
+   * conditioned on `storagePath` still matching via `updateStatusIfCurrent`, which is a no-op
+   * once it doesn't.
+   */
+  private async transcribeInBackground(
+    meetingId: string,
+    storagePath: string,
+  ): Promise<void> {
+    const persistIfCurrent = (data: UpdateRecordingStatusInput) =>
+      this.recordingsRepository.updateStatusIfCurrent(
+        meetingId,
+        storagePath,
+        data,
+      );
+
+    const startedProcessing = await persistIfCurrent({
+      status: RecordingStatus.PROCESSING,
+    });
+    if (!startedProcessing) {
+      return;
+    }
+
+    try {
+      const transcriptText =
+        await this.transcriptionService.transcribe(storagePath);
+      await persistIfCurrent({ status: RecordingStatus.READY, transcriptText });
+    } catch (err) {
+      this.logger.error(
+        `Transcription failed for meeting ${meetingId}`,
+        err instanceof Error ? err.stack : err,
+      );
+      await persistIfCurrent({ status: RecordingStatus.FAILED });
+    }
   }
 }

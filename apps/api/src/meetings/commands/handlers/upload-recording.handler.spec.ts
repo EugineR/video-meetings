@@ -1,0 +1,181 @@
+import { NotFoundException } from '@nestjs/common';
+import { Meeting, MeetingRecording, RecordingStatus } from '@prisma/client';
+import { MeetingsRepository } from '../../meetings.repository';
+import { RecordingsRepository } from '../../recordings.repository';
+import { StorageService } from '../../../storage/storage.service';
+import { TranscriptionService } from '../../../transcription/transcription.service';
+import { UploadRecordingCommand } from '../upload-recording.command';
+import { UploadRecordingHandler } from './upload-recording.handler';
+
+/** Lets a pending fire-and-forget chain (any number of `await` hops) settle before assertions. */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+describe('UploadRecordingHandler', () => {
+  const meetingId = 'meeting-1';
+  const ownerId = 'owner-1';
+  const storagePath = '/uploads/meeting-1/recording.mp4';
+
+  let meeting: Meeting;
+  let recording: MeetingRecording;
+  let findByIdAndOwner: jest.Mock;
+  let createOrReplace: jest.Mock;
+  let updateStatusIfCurrent: jest.Mock;
+  let deleteFile: jest.Mock;
+  let pruneMeetingDir: jest.Mock;
+  let transcribe: jest.Mock;
+  let handler: UploadRecordingHandler;
+
+  const file = {
+    path: storagePath,
+    originalname: 'recording.mp4',
+    mimetype: 'video/mp4',
+    size: 1024,
+  } as Express.Multer.File;
+
+  beforeEach(() => {
+    meeting = {
+      id: meetingId,
+      title: 'Standup',
+      date: new Date(),
+      participants: [],
+      ownerId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    recording = {
+      id: 'recording-1',
+      meetingId,
+      originalFilename: 'recording.mp4',
+      storagePath,
+      mimeType: 'video/mp4',
+      sizeBytes: BigInt(1024),
+      status: RecordingStatus.UPLOADED,
+      transcriptText: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    findByIdAndOwner = jest.fn().mockResolvedValue(meeting);
+    createOrReplace = jest.fn().mockResolvedValue(recording);
+    updateStatusIfCurrent = jest.fn().mockResolvedValue(true);
+    deleteFile = jest.fn().mockResolvedValue(undefined);
+    pruneMeetingDir = jest.fn().mockResolvedValue(undefined);
+    transcribe = jest.fn().mockResolvedValue('the transcript');
+
+    const meetingsRepository = {
+      findByIdAndOwner,
+    } as unknown as MeetingsRepository;
+    const recordingsRepository = {
+      createOrReplace,
+      updateStatusIfCurrent,
+    } as unknown as RecordingsRepository;
+    const storageService = {
+      delete: deleteFile,
+      pruneMeetingDir,
+    } as unknown as StorageService;
+    const transcriptionService = {
+      transcribe,
+    } as unknown as TranscriptionService;
+
+    handler = new UploadRecordingHandler(
+      meetingsRepository,
+      recordingsRepository,
+      storageService,
+      transcriptionService,
+    );
+  });
+
+  it('deletes the uploaded file and throws when the meeting is not owned by the caller', async () => {
+    findByIdAndOwner.mockResolvedValue(null);
+
+    await expect(
+      handler.execute(new UploadRecordingCommand(meetingId, ownerId, file)),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(deleteFile).toHaveBeenCalledWith(storagePath);
+    expect(createOrReplace).not.toHaveBeenCalled();
+  });
+
+  it('persists the recording as UPLOADED and responds without waiting for transcription', async () => {
+    transcribe.mockImplementation(() => new Promise(() => {}));
+
+    const result = await handler.execute(
+      new UploadRecordingCommand(meetingId, ownerId, file),
+    );
+
+    expect(createOrReplace).toHaveBeenCalledWith(
+      expect.objectContaining({ status: RecordingStatus.UPLOADED }),
+    );
+    expect(result.status).toBe(RecordingStatus.UPLOADED);
+    expect(pruneMeetingDir).toHaveBeenCalledWith(meetingId, storagePath);
+  });
+
+  it('drives status UPLOADED -> PROCESSING -> READY with the transcript on success', async () => {
+    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
+    await flushMicrotasks();
+
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
+      1,
+      meetingId,
+      storagePath,
+      { status: RecordingStatus.PROCESSING },
+    );
+    expect(transcribe).toHaveBeenCalledWith(storagePath);
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
+      2,
+      meetingId,
+      storagePath,
+      { status: RecordingStatus.READY, transcriptText: 'the transcript' },
+    );
+  });
+
+  it('drives status UPLOADED -> PROCESSING -> FAILED when transcription throws', async () => {
+    transcribe.mockRejectedValue(new Error('whisper-cli crashed'));
+
+    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
+    await flushMicrotasks();
+
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
+      1,
+      meetingId,
+      storagePath,
+      { status: RecordingStatus.PROCESSING },
+    );
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
+      2,
+      meetingId,
+      storagePath,
+      { status: RecordingStatus.FAILED },
+    );
+  });
+
+  it('never starts transcription once the recording has already moved on when PROCESSING would be persisted', async () => {
+    updateStatusIfCurrent.mockResolvedValueOnce(false);
+
+    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
+    await flushMicrotasks();
+
+    expect(updateStatusIfCurrent).toHaveBeenCalledTimes(1);
+    expect(transcribe).not.toHaveBeenCalled();
+  });
+
+  it('does not persist READY once the recording has since been replaced or deleted', async () => {
+    updateStatusIfCurrent
+      .mockResolvedValueOnce(true) // PROCESSING succeeds
+      .mockResolvedValueOnce(false); // READY write finds a newer/gone recording
+
+    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
+    await flushMicrotasks();
+
+    expect(updateStatusIfCurrent).toHaveBeenCalledTimes(2);
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
+      2,
+      meetingId,
+      storagePath,
+      { status: RecordingStatus.READY, transcriptText: 'the transcript' },
+    );
+  });
+});

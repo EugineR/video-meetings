@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Card, Spinner } from '@heroui/react';
 import { useAuthenticatedUser } from '@/lib/useAuthenticatedUser';
@@ -24,6 +24,9 @@ export default function MeetingDetailPage() {
   const [meeting, setMeeting] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isReplacing, setIsReplacing] = useState(false);
+  // Bumped by any direct local update (replace/delete) so a poll response already
+  // in flight at that moment is recognized as stale and doesn't clobber it.
+  const pollGenerationRef = useRef(0);
 
   useEffect(() => {
     if (!user) {
@@ -41,12 +44,48 @@ export default function MeetingDetailPage() {
       });
   }, [meetingId, user]);
 
+  const recordingStatus = meeting?.recording?.status ?? null;
+
+  useEffect(() => {
+    if (
+      !user ||
+      (recordingStatus !== 'UPLOADED' && recordingStatus !== 'PROCESSING')
+    ) {
+      return;
+    }
+
+    const generation = pollGenerationRef.current;
+    const intervalId = setInterval(() => {
+      getMeeting(meetingId)
+        .then((updated) => {
+          if (pollGenerationRef.current === generation) {
+            setMeeting(updated);
+          }
+        })
+        .catch((err: unknown) => {
+          if (pollGenerationRef.current !== generation) {
+            return;
+          }
+          clearInterval(intervalId);
+          setError(
+            err instanceof ApiError
+              ? err.message
+              : 'Could not refresh the meeting. Please try again.',
+          );
+        });
+    }, 4000);
+
+    return () => clearInterval(intervalId);
+  }, [meetingId, user, recordingStatus]);
+
   const handleUploaded = useCallback((recording: Recording) => {
+    pollGenerationRef.current += 1;
     setIsReplacing(false);
     setMeeting((current) => (current ? { ...current, recording } : current));
   }, []);
 
   const handleDeleted = useCallback(() => {
+    pollGenerationRef.current += 1;
     setMeeting((current) =>
       current ? { ...current, recording: null } : current,
     );

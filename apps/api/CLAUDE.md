@@ -28,6 +28,8 @@ Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "cas
   `GET /users/me`'s `ProfileResponse` reports `hasAvatar`/`avatarUpdatedAt`
 - `src/auth/` — register/login, `TokenService`, `JwtAuthGuard`, `@CurrentUser()`
 - `src/meetings/` — meetings and their one recording (upload, stream, delete)
+- `src/transcription/` — `TranscriptionService`, transcribing a recording file via a local
+  Whisper `base` model, run in the background after an upload (see Invariants)
 
 ## CQRS pattern
 
@@ -83,6 +85,17 @@ The reasoning behind them is in `docs/architecture/api.md`.
 - **Prisma 7 requires a driver adapter** (`@prisma/adapter-pg`); the connection string cannot live
   in `schema.prisma`. `PrismaService` reads `DATABASE_URL` via `ConfigService`, `prisma.config.ts`
   via `dotenv/config` for the CLI.
+- **Transcription runs in the background, outside the upload request** — `UploadRecordingHandler`
+  fires it without awaiting, driving `MeetingRecording.status` `UPLOADED` → `PROCESSING` →
+  `READY`/`FAILED`. Every write from that background run goes through
+  `RecordingsRepository.updateStatusIfCurrent`, matched on `storagePath` (not `id`, which an
+  upsert-on-`meetingId` keeps across a replace) — so a run started for a file that has since been
+  replaced or deleted becomes a no-op instead of clobbering the newer recording. The actual Whisper
+  invocation is swapped behind the `WHISPER_RUNNER` DI token (`transcription/whisper-runner.ts`) so
+  it can be stubbed in tests, unit and e2e alike, without a local Whisper install. Whisper's
+  language is fixed to English (`transcription.module.ts`'s `WHISPER_LANGUAGE`) rather than left on
+  auto-detection, which the `base` model gets wrong often enough on accented/noisy audio to
+  mis-transcribe English speech as a different language entirely.
 
 ## Testing
 
@@ -105,14 +118,17 @@ plus `eslint-plugin-prettier`; `no-explicit-any` is off,
 ## Database
 
 `prisma/schema.prisma` + `prisma/migrations/`: `User` → `users`, `Meeting` → `meetings`,
-`MeetingRecording` → `meeting_recordings` (at most one per meeting), `UserAvatar` → `user_avatars`
-(at most one per user); every child FK is `onDelete: Cascade`.
+`MeetingRecording` → `meeting_recordings` (at most one per meeting, `status`/`transcriptText`
+tracking its background transcription — see Invariants), `UserAvatar` → `user_avatars` (at most one
+per user); every child FK is `onDelete: Cascade`.
 
 Env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (must match the root
 `docker-compose.yml` credentials), `JWT_SECRET`, `PORT` (default `3001` — **must differ from
 `apps/web`'s 3000**, both run under `pnpm dev`), `WEB_URL` (default `http://localhost:3000`, the
 CORS origin — **must match where `apps/web` is served**), `UPLOADS_DIR` (default `uploads`, relative
-to `apps/api/`, gitignored, created on demand), plus the four upload-limit vars above.
+to `apps/api/`, gitignored, created on demand), plus the four upload-limit vars above and
+`WHISPER_MODEL_DIR` (where the local Whisper `base` model is downloaded to/read from; unset lets
+`nodejs-whisper` fall back to its own default location).
 
 ## Reference
 

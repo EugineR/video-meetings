@@ -9,6 +9,10 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import {
+  WHISPER_RUNNER,
+  WhisperRunner,
+} from '../src/transcription/whisper-runner';
 
 interface AccessTokenResponseBody {
   accessToken: string;
@@ -26,9 +30,24 @@ interface RecordingResponseBody {
   mimeType: string;
   sizeBytes: string;
   status: string;
+  transcriptText: string | null;
+}
+
+interface MeetingRecordingRow {
+  status: string;
+  transcriptText: string | null;
 }
 
 const uploadsDir = join(tmpdir(), `video-meetings-e2e-uploads-${randomUUID()}`);
+
+/**
+ * Never resolves, so the background transcription job started by every upload in this file
+ * gets stuck right after its own `PROCESSING` write and never reaches `READY`/`FAILED`. Without
+ * this, a real Whisper invocation races every assertion below (and, in an environment without a
+ * working local Whisper install, fails almost immediately) — exactly the flakiness the
+ * `WHISPER_RUNNER` DI token exists to let tests avoid.
+ */
+const hangingWhisperRunner: WhisperRunner = () => new Promise(() => {});
 
 async function registerAndLogin(
   app: INestApplication<App>,
@@ -74,7 +93,10 @@ describe('Meetings Recording (e2e)', () => {
   beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(WHISPER_RUNNER)
+      .useValue(hangingWhisperRunner)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     await app.init();
@@ -115,7 +137,38 @@ describe('Meetings Recording (e2e)', () => {
         where: { meetingId },
       });
       expect(recording).not.toBeNull();
-      expect(recording?.status).toBe('UPLOADED');
+      // Background transcription (see UploadRecordingHandler.transcribeInBackground) writes
+      // PROCESSING right away, asynchronously and outside this request — by the time this
+      // query runs that write may already have landed, so both are valid.
+      expect(['UPLOADED', 'PROCESSING']).toContain(recording?.status);
+    });
+
+    it('uploads an mp3 recording: 201, UPLOADED row with no transcript yet', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      const response = await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('fake mp3 bytes'), {
+          filename: 'recording.mp3',
+          contentType: 'audio/mpeg',
+        })
+        .expect(201);
+
+      const body = response.body as RecordingResponseBody;
+      expect(body.meetingId).toBe(meetingId);
+      expect(body.originalFilename).toBe('recording.mp3');
+      expect(body.mimeType).toBe('audio/mpeg');
+      expect(body.status).toBe('UPLOADED');
+
+      const recording = (await prisma.meetingRecording.findUnique({
+        where: { meetingId },
+      })) as MeetingRecordingRow | null;
+      expect(recording).not.toBeNull();
+      // See the mp4 upload test above: PROCESSING may already have landed by now.
+      expect(['UPLOADED', 'PROCESSING']).toContain(recording?.status);
+      expect(recording?.transcriptText).toBeNull();
     });
 
     it('replaces an existing recording: single row, only the new file on disk', async () => {
@@ -151,6 +204,47 @@ describe('Meetings Recording (e2e)', () => {
 
       const filesOnDisk = await readdir(join(uploadsDir, meetingId));
       expect(filesOnDisk).toHaveLength(1);
+    });
+
+    it('replacing a recording clears the previous transcript and status', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('first version'), {
+          filename: 'first.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      // Simulate a finished transcription on the first upload, so replacing it below
+      // actually proves a populated transcript/status gets discarded, not just an
+      // already-null one.
+      await prisma.meetingRecording.update({
+        where: { meetingId },
+        data: { status: 'READY', transcriptText: 'Old transcript text' },
+      });
+
+      const replaceResponse = await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('second version, longer'), {
+          filename: 'second.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      const replaced = replaceResponse.body as RecordingResponseBody;
+      expect(replaced.transcriptText).toBeNull();
+      expect(['UPLOADED', 'PROCESSING']).toContain(replaced.status);
+
+      const row = (await prisma.meetingRecording.findUnique({
+        where: { meetingId },
+      })) as MeetingRecordingRow | null;
+      expect(row?.transcriptText).toBeNull();
+      expect(['UPLOADED', 'PROCESSING']).toContain(row?.status);
     });
 
     it('rejects an unauthenticated request (401)', async () => {
@@ -319,6 +413,55 @@ describe('Meetings Recording (e2e)', () => {
         where: { meetingId },
       });
       expect(recording).toBeNull();
+    });
+
+    it('deleting a recording also removes its transcript, and a fresh upload starts with transcriptText null again', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      // Simulate a finished transcription before deleting, so the assertions below prove
+      // a populated transcript actually gets deleted, not just an already-null one.
+      await prisma.meetingRecording.update({
+        where: { meetingId },
+        data: { status: 'READY', transcriptText: 'Completed transcript text' },
+      });
+
+      await request(app.getHttpServer())
+        .delete(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(204);
+
+      await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recording/content`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+
+      const deletedRow = await prisma.meetingRecording.findUnique({
+        where: { meetingId },
+      });
+      expect(deletedRow).toBeNull();
+
+      const reuploadResponse = await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('fresh data'), {
+          filename: 'fresh.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+
+      const fresh = reuploadResponse.body as RecordingResponseBody;
+      expect(fresh.status).toBe('UPLOADED');
+      expect(fresh.transcriptText).toBeNull();
     });
 
     it('returns 404 when deleting again after already deleted', async () => {
@@ -575,6 +718,36 @@ describe('Meetings Recording (e2e)', () => {
       expect(recording.id).toBe(uploaded.id);
       expect(recording.originalFilename).toBe('clip.mp4');
       expect(recording.sizeBytes).toBe('4');
+    });
+
+    it('exposes status and transcriptText on the recording, transcriptText null right after upload', async () => {
+      // There is no separate GET .../recording metadata route — a recording's status and
+      // transcriptText are only exposed via POST .../recording's own response and via the
+      // `recording` field nested in GET /meetings/:id, both asserted here.
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      const uploadResponse = await request(app.getHttpServer())
+        .post(`/meetings/${meetingId}/recording`)
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', Buffer.from('data'), {
+          filename: 'clip.mp4',
+          contentType: 'video/mp4',
+        })
+        .expect(201);
+      const uploaded = uploadResponse.body as RecordingResponseBody;
+      expect(uploaded.status).toBe('UPLOADED');
+      expect(uploaded.transcriptText).toBeNull();
+
+      const detailResponse = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      const recording = (
+        detailResponse.body as { recording: RecordingResponseBody }
+      ).recording;
+      expect(['UPLOADED', 'PROCESSING']).toContain(recording.status);
+      expect(recording.transcriptText).toBeNull();
     });
 
     it('GET /meetings returns hasRecording: true only for meetings with a recording', async () => {

@@ -62,6 +62,9 @@ apps/api/generated/
 # Uploaded recording files (local UPLOADS_DIR)
 apps/api/uploads/
 
+# Downloaded local Whisper model weights (local WHISPER_MODEL_DIR)
+apps/api/whisper-models/
+
 # Claude Code local settings
 .claude/settings.local.json
 
@@ -74,3 +77,6 @@ apps/api/uploads/
 
 # Scratch diff dumps agents write while reviewing a phase
 *_diff_review.txt
+
+# Manual test fixtures + test-account credentials (never committed)
+.samples/

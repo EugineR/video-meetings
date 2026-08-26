@@ -4,6 +4,7 @@ const MIME_TYPE_EXTENSIONS: Record<string, string[]> = {
   'video/mp4': ['.mp4'],
   'video/webm': ['.webm'],
   'video/quicktime': ['.mov'],
+  'audio/mpeg': ['.mp3'],
 };
 
 export function parseAllowedMimeTypes(raw: string): string[] {

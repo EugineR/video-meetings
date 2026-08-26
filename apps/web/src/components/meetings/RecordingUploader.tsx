@@ -15,8 +15,13 @@ import { UploadIcon, XMarkIcon } from '@/components/icons';
  * defaults. This is a client-side UX check only — the API enforces the real
  * limits and is the source of truth (see docs/meeting-recording-upload/prd.md).
  */
-const ALLOWED_MIME_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
-const ALLOWED_EXTENSIONS_LABEL = 'MP4, WebM, MOV';
+const ALLOWED_MIME_TYPES = [
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'audio/mpeg',
+];
+const ALLOWED_EXTENSIONS_LABEL = 'MP4, WebM, MOV, MP3';
 const MAX_SIZE_BYTES = 500 * 1024 * 1024;
 const MAX_SIZE_LABEL = '500 MB';
 
