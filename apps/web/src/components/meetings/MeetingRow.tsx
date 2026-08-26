@@ -54,10 +54,13 @@ export function MeetingRow({
       </button>
 
       <div className="mt-2 flex">
-        {meeting.hasRecording ? (
+        {meeting.recordingCount > 0 ? (
           <Chip color="success" size="sm" variant="soft">
             <VideoCameraIcon className="size-3.5" />
-            <Chip.Label>Recording</Chip.Label>
+            <Chip.Label>
+              {meeting.recordingCount} file
+              {meeting.recordingCount === 1 ? '' : 's'}
+            </Chip.Label>
           </Chip>
         ) : (
           <Button

@@ -32,11 +32,11 @@ export interface Recording {
 }
 
 export interface MeetingDetail extends Meeting {
-  recording: Recording | null;
+  recordings: Recording[];
 }
 
 export interface MeetingListItem extends Meeting {
-  hasRecording: boolean;
+  recordingCount: number;
 }
 
 export interface Profile {
@@ -159,6 +159,14 @@ export function loginUser(
   return postJson<AccessTokenResponse>('/auth/login', { email, password });
 }
 
+export function createMeeting(
+  title: string,
+  date: string,
+  participants: string[],
+): Promise<Meeting> {
+  return postJson<Meeting>('/meetings', { title, date, participants });
+}
+
 export function getMeetings(): Promise<MeetingListItem[]> {
   return getJson<MeetingListItem[]>('/meetings');
 }
@@ -172,9 +180,14 @@ export function getMeeting(id: string): Promise<MeetingDetail> {
  * `Authorization` header, so the access token rides along as a `?token=` query
  * param instead — `JwtAuthGuard` on the API accepts either.
  */
-export function getRecordingContentUrl(meetingId: string): string {
+export function getRecordingContentUrl(
+  meetingId: string,
+  recordingId: string,
+): string {
   const token = getAccessToken();
-  const url = new URL(`${API_URL}/meetings/${meetingId}/recording/content`);
+  const url = new URL(
+    `${API_URL}/meetings/${meetingId}/recordings/${recordingId}/content`,
+  );
   if (token) {
     url.searchParams.set('token', token);
   }
@@ -197,7 +210,7 @@ export function uploadMeetingRecording(
 ): Promise<Recording> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_URL}/meetings/${meetingId}/recording`);
+    xhr.open('POST', `${API_URL}/meetings/${meetingId}/recordings`);
 
     const token = getAccessToken();
     if (token) {
@@ -249,12 +262,18 @@ export function uploadMeetingRecording(
   });
 }
 
-export async function deleteMeetingRecording(meetingId: string): Promise<void> {
+export async function deleteMeetingRecording(
+  meetingId: string,
+  recordingId: string,
+): Promise<void> {
   const token = getAccessToken();
-  const response = await fetch(`${API_URL}/meetings/${meetingId}/recording`, {
-    method: 'DELETE',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
+  const response = await fetch(
+    `${API_URL}/meetings/${meetingId}/recordings/${recordingId}`,
+    {
+      method: 'DELETE',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    },
+  );
 
   await handleResponse<void>(response);
 }

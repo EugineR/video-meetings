@@ -67,16 +67,17 @@ export class MeetingsController {
     return this.queryBus.execute(new GetMeetingByIdQuery(id, user.sub));
   }
 
-  @Get(':id/recording/content')
+  @Get(':id/recordings/:recordingId/content')
   @AllowQueryToken()
   async getRecordingContent(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
+    @Param('recordingId') recordingId: string,
     @Headers('range') range: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const content: RecordingContent = await this.queryBus.execute(
-      new GetRecordingQuery(id, user.sub, range),
+      new GetRecordingQuery(id, recordingId, user.sub, range),
     );
 
     res.set({
@@ -97,7 +98,7 @@ export class MeetingsController {
     return new StreamableFile(content.stream);
   }
 
-  @Post(':id/recording')
+  @Post(':id/recordings')
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(FileInterceptor('file'))
   uploadRecording(
@@ -114,12 +115,15 @@ export class MeetingsController {
     );
   }
 
-  @Delete(':id/recording')
+  @Delete(':id/recordings/:recordingId')
   @HttpCode(HttpStatus.NO_CONTENT)
   deleteRecording(
     @CurrentUser() user: JwtPayload,
     @Param('id') id: string,
+    @Param('recordingId') recordingId: string,
   ): Promise<void> {
-    return this.commandBus.execute(new DeleteRecordingCommand(id, user.sub));
+    return this.commandBus.execute(
+      new DeleteRecordingCommand(id, recordingId, user.sub),
+    );
   }
 }

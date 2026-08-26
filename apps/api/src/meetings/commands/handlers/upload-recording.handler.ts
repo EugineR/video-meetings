@@ -41,7 +41,7 @@ export class UploadRecordingHandler implements ICommandHandler<
       throw new NotFoundException('Meeting not found');
     }
 
-    const recording = await this.recordingsRepository.createOrReplace({
+    const recording = await this.recordingsRepository.create({
       meetingId: command.meetingId,
       originalFilename: command.file.originalname,
       storagePath: command.file.path,
@@ -50,22 +50,25 @@ export class UploadRecordingHandler implements ICommandHandler<
       status: RecordingStatus.UPLOADED,
     });
 
-    // Based on the actual directory contents after the DB upsert commits
-    // (not a pre-upsert snapshot), so a losing concurrent upload's file is
-    // still cleaned up even though this handler never read its metadata.
+    // Based on the actual set of recordings for this meeting after the create
+    // commits (not a pre-write snapshot), so a losing concurrent upload's file
+    // is still cleaned up even though this handler never read its metadata.
+    const currentRecordings = await this.recordingsRepository.findByMeetingId(
+      command.meetingId,
+    );
     await this.storageService.pruneMeetingDir(
       command.meetingId,
-      recording.storagePath,
+      currentRecordings.map((r) => r.storagePath),
     );
 
     // Fire-and-forget: transcription runs long enough that it must not block
     // this HTTP response. Errors are handled inside transcribeInBackground
     // (persisted as a FAILED status); this .catch only guards against an
     // unexpected throw escaping that method and becoming an unhandled rejection.
-    this.transcribeInBackground(command.meetingId, recording.storagePath).catch(
+    this.transcribeInBackground(recording.id, recording.storagePath).catch(
       (err: unknown) => {
         this.logger.error(
-          `Background transcription crashed for meeting ${command.meetingId}`,
+          `Background transcription crashed for recording ${recording.id}`,
           err instanceof Error ? err.stack : err,
         );
       },
@@ -75,21 +78,16 @@ export class UploadRecordingHandler implements ICommandHandler<
   }
 
   /**
-   * Runs after the HTTP response, so the recording this run started for may already have
-   * been replaced or deleted by the time each step below is ready to write — every write is
-   * conditioned on `storagePath` still matching via `updateStatusIfCurrent`, which is a no-op
-   * once it doesn't.
+   * Runs after the HTTP response, so the recording this run started for may already have been
+   * deleted by the time each step below is ready to write — every write is conditioned on
+   * `recordingId` still existing via `updateStatusIfCurrent`, which is a no-op once it doesn't.
    */
   private async transcribeInBackground(
-    meetingId: string,
+    recordingId: string,
     storagePath: string,
   ): Promise<void> {
     const persistIfCurrent = (data: UpdateRecordingStatusInput) =>
-      this.recordingsRepository.updateStatusIfCurrent(
-        meetingId,
-        storagePath,
-        data,
-      );
+      this.recordingsRepository.updateStatusIfCurrent(recordingId, data);
 
     const startedProcessing = await persistIfCurrent({
       status: RecordingStatus.PROCESSING,
@@ -104,7 +102,7 @@ export class UploadRecordingHandler implements ICommandHandler<
       await persistIfCurrent({ status: RecordingStatus.READY, transcriptText });
     } catch (err) {
       this.logger.error(
-        `Transcription failed for meeting ${meetingId}`,
+        `Transcription failed for recording ${recordingId}`,
         err instanceof Error ? err.stack : err,
       );
       await persistIfCurrent({ status: RecordingStatus.FAILED });

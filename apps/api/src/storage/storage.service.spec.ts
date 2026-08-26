@@ -159,7 +159,7 @@ describe('StorageService', () => {
         buffer: Buffer.from('stray 2'),
       });
 
-      await service.pruneMeetingDir(meetingId, keepPath);
+      await service.pruneMeetingDir(meetingId, [keepPath]);
 
       const remaining = await readdir(join(uploadsDir, meetingId));
       expect(remaining).toEqual([keepPath.split(/[/\\]/).pop()]);
@@ -168,9 +168,35 @@ describe('StorageService', () => {
       await expect(service.exists(keepPath)).resolves.toBe(true);
     });
 
+    it('removes only the files not in a multi-path keep list, leaving every kept recording untouched', async () => {
+      const meetingId = randomUUID();
+      const keepPathA = await service.save(meetingId, {
+        originalFilename: 'keep-a.mp4',
+        buffer: Buffer.from('keep a'),
+      });
+      const keepPathB = await service.save(meetingId, {
+        originalFilename: 'keep-b.mp3',
+        buffer: Buffer.from('keep b'),
+      });
+      const stray = await service.save(meetingId, {
+        originalFilename: 'stray.mp4',
+        buffer: Buffer.from('stray'),
+      });
+
+      await service.pruneMeetingDir(meetingId, [keepPathA, keepPathB]);
+
+      const remaining = await readdir(join(uploadsDir, meetingId));
+      expect(remaining.sort()).toEqual(
+        [keepPathA, keepPathB].map((p) => p.split(/[/\\]/).pop()).sort(),
+      );
+      await expect(service.exists(keepPathA)).resolves.toBe(true);
+      await expect(service.exists(keepPathB)).resolves.toBe(true);
+      await expect(service.exists(stray)).resolves.toBe(false);
+    });
+
     it('does nothing when the meeting directory does not exist', async () => {
       await expect(
-        service.pruneMeetingDir(randomUUID(), 'irrelevant'),
+        service.pruneMeetingDir(randomUUID(), ['irrelevant']),
       ).resolves.toBeUndefined();
     });
   });

@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { Card, Spinner } from '@heroui/react';
+import { useParams, useRouter } from 'next/navigation';
+import { Button, Card, Spinner } from '@heroui/react';
 import { useAuthenticatedUser } from '@/lib/useAuthenticatedUser';
 import {
   ApiError,
@@ -12,19 +12,19 @@ import {
 } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { AppHeader } from '@/components/layout/AppHeader';
-import { CalendarIcon, UsersIcon } from '@/components/icons';
+import { ArrowLeftIcon, CalendarIcon, UsersIcon } from '@/components/icons';
 import { RecordingCard } from '@/components/meetings/RecordingCard';
 import { RecordingUploader } from '@/components/meetings/RecordingUploader';
 
 export default function MeetingDetailPage() {
   const params = useParams<{ id: string }>();
   const meetingId = params.id;
+  const router = useRouter();
 
   const { user, signOut } = useAuthenticatedUser();
   const [meeting, setMeeting] = useState<MeetingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isReplacing, setIsReplacing] = useState(false);
-  // Bumped by any direct local update (replace/delete) so a poll response already
+  // Bumped by any direct local update (upload/delete) so a poll response already
   // in flight at that moment is recognized as stale and doesn't clobber it.
   const pollGenerationRef = useRef(0);
 
@@ -44,13 +44,13 @@ export default function MeetingDetailPage() {
       });
   }, [meetingId, user]);
 
-  const recordingStatus = meeting?.recording?.status ?? null;
+  const hasPendingRecording =
+    meeting?.recordings.some(
+      (r) => r.status === 'UPLOADED' || r.status === 'PROCESSING',
+    ) ?? false;
 
   useEffect(() => {
-    if (
-      !user ||
-      (recordingStatus !== 'UPLOADED' && recordingStatus !== 'PROCESSING')
-    ) {
+    if (!user || !hasPendingRecording) {
       return;
     }
 
@@ -76,18 +76,26 @@ export default function MeetingDetailPage() {
     }, 4000);
 
     return () => clearInterval(intervalId);
-  }, [meetingId, user, recordingStatus]);
+  }, [meetingId, user, hasPendingRecording]);
 
   const handleUploaded = useCallback((recording: Recording) => {
     pollGenerationRef.current += 1;
-    setIsReplacing(false);
-    setMeeting((current) => (current ? { ...current, recording } : current));
+    setMeeting((current) =>
+      current
+        ? { ...current, recordings: [...current.recordings, recording] }
+        : current,
+    );
   }, []);
 
-  const handleDeleted = useCallback(() => {
+  const handleDeleted = useCallback((recordingId: string) => {
     pollGenerationRef.current += 1;
     setMeeting((current) =>
-      current ? { ...current, recording: null } : current,
+      current
+        ? {
+            ...current,
+            recordings: current.recordings.filter((r) => r.id !== recordingId),
+          }
+        : current,
     );
   }, []);
 
@@ -104,6 +112,14 @@ export default function MeetingDetailPage() {
       <AppHeader email={user.email} onSignOut={signOut} />
       <div className="flex justify-center px-4 py-12">
         <div className="flex w-full max-w-2xl flex-col gap-6">
+          <Button
+            className="h-11 self-start md:h-10"
+            variant="secondary"
+            onPress={() => router.back()}
+          >
+            <ArrowLeftIcon className="size-4" />
+            Back
+          </Button>
           {error ? (
             <Card>
               <Card.Content>
@@ -144,22 +160,21 @@ export default function MeetingDetailPage() {
 
               <Card>
                 <Card.Header>
-                  <Card.Title>Recording</Card.Title>
+                  <Card.Title>Recordings</Card.Title>
                 </Card.Header>
-                <Card.Content>
-                  {meeting.recording && !isReplacing ? (
+                <Card.Content className="flex flex-col gap-6">
+                  {meeting.recordings.map((recording) => (
                     <RecordingCard
+                      key={recording.id}
                       meetingId={meeting.id}
                       onDeleted={handleDeleted}
-                      onReplace={() => setIsReplacing(true)}
-                      recording={meeting.recording}
+                      recording={recording}
                     />
-                  ) : (
-                    <RecordingUploader
-                      meetingId={meeting.id}
-                      onUploaded={handleUploaded}
-                    />
-                  )}
+                  ))}
+                  <RecordingUploader
+                    meetingId={meeting.id}
+                    onUploaded={handleUploaded}
+                  />
                 </Card.Content>
               </Card>
             </>

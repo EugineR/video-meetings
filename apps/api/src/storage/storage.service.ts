@@ -91,15 +91,19 @@ export class StorageService {
   }
 
   /**
-   * Removes every file in `{UPLOADS_DIR}/{meetingId}` except `keepStoragePath`.
-   * Used to clean up losing writes from concurrent uploads to the same meeting:
-   * unlike deleting a single previously-known path, this is based on the actual
-   * directory contents after the DB row is committed, so it's race-free —
-   * whichever upload's row won the DB upsert is also the one whose file survives.
+   * Removes every file in `{UPLOADS_DIR}/{meetingId}` except those listed in
+   * `keepStoragePaths` — the current set of the meeting's recordings. Used to clean up losing
+   * writes from concurrent uploads to the same meeting: unlike deleting a single previously-known
+   * path, this is based on the actual directory contents after the DB row is committed, so it's
+   * race-free — whichever upload's row won is also the one whose file survives, and every other
+   * recording already on disk for that meeting is preserved.
    * Best-effort: a failure to remove one stray file doesn't fail the others or throw.
    */
-  pruneMeetingDir(meetingId: string, keepStoragePath: string): Promise<void> {
-    return this.pruneDir(this.resolveMeetingDir(meetingId), keepStoragePath);
+  pruneMeetingDir(
+    meetingId: string,
+    keepStoragePaths: string[],
+  ): Promise<void> {
+    return this.pruneDir(this.resolveMeetingDir(meetingId), keepStoragePaths);
   }
 
   /**
@@ -108,10 +112,13 @@ export class StorageService {
    * `pruneMeetingDir` — see that method's doc comment.
    */
   pruneAvatarDir(userId: string, keepStoragePath: string): Promise<void> {
-    return this.pruneDir(this.resolveAvatarDir(userId), keepStoragePath);
+    return this.pruneDir(this.resolveAvatarDir(userId), [keepStoragePath]);
   }
 
-  private async pruneDir(dir: string, keepStoragePath: string): Promise<void> {
+  private async pruneDir(
+    dir: string,
+    keepStoragePaths: string[],
+  ): Promise<void> {
     let entries: string[];
     try {
       entries = await readdir(dir);
@@ -125,7 +132,7 @@ export class StorageService {
     await Promise.allSettled(
       entries
         .map((entry) => join(dir, entry))
-        .filter((entryPath) => entryPath !== keepStoragePath)
+        .filter((entryPath) => !keepStoragePaths.includes(entryPath))
         .map((entryPath) => rm(entryPath, { force: true })),
     );
   }

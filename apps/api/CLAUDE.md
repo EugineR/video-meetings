@@ -27,7 +27,7 @@ Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "cas
 - `src/users/` — user persistence, own-profile read/write, password change, avatar routes (upload, stream, delete);
   `GET /users/me`'s `ProfileResponse` reports `hasAvatar`/`avatarUpdatedAt`
 - `src/auth/` — register/login, `TokenService`, `JwtAuthGuard`, `@CurrentUser()`
-- `src/meetings/` — meetings and their one recording (upload, stream, delete)
+- `src/meetings/` — meetings and their recordings, many per meeting (upload, stream, delete)
 - `src/transcription/` — `TranscriptionService`, transcribing a recording file via a local
   Whisper `base` model, run in the background after an upload (see Invariants)
 
@@ -88,9 +88,11 @@ The reasoning behind them is in `docs/architecture/api.md`.
 - **Transcription runs in the background, outside the upload request** — `UploadRecordingHandler`
   fires it without awaiting, driving `MeetingRecording.status` `UPLOADED` → `PROCESSING` →
   `READY`/`FAILED`. Every write from that background run goes through
-  `RecordingsRepository.updateStatusIfCurrent`, matched on `storagePath` (not `id`, which an
-  upsert-on-`meetingId` keeps across a replace) — so a run started for a file that has since been
-  replaced or deleted becomes a no-op instead of clobbering the newer recording. The actual Whisper
+  `RecordingsRepository.updateStatusIfCurrent`, matched on `recordingId` alone — sufficient because
+  `RecordingsRepository.create` always gives a recording a fresh, permanent id (there is no
+  upsert-in-place keeping an id stable across a replace, the way `storagePath` used to have to
+  stand in for identity) — so a run started for a recording that has since been deleted becomes a
+  no-op instead of clobbering a different row. The actual Whisper
   invocation is swapped behind the `WHISPER_RUNNER` DI token (`transcription/whisper-runner.ts`) so
   it can be stubbed in tests, unit and e2e alike, without a local Whisper install. Whisper's
   language is fixed to English (`transcription.module.ts`'s `WHISPER_LANGUAGE`) rather than left on
@@ -118,9 +120,9 @@ plus `eslint-plugin-prettier`; `no-explicit-any` is off,
 ## Database
 
 `prisma/schema.prisma` + `prisma/migrations/`: `User` → `users`, `Meeting` → `meetings`,
-`MeetingRecording` → `meeting_recordings` (at most one per meeting, `status`/`transcriptText`
-tracking its background transcription — see Invariants), `UserAvatar` → `user_avatars` (at most one
-per user); every child FK is `onDelete: Cascade`.
+`MeetingRecording` → `meeting_recordings` (many per meeting, `status`/`transcriptText` tracking
+each recording's own background transcription — see Invariants), `UserAvatar` → `user_avatars` (at
+most one per user); every child FK is `onDelete: Cascade`.
 
 Env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (must match the root
 `docker-compose.yml` credentials), `JWT_SECRET`, `PORT` (default `3001` — **must differ from
