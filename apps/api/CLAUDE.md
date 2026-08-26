@@ -92,7 +92,10 @@ The reasoning behind them is in `docs/architecture/api.md`.
   upsert-on-`meetingId` keeps across a replace) — so a run started for a file that has since been
   replaced or deleted becomes a no-op instead of clobbering the newer recording. The actual Whisper
   invocation is swapped behind the `WHISPER_RUNNER` DI token (`transcription/whisper-runner.ts`) so
-  it can be stubbed in tests, unit and e2e alike, without a local Whisper install.
+  it can be stubbed in tests, unit and e2e alike, without a local Whisper install. Whisper's
+  language is fixed to English (`transcription.module.ts`'s `WHISPER_LANGUAGE`) rather than left on
+  auto-detection, which the `base` model gets wrong often enough on accented/noisy audio to
+  mis-transcribe English speech as a different language entirely.
 
 ## Testing
 

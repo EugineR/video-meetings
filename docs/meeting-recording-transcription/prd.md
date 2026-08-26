@@ -49,8 +49,10 @@ can see how the transcription is progressing.
   any, are automatic.
 - Editing the transcript text after generation.
 - Searching, exporting, or downloading the transcript.
-- Language selection or translation — transcription runs in the recording's spoken language as
-  detected by Whisper.
+- Language selection, translation, or auto-detection — transcription is fixed to English
+  (`whisperOptions.language: 'en'`); Whisper's own language auto-detection is disabled, since on
+  the `base` model it can mis-transcribe accented or noisy English speech as an entirely different
+  language rather than just getting individual words wrong.
 - Using any Whisper model other than `base`, or making the model configurable.
 - Any non-local (cloud/API-based) transcription provider.
 
@@ -78,4 +80,5 @@ can see how the transcription is progressing.
 - [ ] Replacing a meeting's recording discards its prior transcript and status, and starts
       transcription again for the new recording.
 - [ ] Deleting a meeting's recording also removes its transcript and transcription status.
-- [ ] Transcription runs against the `base` Whisper model.
+- [ ] Transcription runs against the `base` Whisper model, with the language fixed to English
+      rather than auto-detected.
