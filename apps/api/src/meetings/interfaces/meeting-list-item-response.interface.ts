@@ -1,12 +1,12 @@
 import { Meeting } from '@prisma/client';
-import { MeetingWithRecording } from '../meetings.repository';
+import { MeetingWithRecordings } from '../meetings.repository';
 
-/** `Meeting` with its recording relation collapsed into a `hasRecording` boolean for the list badge. */
-export type MeetingListItemResponse = Meeting & { hasRecording: boolean };
+/** `Meeting` with its recordings relation collapsed into a `recordingCount` for the list badge. */
+export type MeetingListItemResponse = Meeting & { recordingCount: number };
 
 export function toMeetingListItemResponse(
-  meeting: MeetingWithRecording,
+  meeting: MeetingWithRecordings,
 ): MeetingListItemResponse {
-  const { recording, ...rest } = meeting;
-  return { ...rest, hasRecording: recording !== null };
+  const { recordings, ...rest } = meeting;
+  return { ...rest, recordingCount: recordings.length };
 }

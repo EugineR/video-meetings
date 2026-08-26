@@ -1,16 +1,24 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Card, Spinner } from '@heroui/react';
+import { Button, Card, Spinner } from '@heroui/react';
 import { useAuthenticatedUser } from '@/lib/useAuthenticatedUser';
-import { ApiError, getMeetings, type MeetingListItem } from '@/lib/api';
+import {
+  ApiError,
+  getMeetings,
+  type Meeting,
+  type MeetingListItem,
+} from '@/lib/api';
 import { AppHeader } from '@/components/layout/AppHeader';
+import { CreateMeetingModal } from '@/components/meetings/CreateMeetingModal';
 import { MeetingRow } from '@/components/meetings/MeetingRow';
+import { PlusIcon } from '@/components/icons';
 
 export default function Home() {
   const { user, profile, signOut } = useAuthenticatedUser();
   const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
   const [meetingsError, setMeetingsError] = useState<string | null>(null);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -28,12 +36,19 @@ export default function Home() {
       });
   }, [user]);
 
+  const handleMeetingCreated = useCallback((meeting: Meeting) => {
+    setMeetings((current) => {
+      const newMeeting: MeetingListItem = { ...meeting, recordingCount: 0 };
+      return current ? [newMeeting, ...current] : [newMeeting];
+    });
+  }, []);
+
   const handleRecordingUploaded = useCallback((meetingId: string) => {
     setMeetings((current) =>
       current
         ? current.map((meeting) =>
             meeting.id === meetingId
-              ? { ...meeting, hasRecording: true }
+              ? { ...meeting, recordingCount: meeting.recordingCount + 1 }
               : meeting,
           )
         : current,
@@ -65,6 +80,14 @@ export default function Home() {
       />
       <div className="flex justify-center px-4 py-12">
         <div className="flex w-full max-w-2xl flex-col gap-6">
+          <Button
+            className="h-11 self-start md:h-10"
+            onPress={() => setIsCreateOpen(true)}
+          >
+            <PlusIcon className="size-4" />
+            Create meeting
+          </Button>
+
           {recentMeetings.length > 0 ? (
             <Card>
               <Card.Header>
@@ -123,6 +146,12 @@ export default function Home() {
           </Card>
         </div>
       </div>
+
+      <CreateMeetingModal
+        isOpen={isCreateOpen}
+        onCreated={handleMeetingCreated}
+        onOpenChange={setIsCreateOpen}
+      />
     </div>
   );
 }

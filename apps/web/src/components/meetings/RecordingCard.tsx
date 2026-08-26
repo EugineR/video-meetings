@@ -29,14 +29,12 @@ function formatFileSize(sizeBytes: string): string {
 interface RecordingCardProps {
   meetingId: string;
   recording: Recording;
-  onReplace: () => void;
-  onDeleted: () => void;
+  onDeleted: (recordingId: string) => void;
 }
 
 export function RecordingCard({
   meetingId,
   recording,
-  onReplace,
   onDeleted,
 }: RecordingCardProps) {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
@@ -47,9 +45,9 @@ export function RecordingCard({
     setIsDeleting(true);
     setError(null);
     try {
-      await deleteMeetingRecording(meetingId);
+      await deleteMeetingRecording(meetingId, recording.id);
       setIsDeleteOpen(false);
-      onDeleted();
+      onDeleted(recording.id);
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -68,14 +66,14 @@ export function RecordingCard({
           <audio
             className="w-full"
             controls
-            src={getRecordingContentUrl(meetingId)}
+            src={getRecordingContentUrl(meetingId, recording.id)}
           />
         </div>
       ) : (
         <video
           className="w-full rounded-lg bg-black"
           controls
-          src={getRecordingContentUrl(meetingId)}
+          src={getRecordingContentUrl(meetingId, recording.id)}
         />
       )}
 
@@ -112,13 +110,6 @@ export function RecordingCard({
       ) : null}
 
       <div className="flex gap-2">
-        <Button
-          className="h-11 md:h-10"
-          onPress={onReplace}
-          variant="secondary"
-        >
-          Replace
-        </Button>
         <Button
           className="h-11 md:h-10"
           onPress={() => setIsDeleteOpen(true)}

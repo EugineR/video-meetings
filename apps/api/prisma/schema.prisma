@@ -20,15 +20,15 @@ model User {
 }
 
 model Meeting {
-  id           String            @id @default(uuid())
+  id           String             @id @default(uuid())
   title        String
   date         DateTime
   participants String[]
   ownerId      String
-  owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  recording    MeetingRecording?
+  owner        User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  recordings   MeetingRecording[]
 
   @@map("meetings")
 }
@@ -42,7 +42,7 @@ enum RecordingStatus {
 
 model MeetingRecording {
   id               String          @id @default(uuid())
-  meetingId        String          @unique
+  meetingId        String
   meeting          Meeting         @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   originalFilename String
   storagePath      String

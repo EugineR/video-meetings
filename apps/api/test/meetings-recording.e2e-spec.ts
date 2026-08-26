@@ -33,11 +33,6 @@ interface RecordingResponseBody {
   transcriptText: string | null;
 }
 
-interface MeetingRecordingRow {
-  status: string;
-  transcriptText: string | null;
-}
-
 const uploadsDir = join(tmpdir(), `video-meetings-e2e-uploads-${randomUUID()}`);
 
 /**
@@ -78,6 +73,23 @@ async function createMeeting(
   return (response.body as MeetingResponseBody).id;
 }
 
+async function uploadRecording(
+  app: INestApplication<App>,
+  token: string,
+  meetingId: string,
+  filename: string,
+  contents: Buffer | string,
+  contentType = 'video/mp4',
+): Promise<RecordingResponseBody> {
+  const response = await request(app.getHttpServer())
+    .post(`/meetings/${meetingId}/recordings`)
+    .set('Authorization', `Bearer ${token}`)
+    .attach('file', Buffer.from(contents), { filename, contentType })
+    .expect(201);
+
+  return response.body as RecordingResponseBody;
+}
+
 describe('Meetings Recording (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -111,21 +123,19 @@ describe('Meetings Recording (e2e)', () => {
     await app.close();
   });
 
-  describe('POST /meetings/:id/recording', () => {
+  describe('POST /meetings/:id/recordings', () => {
     it('uploads a recording: 201, file on disk, UPLOADED row', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      const response = await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('fake mp4 bytes'), {
-          filename: 'recording.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const body = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'recording.mp4',
+        'fake mp4 bytes',
+      );
 
-      const body = response.body as RecordingResponseBody;
       expect(body.meetingId).toBe(meetingId);
       expect(body.originalFilename).toBe('recording.mp4');
       expect(body.mimeType).toBe('video/mp4');
@@ -134,7 +144,7 @@ describe('Meetings Recording (e2e)', () => {
       expect(existsSync(body.storagePath)).toBe(true);
 
       const recording = await prisma.meetingRecording.findUnique({
-        where: { meetingId },
+        where: { id: body.id },
       });
       expect(recording).not.toBeNull();
       // Background transcription (see UploadRecordingHandler.transcribeInBackground) writes
@@ -147,104 +157,65 @@ describe('Meetings Recording (e2e)', () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      const response = await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('fake mp3 bytes'), {
-          filename: 'recording.mp3',
-          contentType: 'audio/mpeg',
-        })
-        .expect(201);
+      const body = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'recording.mp3',
+        'fake mp3 bytes',
+        'audio/mpeg',
+      );
 
-      const body = response.body as RecordingResponseBody;
       expect(body.meetingId).toBe(meetingId);
       expect(body.originalFilename).toBe('recording.mp3');
       expect(body.mimeType).toBe('audio/mpeg');
       expect(body.status).toBe('UPLOADED');
 
-      const recording = (await prisma.meetingRecording.findUnique({
-        where: { meetingId },
-      })) as MeetingRecordingRow | null;
+      const recording = await prisma.meetingRecording.findUnique({
+        where: { id: body.id },
+      });
       expect(recording).not.toBeNull();
       // See the mp4 upload test above: PROCESSING may already have landed by now.
       expect(['UPLOADED', 'PROCESSING']).toContain(recording?.status);
       expect(recording?.transcriptText).toBeNull();
     });
 
-    it('replaces an existing recording: single row, only the new file on disk', async () => {
+    it('adds a second file alongside the first: two independent rows, both files on disk', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('first version'), {
-          filename: 'first.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const first = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'first.mp4',
+        'first version',
+      );
+      const second = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'second.mp4',
+        'second version, longer',
+      );
 
-      const secondResponse = await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('second version, longer'), {
-          filename: 'second.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
-
-      const second = secondResponse.body as RecordingResponseBody;
+      expect(second.id).not.toBe(first.id);
       expect(second.originalFilename).toBe('second.mp4');
 
       const rows = await prisma.meetingRecording.findMany({
         where: { meetingId },
+        orderBy: { createdAt: 'asc' },
       });
-      expect(rows).toHaveLength(1);
-      expect(rows[0].originalFilename).toBe('second.mp4');
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.originalFilename)).toEqual([
+        'first.mp4',
+        'second.mp4',
+      ]);
 
       const filesOnDisk = await readdir(join(uploadsDir, meetingId));
-      expect(filesOnDisk).toHaveLength(1);
-    });
-
-    it('replacing a recording clears the previous transcript and status', async () => {
-      const token = await registerAndLogin(app, 'owner@example.com');
-      const meetingId = await createMeeting(app, token);
-
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('first version'), {
-          filename: 'first.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
-
-      // Simulate a finished transcription on the first upload, so replacing it below
-      // actually proves a populated transcript/status gets discarded, not just an
-      // already-null one.
-      await prisma.meetingRecording.update({
-        where: { meetingId },
-        data: { status: 'READY', transcriptText: 'Old transcript text' },
-      });
-
-      const replaceResponse = await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('second version, longer'), {
-          filename: 'second.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
-
-      const replaced = replaceResponse.body as RecordingResponseBody;
-      expect(replaced.transcriptText).toBeNull();
-      expect(['UPLOADED', 'PROCESSING']).toContain(replaced.status);
-
-      const row = (await prisma.meetingRecording.findUnique({
-        where: { meetingId },
-      })) as MeetingRecordingRow | null;
-      expect(row?.transcriptText).toBeNull();
-      expect(['UPLOADED', 'PROCESSING']).toContain(row?.status);
+      expect(filesOnDisk).toHaveLength(2);
+      expect(existsSync(first.storagePath)).toBe(true);
+      expect(existsSync(second.storagePath)).toBe(true);
     });
 
     it('rejects an unauthenticated request (401)', async () => {
@@ -252,7 +223,7 @@ describe('Meetings Recording (e2e)', () => {
       const meetingId = await createMeeting(app, token);
 
       await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
+        .post(`/meetings/${meetingId}/recordings`)
         .attach('file', Buffer.from('data'), {
           filename: 'clip.mp4',
           contentType: 'video/mp4',
@@ -264,7 +235,7 @@ describe('Meetings Recording (e2e)', () => {
       const token = await registerAndLogin(app, 'owner@example.com');
 
       await request(app.getHttpServer())
-        .post('/meetings/00000000-0000-0000-0000-000000000000/recording')
+        .post('/meetings/00000000-0000-0000-0000-000000000000/recordings')
         .set('Authorization', `Bearer ${token}`)
         .attach('file', Buffer.from('data'), {
           filename: 'clip.mp4',
@@ -279,7 +250,7 @@ describe('Meetings Recording (e2e)', () => {
       const meetingId = await createMeeting(app, ownerToken);
 
       await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
+        .post(`/meetings/${meetingId}/recordings`)
         .set('Authorization', `Bearer ${otherToken}`)
         .attach('file', Buffer.from('data'), {
           filename: 'clip.mp4',
@@ -294,7 +265,7 @@ describe('Meetings Recording (e2e)', () => {
       const token = await registerAndLogin(app, 'owner@example.com');
 
       await request(app.getHttpServer())
-        .post('/meetings/..%5C..%5Ctraversal-escape/recording')
+        .post('/meetings/..%5C..%5Ctraversal-escape/recordings')
         .set('Authorization', `Bearer ${token}`)
         .attach('file', Buffer.from('data'), {
           filename: 'clip.mp4',
@@ -312,7 +283,7 @@ describe('Meetings Recording (e2e)', () => {
       const meetingId = await createMeeting(app, token);
 
       await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
+        .post(`/meetings/${meetingId}/recordings`)
         .set('Authorization', `Bearer ${token}`)
         .attach('file', Buffer.from('not a video'), {
           filename: 'archive.zip',
@@ -342,7 +313,7 @@ describe('Meetings Recording (e2e)', () => {
         const meetingId = await createMeeting(smallLimitApp, token);
 
         await request(smallLimitApp.getHttpServer())
-          .post(`/meetings/${meetingId}/recording`)
+          .post(`/meetings/${meetingId}/recordings`)
           .set('Authorization', `Bearer ${token}`)
           .attach('file', Buffer.from('this buffer is longer than 10 bytes'), {
             filename: 'clip.mp4',
@@ -369,7 +340,7 @@ describe('Meetings Recording (e2e)', () => {
       const meetingId = await createMeeting(app, token);
 
       await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
+        .post(`/meetings/${meetingId}/recordings`)
         .set('Authorization', `Bearer ${token}`)
         .field('note', 'no file attached here')
         .expect(400);
@@ -380,7 +351,7 @@ describe('Meetings Recording (e2e)', () => {
       const meetingId = await createMeeting(app, token);
 
       await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
+        .post(`/meetings/${meetingId}/recordings`)
         .set('Authorization', `Bearer ${token}`)
         .set('Content-Type', 'multipart/form-data; boundary=broken')
         .send('not actually multipart content')
@@ -388,78 +359,111 @@ describe('Meetings Recording (e2e)', () => {
     });
   });
 
-  describe('DELETE /meetings/:id/recording', () => {
+  describe('DELETE /meetings/:id/recordings/:recordingId', () => {
     it('deletes an existing recording (204) and removes the file from disk', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      const uploadResponse = await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
-      const { storagePath } = uploadResponse.body as RecordingResponseBody;
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
       await request(app.getHttpServer())
-        .delete(`/meetings/${meetingId}/recording`)
+        .delete(`/meetings/${meetingId}/recordings/${uploaded.id}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(204);
 
-      expect(existsSync(storagePath)).toBe(false);
+      expect(existsSync(uploaded.storagePath)).toBe(false);
       const recording = await prisma.meetingRecording.findUnique({
-        where: { meetingId },
+        where: { id: uploaded.id },
       });
       expect(recording).toBeNull();
+    });
+
+    it('deleting one recording leaves a sibling recording and its file/row fully intact', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+
+      const first = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'first.mp4',
+        'first data',
+      );
+      const second = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'second.mp4',
+        'second data',
+      );
+
+      await request(app.getHttpServer())
+        .delete(`/meetings/${meetingId}/recordings/${first.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(204);
+
+      expect(existsSync(first.storagePath)).toBe(false);
+      expect(existsSync(second.storagePath)).toBe(true);
+
+      const remaining = await prisma.meetingRecording.findMany({
+        where: { meetingId },
+      });
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].id).toBe(second.id);
+
+      await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recordings/${second.id}/content`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
     });
 
     it('deleting a recording also removes its transcript, and a fresh upload starts with transcriptText null again', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
       // Simulate a finished transcription before deleting, so the assertions below prove
       // a populated transcript actually gets deleted, not just an already-null one.
       await prisma.meetingRecording.update({
-        where: { meetingId },
+        where: { id: uploaded.id },
         data: { status: 'READY', transcriptText: 'Completed transcript text' },
       });
 
       await request(app.getHttpServer())
-        .delete(`/meetings/${meetingId}/recording`)
+        .delete(`/meetings/${meetingId}/recordings/${uploaded.id}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(204);
 
       await request(app.getHttpServer())
-        .get(`/meetings/${meetingId}/recording/content`)
+        .get(`/meetings/${meetingId}/recordings/${uploaded.id}/content`)
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
 
       const deletedRow = await prisma.meetingRecording.findUnique({
-        where: { meetingId },
+        where: { id: uploaded.id },
       });
       expect(deletedRow).toBeNull();
 
-      const reuploadResponse = await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('fresh data'), {
-          filename: 'fresh.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
-
-      const fresh = reuploadResponse.body as RecordingResponseBody;
+      const fresh = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'fresh.mp4',
+        'fresh data',
+      );
       expect(fresh.status).toBe('UPLOADED');
       expect(fresh.transcriptText).toBeNull();
     });
@@ -468,22 +472,21 @@ describe('Meetings Recording (e2e)', () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
       await request(app.getHttpServer())
-        .delete(`/meetings/${meetingId}/recording`)
+        .delete(`/meetings/${meetingId}/recordings/${uploaded.id}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(204);
 
       await request(app.getHttpServer())
-        .delete(`/meetings/${meetingId}/recording`)
+        .delete(`/meetings/${meetingId}/recordings/${uploaded.id}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
     });
@@ -497,19 +500,18 @@ describe('Meetings Recording (e2e)', () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
-      await prisma.meetingRecording.delete({ where: { meetingId } });
+      await prisma.meetingRecording.delete({ where: { id: uploaded.id } });
 
       await request(app.getHttpServer())
-        .delete(`/meetings/${meetingId}/recording`)
+        .delete(`/meetings/${meetingId}/recordings/${uploaded.id}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
     });
@@ -519,7 +521,9 @@ describe('Meetings Recording (e2e)', () => {
       const meetingId = await createMeeting(app, token);
 
       await request(app.getHttpServer())
-        .delete(`/meetings/${meetingId}/recording`)
+        .delete(
+          `/meetings/${meetingId}/recordings/00000000-0000-0000-0000-000000000000`,
+        )
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
     });
@@ -528,7 +532,9 @@ describe('Meetings Recording (e2e)', () => {
       const token = await registerAndLogin(app, 'owner@example.com');
 
       await request(app.getHttpServer())
-        .delete('/meetings/00000000-0000-0000-0000-000000000000/recording')
+        .delete(
+          '/meetings/00000000-0000-0000-0000-000000000000/recordings/00000000-0000-0000-0000-000000000001',
+        )
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
     });
@@ -538,48 +544,78 @@ describe('Meetings Recording (e2e)', () => {
       const otherToken = await registerAndLogin(app, 'other@example.com');
       const meetingId = await createMeeting(app, ownerToken);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${ownerToken}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const uploaded = await uploadRecording(
+        app,
+        ownerToken,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
       await request(app.getHttpServer())
-        .delete(`/meetings/${meetingId}/recording`)
+        .delete(`/meetings/${meetingId}/recordings/${uploaded.id}`)
         .set('Authorization', `Bearer ${otherToken}`)
         .expect(404);
+    });
+
+    it('returns 404 when the recordingId belongs to a different meeting', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingIdA = await createMeeting(app, token);
+      const meetingIdB = await createMeeting(app, token);
+
+      const uploadedInB = await uploadRecording(
+        app,
+        token,
+        meetingIdB,
+        'clip.mp4',
+        'data',
+      );
+
+      await request(app.getHttpServer())
+        .delete(`/meetings/${meetingIdA}/recordings/${uploadedInB.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+
+      // Untouched: still readable via its actual meeting.
+      const stillThere = await prisma.meetingRecording.findUnique({
+        where: { id: uploadedInB.id },
+      });
+      expect(stillThere).not.toBeNull();
     });
 
     it('rejects an unauthenticated request (401)', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
       await request(app.getHttpServer())
-        .delete(`/meetings/${meetingId}/recording`)
+        .delete(`/meetings/${meetingId}/recordings/${uploaded.id}`)
         .expect(401);
     });
   });
 
-  describe('GET /meetings/:id/recording/content', () => {
+  describe('GET /meetings/:id/recordings/:recordingId/content', () => {
     it('streams bytes identical to the uploaded file, with the correct Content-Type', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
       const fileContents = Buffer.from('the exact recorded bytes');
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', fileContents, {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        fileContents,
+      );
 
       const response = await request(app.getHttpServer())
-        .get(`/meetings/${meetingId}/recording/content`)
+        .get(`/meetings/${meetingId}/recordings/${uploaded.id}/content`)
         .set('Authorization', `Bearer ${token}`)
         .responseType('blob')
         .expect(200);
@@ -590,21 +626,63 @@ describe('Meetings Recording (e2e)', () => {
       );
     });
 
+    it('streams each of two recordings independently, by its own recordingId', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingId = await createMeeting(app, token);
+      const firstContents = Buffer.from('first file bytes');
+      const secondContents = Buffer.from('second file bytes, different');
+
+      const first = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'first.mp4',
+        firstContents,
+      );
+      const second = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'second.mp3',
+        secondContents,
+        'audio/mpeg',
+      );
+
+      const firstResponse = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recordings/${first.id}/content`)
+        .set('Authorization', `Bearer ${token}`)
+        .responseType('blob')
+        .expect(200);
+      const secondResponse = await request(app.getHttpServer())
+        .get(`/meetings/${meetingId}/recordings/${second.id}/content`)
+        .set('Authorization', `Bearer ${token}`)
+        .responseType('blob')
+        .expect(200);
+
+      expect(
+        Buffer.from(firstResponse.body as Buffer).equals(firstContents),
+      ).toBe(true);
+      expect(
+        Buffer.from(secondResponse.body as Buffer).equals(secondContents),
+      ).toBe(true);
+      expect(secondResponse.headers['content-type']).toBe('audio/mpeg');
+    });
+
     it('authenticates via a ?token= query param (for <video> src)', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
       await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
-
-      await request(app.getHttpServer())
-        .get(`/meetings/${meetingId}/recording/content?token=${token}`)
+        .get(
+          `/meetings/${meetingId}/recordings/${uploaded.id}/content?token=${token}`,
+        )
         .expect(200);
     });
 
@@ -624,17 +702,16 @@ describe('Meetings Recording (e2e)', () => {
       const meetingId = await createMeeting(app, token);
       const fileContents = Buffer.from('0123456789');
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', fileContents, {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        fileContents,
+      );
 
       const response = await request(app.getHttpServer())
-        .get(`/meetings/${meetingId}/recording/content`)
+        .get(`/meetings/${meetingId}/recordings/${uploaded.id}/content`)
         .set('Authorization', `Bearer ${token}`)
         .set('Range', 'bytes=2-5')
         .responseType('blob')
@@ -645,12 +722,33 @@ describe('Meetings Recording (e2e)', () => {
       expect(Buffer.from(response.body as Buffer).toString()).toBe('2345');
     });
 
-    it('returns 404 when there is no recording', async () => {
+    it('returns 404 when there is no such recording', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
       await request(app.getHttpServer())
-        .get(`/meetings/${meetingId}/recording/content`)
+        .get(
+          `/meetings/${meetingId}/recordings/00000000-0000-0000-0000-000000000000/content`,
+        )
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+    });
+
+    it('returns 404 when the recordingId belongs to a different meeting', async () => {
+      const token = await registerAndLogin(app, 'owner@example.com');
+      const meetingIdA = await createMeeting(app, token);
+      const meetingIdB = await createMeeting(app, token);
+
+      const uploadedInB = await uploadRecording(
+        app,
+        token,
+        meetingIdB,
+        'clip.mp4',
+        'data',
+      );
+
+      await request(app.getHttpServer())
+        .get(`/meetings/${meetingIdA}/recordings/${uploadedInB.id}/content`)
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
     });
@@ -660,17 +758,16 @@ describe('Meetings Recording (e2e)', () => {
       const otherToken = await registerAndLogin(app, 'other@example.com');
       const meetingId = await createMeeting(app, ownerToken);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${ownerToken}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      const uploaded = await uploadRecording(
+        app,
+        ownerToken,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
       await request(app.getHttpServer())
-        .get(`/meetings/${meetingId}/recording/content`)
+        .get(`/meetings/${meetingId}/recordings/${uploaded.id}/content`)
         .set('Authorization', `Bearer ${otherToken}`)
         .expect(404);
     });
@@ -678,15 +775,22 @@ describe('Meetings Recording (e2e)', () => {
     it('rejects an unauthenticated request (401)', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
 
       await request(app.getHttpServer())
-        .get(`/meetings/${meetingId}/recording/content`)
+        .get(`/meetings/${meetingId}/recordings/${uploaded.id}/content`)
         .expect(401);
     });
   });
 
-  describe('recording fields on the meeting read endpoints', () => {
-    it('GET /meetings/:id returns recording: null without a recording, then the metadata after upload', async () => {
+  describe('recordings field on the meeting read endpoints', () => {
+    it('GET /meetings/:id returns recordings: [] without any recording, then each file after upload', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
@@ -694,48 +798,52 @@ describe('Meetings Recording (e2e)', () => {
         .get(`/meetings/${meetingId}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      expect((beforeResponse.body as { recording: unknown }).recording).toBe(
-        null,
-      );
+      expect(
+        (beforeResponse.body as { recordings: unknown[] }).recordings,
+      ).toEqual([]);
 
-      const uploadResponse = await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
-      const uploaded = uploadResponse.body as RecordingResponseBody;
+      const first = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'first.mp4',
+        'first data',
+      );
+      const second = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'second.mp4',
+        'second data, longer',
+      );
 
       const afterResponse = await request(app.getHttpServer())
         .get(`/meetings/${meetingId}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      const recording = (
-        afterResponse.body as { recording: RecordingResponseBody }
-      ).recording;
-      expect(recording.id).toBe(uploaded.id);
-      expect(recording.originalFilename).toBe('clip.mp4');
-      expect(recording.sizeBytes).toBe('4');
+      const recordings = (
+        afterResponse.body as { recordings: RecordingResponseBody[] }
+      ).recordings;
+      expect(recordings).toHaveLength(2);
+      expect(recordings.map((r) => r.id).sort()).toEqual(
+        [first.id, second.id].sort(),
+      );
+      const firstFromResponse = recordings.find((r) => r.id === first.id);
+      expect(firstFromResponse?.originalFilename).toBe('first.mp4');
+      expect(firstFromResponse?.sizeBytes).toBe('10');
     });
 
-    it('exposes status and transcriptText on the recording, transcriptText null right after upload', async () => {
-      // There is no separate GET .../recording metadata route — a recording's status and
-      // transcriptText are only exposed via POST .../recording's own response and via the
-      // `recording` field nested in GET /meetings/:id, both asserted here.
+    it('exposes status and transcriptText on each recording, transcriptText null right after upload', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      const uploadResponse = await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
-      const uploaded = uploadResponse.body as RecordingResponseBody;
+      const uploaded = await uploadRecording(
+        app,
+        token,
+        meetingId,
+        'clip.mp4',
+        'data',
+      );
       expect(uploaded.status).toBe('UPLOADED');
       expect(uploaded.transcriptText).toBeNull();
 
@@ -743,26 +851,23 @@ describe('Meetings Recording (e2e)', () => {
         .get(`/meetings/${meetingId}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      const recording = (
-        detailResponse.body as { recording: RecordingResponseBody }
-      ).recording;
-      expect(['UPLOADED', 'PROCESSING']).toContain(recording.status);
-      expect(recording.transcriptText).toBeNull();
+      const recordings = (
+        detailResponse.body as { recordings: RecordingResponseBody[] }
+      ).recordings;
+      expect(recordings).toHaveLength(1);
+      expect(['UPLOADED', 'PROCESSING']).toContain(recordings[0].status);
+      expect(recordings[0].transcriptText).toBeNull();
     });
 
-    it('GET /meetings returns hasRecording: true only for meetings with a recording', async () => {
+    it('GET /meetings returns recordingCount matching the number of files uploaded to each meeting', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
-      const withRecordingId = await createMeeting(app, token);
-      const withoutRecordingId = await createMeeting(app, token);
+      const withTwoId = await createMeeting(app, token);
+      const withOneId = await createMeeting(app, token);
+      const withNoneId = await createMeeting(app, token);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${withRecordingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      await uploadRecording(app, token, withTwoId, 'a.mp4', 'a');
+      await uploadRecording(app, token, withTwoId, 'b.mp4', 'b');
+      await uploadRecording(app, token, withOneId, 'c.mp4', 'c');
 
       const response = await request(app.getHttpServer())
         .get('/meetings')
@@ -771,61 +876,45 @@ describe('Meetings Recording (e2e)', () => {
 
       const body = response.body as Array<{
         id: string;
-        hasRecording: boolean;
+        recordingCount: number;
       }>;
-      expect(body.find((m) => m.id === withRecordingId)?.hasRecording).toBe(
-        true,
-      );
-      expect(body.find((m) => m.id === withoutRecordingId)?.hasRecording).toBe(
-        false,
-      );
+      expect(body.find((m) => m.id === withTwoId)?.recordingCount).toBe(2);
+      expect(body.find((m) => m.id === withOneId)?.recordingCount).toBe(1);
+      expect(body.find((m) => m.id === withNoneId)?.recordingCount).toBe(0);
     });
   });
 
   describe('cascade delete', () => {
-    it('deletes the meeting_recordings row when the meeting is deleted', async () => {
+    it('deletes every meeting_recordings row when the meeting is deleted', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      await uploadRecording(app, token, meetingId, 'a.mp4', 'a');
+      await uploadRecording(app, token, meetingId, 'b.mp4', 'b');
 
       await prisma.meeting.delete({ where: { id: meetingId } });
 
-      const recording = await prisma.meetingRecording.findUnique({
+      const recordings = await prisma.meetingRecording.findMany({
         where: { meetingId },
       });
-      expect(recording).toBeNull();
+      expect(recordings).toHaveLength(0);
     });
 
     it('deletes the meeting_recordings row when the owning user is deleted', async () => {
       const token = await registerAndLogin(app, 'owner@example.com');
       const meetingId = await createMeeting(app, token);
 
-      await request(app.getHttpServer())
-        .post(`/meetings/${meetingId}/recording`)
-        .set('Authorization', `Bearer ${token}`)
-        .attach('file', Buffer.from('data'), {
-          filename: 'clip.mp4',
-          contentType: 'video/mp4',
-        })
-        .expect(201);
+      await uploadRecording(app, token, meetingId, 'clip.mp4', 'data');
 
       const meeting = await prisma.meeting.findUniqueOrThrow({
         where: { id: meetingId },
       });
       await prisma.user.delete({ where: { id: meeting.ownerId } });
 
-      const recording = await prisma.meetingRecording.findUnique({
+      const recordings = await prisma.meetingRecording.findMany({
         where: { meetingId },
       });
-      expect(recording).toBeNull();
+      expect(recordings).toHaveLength(0);
     });
   });
 });

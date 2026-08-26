@@ -22,12 +22,12 @@ The app is small enough to walk end to end. The flows below are the ones a UI ch
 break; which of them apply depends on what changed (see [architecture](../architecture/web.md)
 for what each page renders):
 
-| Route            | Flow                                                                       |
-| ---------------- | -------------------------------------------------------------------------- |
-| `/register`      | validation messages, password show/hide, duplicate email (409) inline error |
-| `/login`         | wrong credentials (401) inline error, redirect to `/` on success            |
-| `/`              | spinner until the auth check resolves, redirect to `/login` with no session, "Recent"/"All meetings" lists, upload from a row's modal |
-| `/meetings/{id}` | detail render, player vs uploader, the Replace flow, delete confirmation, 404 for an unknown or another user's meeting |
+| Route            | Flow                                                                                                                                                                                                                                                                                                                                           |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/register`      | validation messages, password show/hide, duplicate email (409) inline error                                                                                                                                                                                                                                                                    |
+| `/login`         | wrong credentials (401) inline error, redirect to `/` on success                                                                                                                                                                                                                                                                               |
+| `/`              | spinner until the auth check resolves, redirect to `/login` with no session, "Recent"/"All meetings" lists, upload from a row's modal, the "+ Create meeting" modal (validation, success prepending the new meeting to both lists, cancel/close without creating)                                                                              |
+| `/meetings/{id}` | detail render, the back button (`router.back()`, including a direct-URL visit with no prior history), the multi-file recordings list (each file's own player/status/transcript/delete, independent of its siblings) with an always-present uploader for adding another file, delete confirmation, 404 for an unknown or another user's meeting |
 
 Two things are easy to miss because they are not visible in a happy path: an upload's
 progress bar and its Cancel button (`AbortController`, rejecting with

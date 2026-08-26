@@ -60,10 +60,10 @@ remains. Every page is a client component and auth is client-side only.
 - **`formatDateTime()` in `src/lib/format.ts` is the only date formatter.**
 - **An unknown or another user's meeting is a 404 `ApiError` rendered inline**, never a blank page
   or a redirect.
-- **The meeting page polls while a recording's `status` is `UPLOADED` or `PROCESSING`**, refetching
-  until it settles to `READY` (transcript shown) or `FAILED` (failure notice, no transcript) —
-  transcription runs on the API in the background after upload, so the page must catch up to it
-  without a manual reload.
+- **The meeting page polls while any of the meeting's recordings has `status` `UPLOADED` or
+  `PROCESSING`**, refetching until each one settles to `READY` (transcript shown) or `FAILED`
+  (failure notice, no transcript) — transcription runs per-file on the API in the background after
+  upload, so the page must catch up to it without a manual reload.
 
 ## HeroUI v3
 

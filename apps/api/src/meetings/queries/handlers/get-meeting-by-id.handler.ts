@@ -15,10 +15,11 @@ export class GetMeetingByIdHandler implements IQueryHandler<
   constructor(private readonly meetingsRepository: MeetingsRepository) {}
 
   async execute(query: GetMeetingByIdQuery): Promise<MeetingDetailResponse> {
-    const meeting = await this.meetingsRepository.findByIdAndOwnerWithRecording(
-      query.id,
-      query.ownerId,
-    );
+    const meeting =
+      await this.meetingsRepository.findByIdAndOwnerWithRecordings(
+        query.id,
+        query.ownerId,
+      );
     if (!meeting) {
       throw new NotFoundException('Meeting not found');
     }

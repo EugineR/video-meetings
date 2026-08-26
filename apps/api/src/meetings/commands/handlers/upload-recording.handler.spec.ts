@@ -16,11 +16,13 @@ describe('UploadRecordingHandler', () => {
   const meetingId = 'meeting-1';
   const ownerId = 'owner-1';
   const storagePath = '/uploads/meeting-1/recording.mp4';
+  const recordingId = 'recording-1';
 
   let meeting: Meeting;
   let recording: MeetingRecording;
   let findByIdAndOwner: jest.Mock;
-  let createOrReplace: jest.Mock;
+  let create: jest.Mock;
+  let findByMeetingId: jest.Mock;
   let updateStatusIfCurrent: jest.Mock;
   let deleteFile: jest.Mock;
   let pruneMeetingDir: jest.Mock;
@@ -46,7 +48,7 @@ describe('UploadRecordingHandler', () => {
     };
 
     recording = {
-      id: 'recording-1',
+      id: recordingId,
       meetingId,
       originalFilename: 'recording.mp4',
       storagePath,
@@ -59,7 +61,8 @@ describe('UploadRecordingHandler', () => {
     };
 
     findByIdAndOwner = jest.fn().mockResolvedValue(meeting);
-    createOrReplace = jest.fn().mockResolvedValue(recording);
+    create = jest.fn().mockResolvedValue(recording);
+    findByMeetingId = jest.fn().mockResolvedValue([recording]);
     updateStatusIfCurrent = jest.fn().mockResolvedValue(true);
     deleteFile = jest.fn().mockResolvedValue(undefined);
     pruneMeetingDir = jest.fn().mockResolvedValue(undefined);
@@ -69,7 +72,8 @@ describe('UploadRecordingHandler', () => {
       findByIdAndOwner,
     } as unknown as MeetingsRepository;
     const recordingsRepository = {
-      createOrReplace,
+      create,
+      findByMeetingId,
       updateStatusIfCurrent,
     } as unknown as RecordingsRepository;
     const storageService = {
@@ -96,7 +100,7 @@ describe('UploadRecordingHandler', () => {
     ).rejects.toThrow(NotFoundException);
 
     expect(deleteFile).toHaveBeenCalledWith(storagePath);
-    expect(createOrReplace).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('persists the recording as UPLOADED and responds without waiting for transcription', async () => {
@@ -106,30 +110,42 @@ describe('UploadRecordingHandler', () => {
       new UploadRecordingCommand(meetingId, ownerId, file),
     );
 
-    expect(createOrReplace).toHaveBeenCalledWith(
+    expect(create).toHaveBeenCalledWith(
       expect.objectContaining({ status: RecordingStatus.UPLOADED }),
     );
     expect(result.status).toBe(RecordingStatus.UPLOADED);
-    expect(pruneMeetingDir).toHaveBeenCalledWith(meetingId, storagePath);
+    expect(pruneMeetingDir).toHaveBeenCalledWith(meetingId, [storagePath]);
+  });
+
+  it('prunes against the full current set of the meeting recordings, not just the one just uploaded', async () => {
+    const otherStoragePath = '/uploads/meeting-1/other-recording.mp3';
+    findByMeetingId.mockResolvedValue([
+      recording,
+      { ...recording, id: 'recording-2', storagePath: otherStoragePath },
+    ]);
+    transcribe.mockImplementation(() => new Promise(() => {}));
+
+    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
+
+    expect(findByMeetingId).toHaveBeenCalledWith(meetingId);
+    expect(pruneMeetingDir).toHaveBeenCalledWith(meetingId, [
+      storagePath,
+      otherStoragePath,
+    ]);
   });
 
   it('drives status UPLOADED -> PROCESSING -> READY with the transcript on success', async () => {
     await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
     await flushMicrotasks();
 
-    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
-      1,
-      meetingId,
-      storagePath,
-      { status: RecordingStatus.PROCESSING },
-    );
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(1, recordingId, {
+      status: RecordingStatus.PROCESSING,
+    });
     expect(transcribe).toHaveBeenCalledWith(storagePath);
-    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
-      2,
-      meetingId,
-      storagePath,
-      { status: RecordingStatus.READY, transcriptText: 'the transcript' },
-    );
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(2, recordingId, {
+      status: RecordingStatus.READY,
+      transcriptText: 'the transcript',
+    });
   });
 
   it('drives status UPLOADED -> PROCESSING -> FAILED when transcription throws', async () => {
@@ -138,18 +154,12 @@ describe('UploadRecordingHandler', () => {
     await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
     await flushMicrotasks();
 
-    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
-      1,
-      meetingId,
-      storagePath,
-      { status: RecordingStatus.PROCESSING },
-    );
-    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
-      2,
-      meetingId,
-      storagePath,
-      { status: RecordingStatus.FAILED },
-    );
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(1, recordingId, {
+      status: RecordingStatus.PROCESSING,
+    });
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(2, recordingId, {
+      status: RecordingStatus.FAILED,
+    });
   });
 
   it('never starts transcription once the recording has already moved on when PROCESSING would be persisted', async () => {
@@ -162,20 +172,18 @@ describe('UploadRecordingHandler', () => {
     expect(transcribe).not.toHaveBeenCalled();
   });
 
-  it('does not persist READY once the recording has since been replaced or deleted', async () => {
+  it('does not persist READY once the recording has since been deleted', async () => {
     updateStatusIfCurrent
       .mockResolvedValueOnce(true) // PROCESSING succeeds
-      .mockResolvedValueOnce(false); // READY write finds a newer/gone recording
+      .mockResolvedValueOnce(false); // READY write finds the recording already gone
 
     await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
     await flushMicrotasks();
 
     expect(updateStatusIfCurrent).toHaveBeenCalledTimes(2);
-    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(
-      2,
-      meetingId,
-      storagePath,
-      { status: RecordingStatus.READY, transcriptText: 'the transcript' },
-    );
+    expect(updateStatusIfCurrent).toHaveBeenNthCalledWith(2, recordingId, {
+      status: RecordingStatus.READY,
+      transcriptText: 'the transcript',
+    });
   });
 });
