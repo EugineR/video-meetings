@@ -6,7 +6,10 @@ import {
   toRecordingResponse,
 } from '../../interfaces/recording-response.interface';
 import { MeetingsRepository } from '../../meetings.repository';
-import { RecordingsRepository } from '../../recordings.repository';
+import {
+  RecordingsRepository,
+  UpdateRecordingStatusInput,
+} from '../../recordings.repository';
 import { StorageService } from '../../../storage/storage.service';
 import { TranscriptionService } from '../../../transcription/transcription.service';
 import { UploadRecordingCommand } from '../upload-recording.command';
@@ -81,12 +84,16 @@ export class UploadRecordingHandler implements ICommandHandler<
     meetingId: string,
     storagePath: string,
   ): Promise<void> {
-    const startedProcessing =
-      await this.recordingsRepository.updateStatusIfCurrent(
+    const persistIfCurrent = (data: UpdateRecordingStatusInput) =>
+      this.recordingsRepository.updateStatusIfCurrent(
         meetingId,
         storagePath,
-        { status: RecordingStatus.PROCESSING },
+        data,
       );
+
+    const startedProcessing = await persistIfCurrent({
+      status: RecordingStatus.PROCESSING,
+    });
     if (!startedProcessing) {
       return;
     }
@@ -94,21 +101,13 @@ export class UploadRecordingHandler implements ICommandHandler<
     try {
       const transcriptText =
         await this.transcriptionService.transcribe(storagePath);
-      await this.recordingsRepository.updateStatusIfCurrent(
-        meetingId,
-        storagePath,
-        { status: RecordingStatus.READY, transcriptText },
-      );
+      await persistIfCurrent({ status: RecordingStatus.READY, transcriptText });
     } catch (err) {
       this.logger.error(
         `Transcription failed for meeting ${meetingId}`,
         err instanceof Error ? err.stack : err,
       );
-      await this.recordingsRepository.updateStatusIfCurrent(
-        meetingId,
-        storagePath,
-        { status: RecordingStatus.FAILED },
-      );
+      await persistIfCurrent({ status: RecordingStatus.FAILED });
     }
   }
 }

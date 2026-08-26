@@ -77,3 +77,6 @@ apps/api/whisper-models/
 
 # Scratch diff dumps agents write while reviewing a phase
 *_diff_review.txt
+
+# Manual test fixtures + test-account credentials (never committed)
+.samples/

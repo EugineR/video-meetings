@@ -31,9 +31,17 @@ describe('extractTranscriptText', () => {
     expect(extractTranscriptText('\n\n   \n')).toBe('');
   });
 
-  it('leaves a line untouched when it has no timestamp prefix to strip', () => {
-    expect(extractTranscriptText('plain text, no brackets')).toBe(
-      'plain text, no brackets',
-    );
+  it('drops a line with no timestamp prefix instead of keeping it verbatim', () => {
+    expect(extractTranscriptText('plain text, no brackets')).toBe('');
+  });
+
+  it('drops non-segment lines interleaved with real segments', () => {
+    const raw = [
+      'whisper_model_load: loading model',
+      '[00:00:00.000 --> 00:00:01.000]   Hello there.',
+      'whisper_print_timings:     load time =   106.65 ms',
+    ].join('\n');
+
+    expect(extractTranscriptText(raw)).toBe('Hello there.');
   });
 });
