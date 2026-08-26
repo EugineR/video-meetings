@@ -1,0 +1,6 @@
+# Normalize line endings to LF for every text file, regardless of each
+# contributor's local core.autocrlf setting. Without this, tools that write
+# LF (e.g. Prettier's default endOfLine) diverge from files originally
+# committed with CRLF, and Git flags them as modified with no real content
+# change.
+* text=auto eol=lf
