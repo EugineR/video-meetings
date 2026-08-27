@@ -158,6 +158,18 @@ async function uploadRecording(
   return response.body as RecordingResponseBody;
 }
 
+async function deleteRecording(
+  app: INestApplication<App>,
+  token: string,
+  meetingId: string,
+  recordingId: string,
+): Promise<void> {
+  await request(app.getHttpServer())
+    .delete(`/meetings/${meetingId}/recordings/${recordingId}`)
+    .set('Authorization', `Bearer ${token}`)
+    .expect(204);
+}
+
 async function getMeetingDetail(
   app: INestApplication<App>,
   token: string,
@@ -412,6 +424,87 @@ describe('Meeting Summary (e2e)', () => {
       ],
       decisions: ['Ship the beta in September'],
     });
+  });
+
+  it('clears the summary once the recording it was generated from is deleted', async () => {
+    await initApp(resolvingWhisperRunner, resolvingClaudeAgentRunner);
+
+    const token = await registerAndLogin(app, 'owner@example.com');
+    const meetingId = await createMeeting(app, token);
+
+    const uploaded = await uploadRecording(app, token, meetingId);
+    const afterUpload = await pollMeetingDetail(
+      app,
+      token,
+      meetingId,
+      (d) => d.summary?.status === 'READY',
+    );
+    expect(afterUpload.summary).not.toBeNull();
+
+    await deleteRecording(app, token, meetingId, uploaded.id);
+
+    const afterDelete = await pollMeetingDetail(
+      app,
+      token,
+      meetingId,
+      (d) => d.summary === null,
+    );
+
+    expect(afterDelete.recordings).toHaveLength(0);
+    const summaryRow = await prisma.meetingSummary.findUnique({
+      where: { meetingId },
+    });
+    expect(summaryRow).toBeNull();
+  });
+
+  it('re-settles the summary to READY after deleting one of two recordings leaves only a READY one behind', async () => {
+    await initApp(resolvingWhisperRunner, foldAwareClaudeAgentRunner);
+
+    const token = await registerAndLogin(app, 'owner@example.com');
+    const meetingId = await createMeeting(app, token);
+
+    const first = await uploadRecording(
+      app,
+      token,
+      meetingId,
+      'first.mp4',
+      'first recording bytes',
+    );
+    await pollMeetingDetail(
+      app,
+      token,
+      meetingId,
+      (d) => d.summary?.status === 'READY',
+    );
+
+    await uploadRecording(
+      app,
+      token,
+      meetingId,
+      'second.mp4',
+      'second recording bytes',
+    );
+    await pollMeetingDetail(
+      app,
+      token,
+      meetingId,
+      (d) =>
+        d.recordings.length === 2 &&
+        d.recordings.every((r) => r.status === 'READY'),
+    );
+
+    await deleteRecording(app, token, meetingId, first.id);
+
+    const afterDelete = await pollMeetingDetail(
+      app,
+      token,
+      meetingId,
+      (d) => d.recordings.length === 1 && d.summary?.status === 'READY',
+    );
+
+    expect(afterDelete.summary?.summaryText).toBe(
+      'The team agreed on the Q3 roadmap.',
+    );
   });
 
   it('never generates a summary when every one of several recordings fails transcription', async () => {

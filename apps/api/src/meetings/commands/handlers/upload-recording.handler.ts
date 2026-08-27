@@ -10,7 +10,7 @@ import {
   RecordingsRepository,
   UpdateRecordingStatusInput,
 } from '../../recordings.repository';
-import { MeetingSummaryService } from '../../../meeting-summary/meeting-summary.service';
+import { SummaryReconciliationService } from '../../summary-reconciliation.service';
 import { StorageService } from '../../../storage/storage.service';
 import { TranscriptionService } from '../../../transcription/transcription.service';
 import { UploadRecordingCommand } from '../upload-recording.command';
@@ -27,7 +27,7 @@ export class UploadRecordingHandler implements ICommandHandler<
     private readonly recordingsRepository: RecordingsRepository,
     private readonly storageService: StorageService,
     private readonly transcriptionService: TranscriptionService,
-    private readonly meetingSummaryService: MeetingSummaryService,
+    private readonly summaryReconciliationService: SummaryReconciliationService,
   ) {}
 
   async execute(command: UploadRecordingCommand): Promise<RecordingResponse> {
@@ -114,51 +114,14 @@ export class UploadRecordingHandler implements ICommandHandler<
     }
 
     // Fire-and-forget, mirroring the outer call site: summary generation must not add LLM
-    // latency to this background transcription run either. Errors are handled inside
-    // reconcileSummary/generateForMeeting (persisted as a FAILED summary status); this .catch
-    // only guards against an unexpected throw escaping it and becoming an unhandled rejection.
+    // latency to this background transcription run either. `SummaryReconciliationService` handles
+    // its own error logging and per-meeting ordering.
     //
     // Triggered on both READY and FAILED — not just READY — because a meeting's summary can only
     // settle to its final status once every one of its recordings is terminal, and that terminal
     // recording is not always the one that succeeds: if it's this one and it FAILED, nothing else
     // will ever trigger the check that flips an existing, already-successful summary from PENDING
     // to READY.
-    this.reconcileSummary(meetingId).catch((err: unknown) => {
-      this.logger.error(
-        `Background summary reconciliation crashed for meeting ${meetingId}`,
-        err instanceof Error ? err.stack : err,
-      );
-    });
-  }
-
-  /**
-   * Re-derives the meeting's summarization inputs fresh from the database — rather than trusting
-   * whatever this specific recording's own transcription run just computed — and hands them to
-   * `MeetingSummaryService.generateForMeeting`: every `READY` recording's transcript, ordered by
-   * `MeetingRecording.createdAt` (the same ordering `RecordingsRepository.findByMeetingId` already
-   * uses), `FAILED` ones excluded, plus whether every recording of the meeting has now reached a
-   * terminal status. Re-deriving fresh also means a recording deleted in the meantime is simply
-   * absent from the list rather than needing special-casing here.
-   */
-  private async reconcileSummary(meetingId: string): Promise<void> {
-    const recordings =
-      await this.recordingsRepository.findByMeetingId(meetingId);
-
-    const readyTranscripts = recordings
-      .filter((r) => r.status === RecordingStatus.READY)
-      .map((r) => r.transcriptText)
-      .filter((text): text is string => text !== null);
-
-    const allRecordingsTerminal = recordings.every(
-      (r) =>
-        r.status === RecordingStatus.READY ||
-        r.status === RecordingStatus.FAILED,
-    );
-
-    await this.meetingSummaryService.generateForMeeting(
-      meetingId,
-      readyTranscripts,
-      allRecordingsTerminal,
-    );
+    this.summaryReconciliationService.reconcile(meetingId);
   }
 }

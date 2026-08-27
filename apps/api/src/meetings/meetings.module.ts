@@ -21,6 +21,7 @@ import {
   parseAllowedMimeTypes,
 } from './recording-file-filter';
 import { RecordingsRepository } from './recordings.repository';
+import { SummaryReconciliationService } from './summary-reconciliation.service';
 
 const CommandHandlers = [
   CreateMeetingHandler,
@@ -69,6 +70,7 @@ const QueryHandlers = [
   providers: [
     MeetingsRepository,
     RecordingsRepository,
+    SummaryReconciliationService,
     ...CommandHandlers,
     ...QueryHandlers,
   ],

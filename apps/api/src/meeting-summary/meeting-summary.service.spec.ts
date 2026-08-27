@@ -135,14 +135,17 @@ describe('MeetingSummaryService', () => {
     const meetingId = 'meeting-1';
     let startProcessing: jest.Mock;
     let updateStatusIfCurrent: jest.Mock;
+    let deleteIfExists: jest.Mock;
     let repository: MeetingSummaryRepository;
 
     beforeEach(() => {
       startProcessing = jest.fn().mockResolvedValue({ id: 'summary-1' });
       updateStatusIfCurrent = jest.fn().mockResolvedValue(true);
+      deleteIfExists = jest.fn().mockResolvedValue(undefined);
       repository = {
         startProcessing,
         updateStatusIfCurrent,
+        deleteIfExists,
       } as unknown as MeetingSummaryRepository;
     });
 
@@ -288,7 +291,7 @@ describe('MeetingSummaryService', () => {
       expect(updateStatusIfCurrent).not.toHaveBeenCalled();
     });
 
-    it('never starts processing (and never persists a summary) when there are no READY recordings yet', async () => {
+    it('never starts processing (and clears any existing row) when there are no READY recordings yet', async () => {
       const service = new MeetingSummaryService(claudeAgentService, repository);
 
       await service.generateForMeeting(meetingId, [], false);
@@ -296,6 +299,7 @@ describe('MeetingSummaryService', () => {
       expect(startProcessing).not.toHaveBeenCalled();
       expect(runClaudeAgent).not.toHaveBeenCalled();
       expect(updateStatusIfCurrent).not.toHaveBeenCalled();
+      expect(deleteIfExists).toHaveBeenCalledWith(meetingId);
     });
 
     it('never starts processing when every recording has failed transcription', async () => {
@@ -306,6 +310,7 @@ describe('MeetingSummaryService', () => {
       expect(startProcessing).not.toHaveBeenCalled();
       expect(runClaudeAgent).not.toHaveBeenCalled();
       expect(updateStatusIfCurrent).not.toHaveBeenCalled();
+      expect(deleteIfExists).toHaveBeenCalledWith(meetingId);
     });
 
     it('does not persist a result once the meeting is deleted mid-run, after Claude replies', async () => {

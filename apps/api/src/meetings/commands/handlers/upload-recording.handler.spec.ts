@@ -2,7 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Meeting, MeetingRecording, RecordingStatus } from '@prisma/client';
 import { MeetingsRepository } from '../../meetings.repository';
 import { RecordingsRepository } from '../../recordings.repository';
-import { MeetingSummaryService } from '../../../meeting-summary/meeting-summary.service';
+import { SummaryReconciliationService } from '../../summary-reconciliation.service';
 import { StorageService } from '../../../storage/storage.service';
 import { TranscriptionService } from '../../../transcription/transcription.service';
 import { UploadRecordingCommand } from '../upload-recording.command';
@@ -28,7 +28,7 @@ describe('UploadRecordingHandler', () => {
   let deleteFile: jest.Mock;
   let pruneMeetingDir: jest.Mock;
   let transcribe: jest.Mock;
-  let generateForMeeting: jest.Mock;
+  let reconcile: jest.Mock;
   let handler: UploadRecordingHandler;
 
   const file = {
@@ -69,7 +69,7 @@ describe('UploadRecordingHandler', () => {
     deleteFile = jest.fn().mockResolvedValue(undefined);
     pruneMeetingDir = jest.fn().mockResolvedValue(undefined);
     transcribe = jest.fn().mockResolvedValue('the transcript');
-    generateForMeeting = jest.fn().mockResolvedValue(undefined);
+    reconcile = jest.fn();
 
     const meetingsRepository = {
       findByIdAndOwner,
@@ -86,16 +86,16 @@ describe('UploadRecordingHandler', () => {
     const transcriptionService = {
       transcribe,
     } as unknown as TranscriptionService;
-    const meetingSummaryService = {
-      generateForMeeting,
-    } as unknown as MeetingSummaryService;
+    const summaryReconciliationService = {
+      reconcile,
+    } as unknown as SummaryReconciliationService;
 
     handler = new UploadRecordingHandler(
       meetingsRepository,
       recordingsRepository,
       storageService,
       transcriptionService,
-      meetingSummaryService,
+      summaryReconciliationService,
     );
   });
 
@@ -155,105 +155,29 @@ describe('UploadRecordingHandler', () => {
     });
   });
 
-  it('reconciles the summary over every READY recording once the transcript is READY', async () => {
-    findByMeetingId.mockImplementation(() =>
-      Promise.resolve([
-        {
-          ...recording,
-          status: RecordingStatus.READY,
-          transcriptText: 'the transcript',
-        },
-      ]),
-    );
-
+  it('triggers summary reconciliation for the meeting once transcription reaches READY', async () => {
     await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
     await flushMicrotasks();
 
-    expect(generateForMeeting).toHaveBeenCalledWith(
-      meetingId,
-      ['the transcript'],
-      true,
-    );
+    expect(reconcile).toHaveBeenCalledWith(meetingId);
   });
 
-  it('reconciles the summary (marking it not-yet-final) when another recording is still in progress', async () => {
-    findByMeetingId.mockImplementation(() =>
-      Promise.resolve([
-        {
-          ...recording,
-          status: RecordingStatus.READY,
-          transcriptText: 'the transcript',
-        },
-        { ...recording, id: 'recording-2', status: RecordingStatus.PROCESSING },
-      ]),
-    );
-
-    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
-    await flushMicrotasks();
-
-    expect(generateForMeeting).toHaveBeenCalledWith(
-      meetingId,
-      ['the transcript'],
-      false,
-    );
-  });
-
-  it('still reconciles the summary (with an empty transcript list) when transcription fails and nothing else is READY', async () => {
+  it('triggers summary reconciliation for the meeting when transcription fails too', async () => {
     transcribe.mockRejectedValue(new Error('whisper-cli crashed'));
-    findByMeetingId.mockImplementation(() =>
-      Promise.resolve([{ ...recording, status: RecordingStatus.FAILED }]),
-    );
 
     await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
     await flushMicrotasks();
 
-    expect(generateForMeeting).toHaveBeenCalledWith(meetingId, [], true);
+    expect(reconcile).toHaveBeenCalledWith(meetingId);
   });
 
-  it('reconciles the summary to finalize it when this recording fails but an earlier one already succeeded', async () => {
-    transcribe.mockRejectedValue(new Error('whisper-cli crashed'));
-    findByMeetingId.mockImplementation(() =>
-      Promise.resolve([
-        {
-          ...recording,
-          id: 'recording-2',
-          status: RecordingStatus.READY,
-          transcriptText: 'earlier transcript',
-        },
-        { ...recording, status: RecordingStatus.FAILED },
-      ]),
-    );
+  it('does not trigger summary reconciliation before transcription has settled', async () => {
+    transcribe.mockImplementation(() => new Promise(() => {}));
 
     await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
     await flushMicrotasks();
 
-    expect(generateForMeeting).toHaveBeenCalledWith(
-      meetingId,
-      ['earlier transcript'],
-      true,
-    );
-  });
-
-  it('does not let a summary-reconciliation rejection escape as an unhandled rejection', async () => {
-    findByMeetingId.mockImplementation(() =>
-      Promise.resolve([
-        {
-          ...recording,
-          status: RecordingStatus.READY,
-          transcriptText: 'the transcript',
-        },
-      ]),
-    );
-    generateForMeeting.mockRejectedValue(new Error('claude agent crashed'));
-
-    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
-    await flushMicrotasks();
-
-    expect(generateForMeeting).toHaveBeenCalledWith(
-      meetingId,
-      ['the transcript'],
-      true,
-    );
+    expect(reconcile).not.toHaveBeenCalled();
   });
 
   it('drives status UPLOADED -> PROCESSING -> FAILED when transcription throws', async () => {

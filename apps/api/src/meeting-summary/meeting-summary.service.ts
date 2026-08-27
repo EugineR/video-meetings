@@ -49,9 +49,9 @@ export class MeetingSummaryService {
    * earlier, successfully transcribed recordings already have a summary.
    *
    * When `readyTranscripts` is empty (no recording has reached `READY` yet, e.g. every recording so
-   * far has failed transcription), this is a no-op: there is nothing to summarize, so no
-   * `MeetingSummary` row is created and none is left in a processing state — the meeting simply has
-   * no summary.
+   * far has failed transcription, or the one recording that had reached `READY` was since deleted),
+   * there is nothing to summarize: any existing `MeetingSummary` row is removed — rather than left
+   * in place with stale content, or in a processing state — and none is (re)created.
    */
   async generateForMeeting(
     meetingId: string,
@@ -59,6 +59,7 @@ export class MeetingSummaryService {
     allRecordingsTerminal: boolean,
   ): Promise<void> {
     if (readyTranscripts.length === 0) {
+      await this.meetingSummaryRepository.deleteIfExists(meetingId);
       return;
     }
 

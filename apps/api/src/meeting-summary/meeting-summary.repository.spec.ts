@@ -32,15 +32,17 @@ describe('MeetingSummaryRepository', () => {
   let findUnique: jest.Mock;
   let upsert: jest.Mock;
   let updateMany: jest.Mock;
+  let deleteMany: jest.Mock;
   let repository: MeetingSummaryRepository;
 
   beforeEach(() => {
     findUnique = jest.fn();
     upsert = jest.fn();
     updateMany = jest.fn();
+    deleteMany = jest.fn().mockResolvedValue({ count: 1 });
 
     const prisma = {
-      meetingSummary: { findUnique, upsert, updateMany },
+      meetingSummary: { findUnique, upsert, updateMany, deleteMany },
     } as unknown as PrismaService;
 
     repository = new MeetingSummaryRepository(prisma);
@@ -136,6 +138,22 @@ describe('MeetingSummaryRepository', () => {
       });
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('deleteIfExists', () => {
+    it('deletes the row scoped by meetingId', async () => {
+      await repository.deleteIfExists(meetingId);
+
+      expect(deleteMany).toHaveBeenCalledWith({ where: { meetingId } });
+    });
+
+    it('does not throw when there is no row to delete', async () => {
+      deleteMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        repository.deleteIfExists(meetingId),
+      ).resolves.toBeUndefined();
     });
   });
 });

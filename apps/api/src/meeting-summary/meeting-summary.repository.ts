@@ -65,4 +65,14 @@ export class MeetingSummaryRepository {
     });
     return result.count > 0;
   }
+
+  /**
+   * Removes the meeting's summary row, if one exists — used when a reconciliation run finds
+   * nothing left to summarize (e.g. after the recording it was based on was deleted), so a stale
+   * summary never lingers for content that no longer backs it. A no-op, not a throw, when there's
+   * no row (nothing was ever generated) or the meeting itself is already gone.
+   */
+  async deleteIfExists(meetingId: string): Promise<void> {
+    await this.prisma.meetingSummary.deleteMany({ where: { meetingId } });
+  }
 }
