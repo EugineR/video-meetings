@@ -13,6 +13,7 @@ import {
 import { formatDateTime } from '@/lib/format';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { ArrowLeftIcon, CalendarIcon, UsersIcon } from '@/components/icons';
+import { MeetingSummarySection } from '@/components/meetings/MeetingSummarySection';
 import { RecordingCard } from '@/components/meetings/RecordingCard';
 import { RecordingUploader } from '@/components/meetings/RecordingUploader';
 
@@ -49,8 +50,20 @@ export default function MeetingDetailPage() {
       (r) => r.status === 'UPLOADED' || r.status === 'PROCESSING',
     ) ?? false;
 
+  const isSummaryPending =
+    meeting?.summary?.status === 'PENDING' ||
+    meeting?.summary?.status === 'PROCESSING';
+
+  // A summary section is worth showing once either a summary row exists (any status) or a
+  // recording is still on its way there (not yet `FAILED`) — otherwise there is nothing to show
+  // (no recordings yet, or every recording ended in `FAILED` transcription).
+  const showSummarySection =
+    meeting !== null &&
+    (meeting.summary !== null ||
+      meeting.recordings.some((r) => r.status !== 'FAILED'));
+
   useEffect(() => {
-    if (!user || !hasPendingRecording) {
+    if (!user || (!hasPendingRecording && !isSummaryPending)) {
       return;
     }
 
@@ -76,7 +89,7 @@ export default function MeetingDetailPage() {
     }, 4000);
 
     return () => clearInterval(intervalId);
-  }, [meetingId, user, hasPendingRecording]);
+  }, [meetingId, user, hasPendingRecording, isSummaryPending]);
 
   const handleUploaded = useCallback((recording: Recording) => {
     pollGenerationRef.current += 1;
@@ -177,6 +190,17 @@ export default function MeetingDetailPage() {
                   />
                 </Card.Content>
               </Card>
+
+              {showSummarySection ? (
+                <Card>
+                  <Card.Header>
+                    <Card.Title>Summary</Card.Title>
+                  </Card.Header>
+                  <Card.Content>
+                    <MeetingSummarySection summary={meeting.summary} />
+                  </Card.Content>
+                </Card>
+              ) : null}
             </>
           )}
         </div>
