@@ -75,4 +75,34 @@ export class MeetingSummaryRepository {
   async deleteIfExists(meetingId: string): Promise<void> {
     await this.prisma.meetingSummary.deleteMany({ where: { meetingId } });
   }
+
+  /**
+   * Writes `summaryText`/`decisions` directly and settles the row at `READY`, creating it if the
+   * meeting doesn't have one yet — unlike `updateStatusIfCurrent`, which only ever updates a row
+   * that already exists. Used by a write that isn't part of the transcript-driven
+   * `generateForMeeting` pipeline (e.g. an agent tool call), so it can't rely on `startProcessing`
+   * having run first. Mirrors `startProcessing`'s FK-violation/not-found swallowing: returns `null`
+   * instead of throwing if the meeting has been deleted since the caller decided to write this.
+   */
+  async upsertContent(
+    meetingId: string,
+    data: { summaryText: string; decisions: Prisma.InputJsonValue },
+  ): Promise<MeetingSummary | null> {
+    try {
+      return await this.prisma.meetingSummary.upsert({
+        where: { meetingId },
+        create: { meetingId, status: SummaryStatus.READY, ...data },
+        update: { status: SummaryStatus.READY, ...data },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        (err.code === PRISMA_FK_VIOLATION_CODE ||
+          err.code === PRISMA_NOT_FOUND_CODE)
+      ) {
+        return null;
+      }
+      throw err;
+    }
+  }
 }

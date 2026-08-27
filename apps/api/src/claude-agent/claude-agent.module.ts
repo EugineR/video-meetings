@@ -25,7 +25,10 @@ const runClaudeAgent: ClaudeAgentRunner = async (prompt, options) => {
       continue;
     }
     if (message.subtype === 'success') {
-      return message.result;
+      return {
+        text: message.result,
+        structuredOutput: message.structured_output,
+      };
     }
     throw new Error(`Claude agent query failed: ${message.subtype}`);
   }

@@ -32,9 +32,20 @@ Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "cas
   Whisper `base` model, run in the background after an upload (see Invariants)
 - `src/meeting-summary/` — `MeetingSummaryService`, generating a per-meeting summary/action
   items/decisions via `ClaudeAgentService` once a recording's transcription reaches `READY`,
-  run in the background the same way (see Invariants)
+  run in the background the same way (see Invariants). Its `summarize` call gives the agent the
+  `meeting` MCP tools (`../meeting-tools`) and only those (`tools: [], allowedTools:
+MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summary itself
+  as it works, on top of the JSON reply `updateStatusIfCurrent` still persists — see Invariants.
+- `src/tasks/` — `TaskService`, a standalone `Task` model tracking action items independently of
+  `MeetingSummary.actionItems`'s JSON blob; `search`/`upsert` de-duplicate by title similarity
+  (Postgres `pg_trgm`). Reached from `summarize`'s agent run via the `meeting` MCP tools.
 - `src/claude-agent/` — `ClaudeAgentService`, a thin wrapper around the Claude Agent SDK for a
-  single-turn prompt/response call
+  single-turn prompt/response call; `ask` resolves a `ClaudeAgentReply` (`text` plus, when the
+  caller set `options.outputFormat`, the schema-validated `structuredOutput`)
+- `src/meeting-tools.ts` — `createMeetingToolsServer`, wrapping `TaskService`/`MeetingSummaryService`
+  (via structural interfaces, not the concrete classes, to avoid a circular import with
+  `meeting-summary/`) as a `meeting` SDK MCP server (`find_tasks`/`upsert_task`/`update_meeting`).
+  Wired into `MeetingSummaryService.summarize`'s `options.mcpServers`.
 
 ## CQRS pattern
 
@@ -103,6 +114,40 @@ The reasoning behind them is in `docs/architecture/api.md`.
   language is fixed to English (`transcription.module.ts`'s `WHISPER_LANGUAGE`) rather than left on
   auto-detection, which the `base` model gets wrong often enough on accented/noisy audio to
   mis-transcribe English speech as a different language entirely.
+- **`@anthropic-ai/claude-agent-sdk` is ESM-only** — every dynamic `import()` of it (in
+  `claude-agent.module.ts` and `meeting-tools.ts`) needs `node --experimental-vm-modules` under
+  Jest's CommonJS test VM, on **every** script that can reach that code path, not just the unit
+  `test` script — `test:e2e` runs it too (`MeetingSummaryService.summarize`, exercised by any e2e
+  spec that uploads a recording), so it carries the same flag.
+- **`update_meeting` (a `meeting-tools.ts` tool) always settles `MeetingSummary.status` to `READY`**
+  — when the agent calls it mid-fold, on a meeting with more than one recording still
+  transcribing, the row is briefly `READY` until `MeetingSummaryService.generateForMeeting`'s own
+  trailing `updateStatusIfCurrent` call corrects it back to `PENDING` moments later. That write is
+  still the authority on final status/content; `update_meeting`'s write is not required for
+  correctness, only for letting the agent record what it found as it works.
+- **`meeting-tools.ts`'s `upsert_task`/`update_meeting` take no meeting id in their input schema**
+  — `createMeetingTools`/`createMeetingToolsServer` are given the target `meetingId` by
+  `MeetingSummaryService.summarize` (its own trusted parameter) and close over it; the model never
+  supplies it. This is deliberate, not an oversight: a tool argument the model fills in from the
+  transcript is something a transcript can try to control, so a meeting id read that way could let
+  a hostile transcript (prompt injection) redirect a write to a different meeting. Keep new tools
+  in this file that write scoped-to-a-meeting data bound the same way — never add a meeting/task
+  id back to `upsert_task`'s or `update_meeting`'s schema, even to make testing more convenient.
+- **`TaskService.upsert`'s dedup lookup is scoped to `sourceMeetingId`, not just `upsert_task`'s
+  schema** — closing over `meetingId` at the tool layer isn't enough by itself: without this,
+  `upsert_task`'s title-similarity match could still find and _update_ a task belonging to a
+  completely different meeting, purely from a title that happens to match — no meeting id involved
+  at all, so binding one at the tool layer wouldn't have stopped it. `TaskRepository.search`'s
+  optional `sourceMeetingId` param is what enforces this at the query level; `TaskService.search`
+  (and `find_tasks`, which calls it) stays meeting-agnostic on purpose — it's read-only, so it can
+  safely surface a similar task from elsewhere for awareness without any risk of mutating it. Never
+  make `upsert`'s dedup search meeting-agnostic again, even to "let a recurring action item collapse
+  across meetings" — that reintroduces the same cross-meeting write this bullet exists to prevent.
+- **`MeetingSummaryService.summarize` retries on an invalid agent reply** — up to
+  `MAX_SUMMARY_ATTEMPTS` (3) re-asks with the same prompt/options when `parseSummaryReply` rejects
+  the reply, before letting the error propagate to `generateForMeeting`'s `FAILED`-marking catch.
+  Safe to repeat: a retried attempt re-running `upsert_task`/`update_meeting` just re-applies the
+  same meeting-scoped dedup/overwrite, not a duplicate write.
 
 ## Testing
 

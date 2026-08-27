@@ -11,14 +11,14 @@ describe('ClaudeAgentService', () => {
   it('delegates to the injected ClaudeAgentRunner', async () => {
     const runClaudeAgent = jest
       .fn<ReturnType<ClaudeAgentRunner>, [string, Options]>()
-      .mockResolvedValue('pong');
+      .mockResolvedValue({ text: 'pong', structuredOutput: undefined });
     const service = new ClaudeAgentService(runClaudeAgent);
     const options: Options = { model: HAIKU_MODEL, tools: [] };
 
     const result = await service.ask('ping', options);
 
     expect(runClaudeAgent).toHaveBeenCalledWith('ping', options);
-    expect(result).toBe('pong');
+    expect(result).toEqual({ text: 'pong', structuredOutput: undefined });
   });
 
   it('propagates a rejection from the injected ClaudeAgentRunner', async () => {
@@ -51,6 +51,6 @@ describeIfOAuthToken('ClaudeAgentModule (real Claude Agent SDK call)', () => {
       tools: [],
     });
 
-    expect(result.toLowerCase()).toContain('pong');
+    expect(result.text.toLowerCase()).toContain('pong');
   }, 60000);
 });

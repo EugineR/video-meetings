@@ -30,6 +30,7 @@ model Meeting {
   updatedAt    DateTime           @updatedAt
   recordings   MeetingRecording[]
   summary      MeetingSummary?
+  tasks        Task[]
 
   @@map("meetings")
 }
@@ -82,6 +83,30 @@ model MeetingSummary {
   updatedAt   DateTime      @updatedAt
 
   @@map("meeting_summaries")
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+}
+
+/**
+ * A standalone action item, tracked independently of the `MeetingSummary` run that first surfaced
+ * it. `TaskService.upsert` is the only writer: it de-duplicates by title similarity (Postgres
+ * `pg_trgm`, see the `add_task` migration) instead of always inserting, so the same recurring
+ * action item doesn't pile up as separate rows across meetings.
+ */
+model Task {
+  id              String     @id @default(uuid())
+  title           String
+  sourceMeetingId String
+  sourceMeeting   Meeting    @relation(fields: [sourceMeetingId], references: [id], onDelete: Cascade)
+  status          TaskStatus @default(OPEN)
+  createdAt       DateTime   @default(now())
+
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "tasks_title_trgm_idx")
+  @@map("tasks")
 }
 
 model UserAvatar {

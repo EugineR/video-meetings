@@ -48,6 +48,43 @@ describe('MeetingSummaryRepository', () => {
     repository = new MeetingSummaryRepository(prisma);
   });
 
+  describe('upsertContent', () => {
+    const content = {
+      summaryText: 'The team agreed on the roadmap.',
+      decisions: ['Ship in September'],
+    };
+
+    it('upserts summaryText/decisions and settles the row at READY', async () => {
+      upsert.mockResolvedValue({ ...summary, ...content, status: 'READY' });
+
+      const result = await repository.upsertContent(meetingId, content);
+
+      expect(upsert).toHaveBeenCalledWith({
+        where: { meetingId },
+        create: { meetingId, status: 'READY', ...content },
+        update: { status: 'READY', ...content },
+      });
+      expect(result).toEqual({ ...summary, ...content, status: 'READY' });
+    });
+
+    it('returns null instead of throwing when the meeting has been deleted (FK violation)', async () => {
+      upsert.mockRejectedValue(fkViolation());
+
+      const result = await repository.upsertContent(meetingId, content);
+
+      expect(result).toBeNull();
+    });
+
+    it('rethrows an unrelated error', async () => {
+      const err = new Error('connection reset');
+      upsert.mockRejectedValue(err);
+
+      await expect(
+        repository.upsertContent(meetingId, content),
+      ).rejects.toThrow('connection reset');
+    });
+  });
+
   describe('findByMeetingId', () => {
     it('looks up the row by meetingId', async () => {
       findUnique.mockResolvedValue(summary);

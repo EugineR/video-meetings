@@ -3,7 +3,11 @@ import { SummaryGenerationResult } from './summary-response-parser';
 /**
  * Builds the single-turn prompt sent to Claude for meeting summarization. Asks for a defined JSON
  * shape only (no prose, no markdown fences) so `parseSummaryReply` can deserialize it
- * deterministically instead of scraping free-form text.
+ * deterministically instead of scraping free-form text. Deliberately does not mention which
+ * meeting this is — the `meeting` MCP tools (`upsert_task`/`update_meeting`) take no meeting id
+ * as input; `createMeetingToolsServer` binds the actual meeting id itself (see
+ * `MeetingSummaryService.summarize`), so the model has no way to redirect a tool call to a
+ * different meeting even if the transcript tries to instruct it to.
  *
  * When `previous` is given (a meeting with more than one recording, folding in a later one), the
  * prompt includes the summary/action items/decisions already generated from earlier recordings of

@@ -1,7 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { CLAUDE_AGENT_RUNNER } from './claude-agent-runner';
-import type { ClaudeAgentRunner } from './claude-agent-runner';
+import type {
+  ClaudeAgentReply,
+  ClaudeAgentRunner,
+} from './claude-agent-runner';
 
 /**
  * Thin wrapper around the Claude Agent SDK. The actual `query()` invocation lives behind the
@@ -21,7 +24,7 @@ export class ClaudeAgentService {
     private readonly runClaudeAgent: ClaudeAgentRunner,
   ) {}
 
-  ask(prompt: string, options: Options): Promise<string> {
+  ask(prompt: string, options: Options): Promise<ClaudeAgentReply> {
     return this.runClaudeAgent(prompt, options);
   }
 }
