@@ -43,6 +43,10 @@ Uploaded meeting recordings are stored on `apps/api`'s local filesystem under `U
 
 Right after a recording upload succeeds, `apps/api` transcribes that file in the background using a local Whisper `base` model (no external transcription API), moving its status through `UPLOADED` → `PROCESSING` → `READY` (with transcript text) or `FAILED`, independently of any other recording on the same meeting. `apps/web`'s meeting page polls while any of a meeting's recordings has status `UPLOADED`/`PROCESSING` and shows each one's transcript once it's `READY`. Configure `WHISPER_MODEL_DIR` in `apps/api/.env` — where the local Whisper `base` model is downloaded to/read from; leave it unset to use the library's own default location.
 
+### Meeting summaries
+
+Once a recording's transcript is `READY`, `apps/api` generates a per-meeting summary, action items and decisions in the background via the Claude Agent SDK, re-running as further recordings finish so a multi-recording meeting converges on one result. This requires `CLAUDE_CODE_OAUTH_TOKEN` to be set in `apps/api/.env` (see `apps/api/.env.example`) — the SDK subprocess reads it directly from the process environment.
+
 ### Avatar storage
 
 Uploaded user avatars are stored the same way, under `{UPLOADS_DIR}/avatars/{userId}/`. Configure `MAX_AVATAR_SIZE_BYTES` and `ALLOWED_AVATAR_MIME_TYPES` in `apps/api/.env` (see `apps/api/.env.example`).

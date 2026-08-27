@@ -31,8 +31,24 @@ export interface Recording {
   updatedAt: string;
 }
 
+export type SummaryStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED';
+
+export interface ActionItem {
+  description: string;
+  assignee?: string;
+}
+
+export interface MeetingSummary {
+  status: SummaryStatus;
+  summaryText: string | null;
+  actionItems: ActionItem[];
+  decisions: string[];
+}
+
 export interface MeetingDetail extends Meeting {
   recordings: Recording[];
+  /** `null` when the meeting has no summary yet (e.g. no recording has reached `READY` transcription). */
+  summary: MeetingSummary | null;
 }
 
 export interface MeetingListItem extends Meeting {

@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Meeting, MeetingRecording, RecordingStatus } from '@prisma/client';
 import { MeetingsRepository } from '../../meetings.repository';
 import { RecordingsRepository } from '../../recordings.repository';
+import { SummaryReconciliationService } from '../../summary-reconciliation.service';
 import { StorageService } from '../../../storage/storage.service';
 import { TranscriptionService } from '../../../transcription/transcription.service';
 import { UploadRecordingCommand } from '../upload-recording.command';
@@ -27,6 +28,7 @@ describe('UploadRecordingHandler', () => {
   let deleteFile: jest.Mock;
   let pruneMeetingDir: jest.Mock;
   let transcribe: jest.Mock;
+  let reconcile: jest.Mock;
   let handler: UploadRecordingHandler;
 
   const file = {
@@ -67,6 +69,7 @@ describe('UploadRecordingHandler', () => {
     deleteFile = jest.fn().mockResolvedValue(undefined);
     pruneMeetingDir = jest.fn().mockResolvedValue(undefined);
     transcribe = jest.fn().mockResolvedValue('the transcript');
+    reconcile = jest.fn();
 
     const meetingsRepository = {
       findByIdAndOwner,
@@ -83,12 +86,16 @@ describe('UploadRecordingHandler', () => {
     const transcriptionService = {
       transcribe,
     } as unknown as TranscriptionService;
+    const summaryReconciliationService = {
+      reconcile,
+    } as unknown as SummaryReconciliationService;
 
     handler = new UploadRecordingHandler(
       meetingsRepository,
       recordingsRepository,
       storageService,
       transcriptionService,
+      summaryReconciliationService,
     );
   });
 
@@ -146,6 +153,31 @@ describe('UploadRecordingHandler', () => {
       status: RecordingStatus.READY,
       transcriptText: 'the transcript',
     });
+  });
+
+  it('triggers summary reconciliation for the meeting once transcription reaches READY', async () => {
+    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
+    await flushMicrotasks();
+
+    expect(reconcile).toHaveBeenCalledWith(meetingId);
+  });
+
+  it('triggers summary reconciliation for the meeting when transcription fails too', async () => {
+    transcribe.mockRejectedValue(new Error('whisper-cli crashed'));
+
+    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
+    await flushMicrotasks();
+
+    expect(reconcile).toHaveBeenCalledWith(meetingId);
+  });
+
+  it('does not trigger summary reconciliation before transcription has settled', async () => {
+    transcribe.mockImplementation(() => new Promise(() => {}));
+
+    await handler.execute(new UploadRecordingCommand(meetingId, ownerId, file));
+    await flushMicrotasks();
+
+    expect(reconcile).not.toHaveBeenCalled();
   });
 
   it('drives status UPLOADED -> PROCESSING -> FAILED when transcription throws', async () => {

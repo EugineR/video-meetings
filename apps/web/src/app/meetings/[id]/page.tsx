@@ -13,6 +13,7 @@ import {
 import { formatDateTime } from '@/lib/format';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { ArrowLeftIcon, CalendarIcon, UsersIcon } from '@/components/icons';
+import { MeetingSummarySection } from '@/components/meetings/MeetingSummarySection';
 import { RecordingCard } from '@/components/meetings/RecordingCard';
 import { RecordingUploader } from '@/components/meetings/RecordingUploader';
 
@@ -49,8 +50,52 @@ export default function MeetingDetailPage() {
       (r) => r.status === 'UPLOADED' || r.status === 'PROCESSING',
     ) ?? false;
 
+  // A summary section is worth showing once either a summary row exists (any status) or a
+  // recording is still on its way there (not yet `FAILED`) — otherwise there is nothing to show
+  // (no recordings yet, or every recording ended in `FAILED` transcription).
+  const showSummarySection =
+    meeting !== null &&
+    (meeting.summary !== null ||
+      meeting.recordings.some((r) => r.status !== 'FAILED'));
+
+  // The fingerprint (id + status) of the set of recordings the summary last caught up with.
+  // Updated conditionally during render — React's documented pattern for deriving state from a
+  // changed prop/state without the extra render+commit round-trip a `useEffect` would add (see
+  // "Adjusting state when a prop changes" in the React docs) — rather than in an effect.
+  const [reconciledRecordingsSignature, setReconciledRecordingsSignature] =
+    useState<string | null>(null);
+  const recordingsSignature = meeting
+    ? meeting.recordings
+        .map((r) => `${r.id}:${r.status}`)
+        .sort()
+        .join(',')
+    : null;
+  if (meeting && recordingsSignature !== reconciledRecordingsSignature) {
+    const everyRecordingTerminal = meeting.recordings.every(
+      (r) => r.status === 'READY' || r.status === 'FAILED',
+    );
+    // The summary has caught up with the *current* set of recordings once it's reached a
+    // terminal state itself — `READY`/`FAILED`, or absent because none of them ever succeeded —
+    // while every recording is also terminal. Recording the fingerprint at that point (rather
+    // than trusting `summary.status` alone) is what lets a *later* recording transition (e.g. a
+    // second recording finishing after the first already produced a `READY` summary) be detected
+    // as "pending again", even though `summary.status` would still read as a final value from the
+    // earlier, now-outdated run.
+    const summaryCaughtUp =
+      meeting.summary?.status === 'READY' ||
+      meeting.summary?.status === 'FAILED' ||
+      (meeting.summary === null &&
+        meeting.recordings.every((r) => r.status !== 'READY'));
+    if (everyRecordingTerminal && summaryCaughtUp) {
+      setReconciledRecordingsSignature(recordingsSignature);
+    }
+  }
+
+  const isSummaryPending =
+    meeting !== null && recordingsSignature !== reconciledRecordingsSignature;
+
   useEffect(() => {
-    if (!user || !hasPendingRecording) {
+    if (!user || (!hasPendingRecording && !isSummaryPending)) {
       return;
     }
 
@@ -76,7 +121,7 @@ export default function MeetingDetailPage() {
     }, 4000);
 
     return () => clearInterval(intervalId);
-  }, [meetingId, user, hasPendingRecording]);
+  }, [meetingId, user, hasPendingRecording, isSummaryPending]);
 
   const handleUploaded = useCallback((recording: Recording) => {
     pollGenerationRef.current += 1;
@@ -89,6 +134,15 @@ export default function MeetingDetailPage() {
 
   const handleDeleted = useCallback((recordingId: string) => {
     pollGenerationRef.current += 1;
+    // A deleted recording can leave the meeting's (still-locally-cached) summary stale relative
+    // to the new recording set — e.g. it was READY based partly on the recording just removed —
+    // without that necessarily being visible from the leftover recordings' own statuses alone
+    // (deleting the meeting's only recording leaves an empty, vacuously "all terminal" list).
+    // Clearing the fingerprint here, rather than leaving whatever it last matched, forces
+    // `isSummaryPending` true until a poll response confirms the summary has actually caught up
+    // with the post-deletion recordings, instead of the page trusting a summary it can no longer
+    // vouch for.
+    setReconciledRecordingsSignature(null);
     setMeeting((current) =>
       current
         ? {
@@ -177,6 +231,17 @@ export default function MeetingDetailPage() {
                   />
                 </Card.Content>
               </Card>
+
+              {showSummarySection ? (
+                <Card>
+                  <Card.Header>
+                    <Card.Title>Summary</Card.Title>
+                  </Card.Header>
+                  <Card.Content>
+                    <MeetingSummarySection summary={meeting.summary} />
+                  </Card.Content>
+                </Card>
+              ) : null}
             </>
           )}
         </div>

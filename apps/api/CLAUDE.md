@@ -30,6 +30,11 @@ Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "cas
 - `src/meetings/` — meetings and their recordings, many per meeting (upload, stream, delete)
 - `src/transcription/` — `TranscriptionService`, transcribing a recording file via a local
   Whisper `base` model, run in the background after an upload (see Invariants)
+- `src/meeting-summary/` — `MeetingSummaryService`, generating a per-meeting summary/action
+  items/decisions via `ClaudeAgentService` once a recording's transcription reaches `READY`,
+  run in the background the same way (see Invariants)
+- `src/claude-agent/` — `ClaudeAgentService`, a thin wrapper around the Claude Agent SDK for a
+  single-turn prompt/response call
 
 ## CQRS pattern
 
@@ -128,9 +133,11 @@ Env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (must match the r
 `docker-compose.yml` credentials), `JWT_SECRET`, `PORT` (default `3001` — **must differ from
 `apps/web`'s 3000**, both run under `pnpm dev`), `WEB_URL` (default `http://localhost:3000`, the
 CORS origin — **must match where `apps/web` is served**), `UPLOADS_DIR` (default `uploads`, relative
-to `apps/api/`, gitignored, created on demand), plus the four upload-limit vars above and
+to `apps/api/`, gitignored, created on demand), plus the four upload-limit vars above,
 `WHISPER_MODEL_DIR` (where the local Whisper `base` model is downloaded to/read from; unset lets
-`nodejs-whisper` fall back to its own default location).
+`nodejs-whisper` fall back to its own default location), and `CLAUDE_CODE_OAUTH_TOKEN` (required —
+authenticates every `ClaudeAgentService` call; the SDK subprocess reads it straight from
+`process.env`, see `claude-agent.module.ts`).
 
 ## Reference
 

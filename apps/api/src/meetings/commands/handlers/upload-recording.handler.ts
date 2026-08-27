@@ -10,6 +10,7 @@ import {
   RecordingsRepository,
   UpdateRecordingStatusInput,
 } from '../../recordings.repository';
+import { SummaryReconciliationService } from '../../summary-reconciliation.service';
 import { StorageService } from '../../../storage/storage.service';
 import { TranscriptionService } from '../../../transcription/transcription.service';
 import { UploadRecordingCommand } from '../upload-recording.command';
@@ -26,6 +27,7 @@ export class UploadRecordingHandler implements ICommandHandler<
     private readonly recordingsRepository: RecordingsRepository,
     private readonly storageService: StorageService,
     private readonly transcriptionService: TranscriptionService,
+    private readonly summaryReconciliationService: SummaryReconciliationService,
   ) {}
 
   async execute(command: UploadRecordingCommand): Promise<RecordingResponse> {
@@ -65,14 +67,16 @@ export class UploadRecordingHandler implements ICommandHandler<
     // this HTTP response. Errors are handled inside transcribeInBackground
     // (persisted as a FAILED status); this .catch only guards against an
     // unexpected throw escaping that method and becoming an unhandled rejection.
-    this.transcribeInBackground(recording.id, recording.storagePath).catch(
-      (err: unknown) => {
-        this.logger.error(
-          `Background transcription crashed for recording ${recording.id}`,
-          err instanceof Error ? err.stack : err,
-        );
-      },
-    );
+    this.transcribeInBackground(
+      recording.id,
+      recording.meetingId,
+      recording.storagePath,
+    ).catch((err: unknown) => {
+      this.logger.error(
+        `Background transcription crashed for recording ${recording.id}`,
+        err instanceof Error ? err.stack : err,
+      );
+    });
 
     return toRecordingResponse(recording);
   }
@@ -84,6 +88,7 @@ export class UploadRecordingHandler implements ICommandHandler<
    */
   private async transcribeInBackground(
     recordingId: string,
+    meetingId: string,
     storagePath: string,
   ): Promise<void> {
     const persistIfCurrent = (data: UpdateRecordingStatusInput) =>
@@ -107,5 +112,16 @@ export class UploadRecordingHandler implements ICommandHandler<
       );
       await persistIfCurrent({ status: RecordingStatus.FAILED });
     }
+
+    // Fire-and-forget, mirroring the outer call site: summary generation must not add LLM
+    // latency to this background transcription run either. `SummaryReconciliationService` handles
+    // its own error logging and per-meeting ordering.
+    //
+    // Triggered on both READY and FAILED — not just READY — because a meeting's summary can only
+    // settle to its final status once every one of its recordings is terminal, and that terminal
+    // recording is not always the one that succeeds: if it's this one and it FAILED, nothing else
+    // will ever trigger the check that flips an existing, already-successful summary from PENDING
+    // to READY.
+    this.summaryReconciliationService.reconcile(meetingId);
   }
 }
