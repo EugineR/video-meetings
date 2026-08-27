@@ -30,6 +30,11 @@ Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "cas
 - `src/meetings/` — meetings and their recordings, many per meeting (upload, stream, delete)
 - `src/transcription/` — `TranscriptionService`, transcribing a recording file via a local
   Whisper `base` model, run in the background after an upload (see Invariants)
+- `src/meeting-summary/` — `MeetingSummaryService`, generating a per-meeting summary/action
+  items/decisions via `ClaudeAgentService` once a recording's transcription reaches `READY`,
+  run in the background the same way (see Invariants)
+- `src/claude-agent/` — `ClaudeAgentService`, a thin wrapper around the Claude Agent SDK for a
+  single-turn prompt/response call
 
 ## CQRS pattern
 

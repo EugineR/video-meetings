@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { CqrsModule } from '@nestjs/cqrs';
 import { MulterModule } from '@nestjs/platform-express';
 import { AuthModule } from '../auth/auth.module';
+import { MeetingSummaryModule } from '../meeting-summary/meeting-summary.module';
 import { StorageService } from '../storage/storage.service';
 import { createUploadMulterOptions } from '../storage/upload-multer-options.factory';
 import { TranscriptionModule } from '../transcription/transcription.module';
@@ -37,6 +38,7 @@ const QueryHandlers = [
     CqrsModule,
     AuthModule,
     TranscriptionModule,
+    MeetingSummaryModule,
     MulterModule.registerAsync({
       inject: [ConfigService, StorageService],
       useFactory: (config: ConfigService, storage: StorageService) => {
