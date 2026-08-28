@@ -30,6 +30,7 @@ model Meeting {
   updatedAt    DateTime           @updatedAt
   recordings   MeetingRecording[]
   summary      MeetingSummary?
+  tasks        Task[]
 
   @@map("meetings")
 }
@@ -71,17 +72,46 @@ enum SummaryStatus {
  * them, always produced by `MeetingSummaryService` itself, never from untrusted input.
  */
 model MeetingSummary {
-  id          String        @id @default(uuid())
-  meetingId   String        @unique
-  meeting     Meeting       @relation(fields: [meetingId], references: [id], onDelete: Cascade)
-  status      SummaryStatus @default(PENDING)
-  summaryText String?
-  actionItems Json          @default("[]")
-  decisions   Json          @default("[]")
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id                 String        @id @default(uuid())
+  meetingId          String        @unique
+  meeting            Meeting       @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  status             SummaryStatus @default(PENDING)
+  summaryText        String?
+  actionItems        Json          @default("[]")
+  decisions          Json          @default("[]")
+  /// Ids of the `MeetingRecording`s (in `createdAt` order) already folded into `summaryText`/
+  /// `actionItems`/`decisions` — lets `MeetingSummaryService.generateForMeeting` resume folding
+  /// from the first recording not yet reflected here instead of always refolding every ready
+  /// recording from scratch. See that method's doc comment for the full resume-vs-refold rule.
+  foldedRecordingIds String[]      @default([])
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   @@map("meeting_summaries")
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+}
+
+/**
+ * A standalone action item, tracked independently of the `MeetingSummary` run that first surfaced
+ * it. `TaskService.upsert` is the only writer: it de-duplicates by title similarity (Postgres
+ * `pg_trgm`, see the `add_task` migration) instead of always inserting, so the same recurring
+ * action item doesn't pile up as separate rows across meetings.
+ */
+model Task {
+  id              String     @id @default(uuid())
+  title           String
+  sourceMeetingId String
+  sourceMeeting   Meeting    @relation(fields: [sourceMeetingId], references: [id], onDelete: Cascade)
+  status          TaskStatus @default(OPEN)
+  createdAt       DateTime   @default(now())
+
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "tasks_title_trgm_idx")
+  @@map("tasks")
 }
 
 model UserAvatar {

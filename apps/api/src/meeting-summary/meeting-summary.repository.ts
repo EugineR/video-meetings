@@ -12,6 +12,7 @@ export interface UpdateSummaryStatusInput {
   summaryText?: string | null;
   actionItems?: Prisma.InputJsonValue;
   decisions?: Prisma.InputJsonValue;
+  foldedRecordingIds?: string[];
 }
 
 @Injectable()
@@ -23,20 +24,16 @@ export class MeetingSummaryRepository {
   }
 
   /**
-   * Creates the meeting's summary row with status `PROCESSING` if none exists yet (the first
-   * summarization run for this meeting), or moves an existing one back to `PROCESSING` for a
-   * re-run. Returns `null` instead of throwing if the meeting has been deleted since the caller
-   * decided to run this — the FK constraint on `meetingId` rejects the create — so a background
-   * run started for a since-deleted meeting becomes a no-op, mirroring
-   * `RecordingsRepository.updateStatusIfCurrent`'s no-op-on-deleted-row behavior.
+   * Runs `upsert` (a `meetingSummary.upsert` call, always keyed on `meetingId`) and swallows the
+   * FK-violation/not-found error it throws when the meeting has been deleted since the caller
+   * decided to write this, returning `null` instead — shared by `startProcessing`/`upsertContent`,
+   * the two writers of this shape, so the swallowed error-code list only has to be maintained once.
    */
-  async startProcessing(meetingId: string): Promise<MeetingSummary | null> {
+  private async upsertOrNullIfMeetingDeleted(
+    upsert: () => Promise<MeetingSummary>,
+  ): Promise<MeetingSummary | null> {
     try {
-      return await this.prisma.meetingSummary.upsert({
-        where: { meetingId },
-        create: { meetingId, status: SummaryStatus.PROCESSING },
-        update: { status: SummaryStatus.PROCESSING },
-      });
+      return await upsert();
     } catch (err) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -47,6 +44,24 @@ export class MeetingSummaryRepository {
       }
       throw err;
     }
+  }
+
+  /**
+   * Creates the meeting's summary row with status `PROCESSING` if none exists yet (the first
+   * summarization run for this meeting), or moves an existing one back to `PROCESSING` for a
+   * re-run. Returns `null` instead of throwing if the meeting has been deleted since the caller
+   * decided to run this — the FK constraint on `meetingId` rejects the create — so a background
+   * run started for a since-deleted meeting becomes a no-op, mirroring
+   * `RecordingsRepository.updateStatusIfCurrent`'s no-op-on-deleted-row behavior.
+   */
+  startProcessing(meetingId: string): Promise<MeetingSummary | null> {
+    return this.upsertOrNullIfMeetingDeleted(() =>
+      this.prisma.meetingSummary.upsert({
+        where: { meetingId },
+        create: { meetingId, status: SummaryStatus.PROCESSING },
+        update: { status: SummaryStatus.PROCESSING },
+      }),
+    );
   }
 
   /**
@@ -74,5 +89,27 @@ export class MeetingSummaryRepository {
    */
   async deleteIfExists(meetingId: string): Promise<void> {
     await this.prisma.meetingSummary.deleteMany({ where: { meetingId } });
+  }
+
+  /**
+   * Writes `summaryText`/`decisions` directly and settles the row at `READY`, creating it if the
+   * meeting doesn't have one yet — unlike `updateStatusIfCurrent`, which only ever updates a row
+   * that already exists. Used by a write that isn't part of the transcript-driven
+   * `generateForMeeting` pipeline (e.g. an agent tool call), so it can't rely on `startProcessing`
+   * having run first. Shares `startProcessing`'s FK-violation/not-found swallowing via
+   * `upsertOrNullIfMeetingDeleted`: returns `null` instead of throwing if the meeting has been
+   * deleted since the caller decided to write this.
+   */
+  upsertContent(
+    meetingId: string,
+    data: { summaryText: string; decisions: Prisma.InputJsonValue },
+  ): Promise<MeetingSummary | null> {
+    return this.upsertOrNullIfMeetingDeleted(() =>
+      this.prisma.meetingSummary.upsert({
+        where: { meetingId },
+        create: { meetingId, status: SummaryStatus.READY, ...data },
+        update: { status: SummaryStatus.READY, ...data },
+      }),
+    );
   }
 }

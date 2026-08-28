@@ -11,6 +11,35 @@ export interface SummaryGenerationResult {
   decisions: string[];
 }
 
+/**
+ * JSON Schema mirror of `SummaryGenerationResult`, passed as `options.outputFormat.schema` on
+ * `MeetingSummaryService.summarize`'s `ClaudeAgentService.ask` call so the SDK itself enforces a
+ * valid shape on the reply, rather than relying solely on `parseSummaryReply`'s own validation
+ * (which still runs afterward — see `MeetingSummaryService.summarize` — as a second, defensive
+ * check tied to this app's exact contract).
+ */
+export const SUMMARY_OUTPUT_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['summaryText', 'actionItems', 'decisions'],
+  properties: {
+    summaryText: { type: 'string' },
+    actionItems: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['description'],
+        properties: {
+          description: { type: 'string' },
+          assignee: { type: 'string' },
+        },
+      },
+    },
+    decisions: { type: 'array', items: { type: 'string' } },
+  },
+};
+
 /** Strips a ```json ... ``` (or bare ``` ... ```) fence Claude sometimes wraps its reply in, despite being asked for raw JSON. */
 function stripCodeFence(reply: string): string {
   const trimmed = reply.trim();

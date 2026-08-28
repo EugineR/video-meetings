@@ -76,7 +76,7 @@ const secondSummaryReply = JSON.stringify({
   decisions: ['Ship the beta in September', 'Cap spend at $10k'],
 });
 const resolvingClaudeAgentRunner: ClaudeAgentRunner = () =>
-  Promise.resolve(validSummaryReply);
+  Promise.resolve({ text: validSummaryReply, structuredOutput: undefined });
 const failingClaudeAgentRunner: ClaudeAgentRunner = () =>
   Promise.reject(new Error('agent crashed'));
 
@@ -88,11 +88,12 @@ const failingClaudeAgentRunner: ClaudeAgentRunner = () =>
  * recomputes the fold from scratch.
  */
 const foldAwareClaudeAgentRunner: ClaudeAgentRunner = (prompt) =>
-  Promise.resolve(
-    prompt.includes('Previous summary')
+  Promise.resolve({
+    text: prompt.includes('Previous summary')
       ? secondSummaryReply
       : validSummaryReply,
-  );
+    structuredOutput: undefined,
+  });
 
 /** A meeting-recording upload whose content marks it to fail transcription — see `contentAwareWhisperRunner`. */
 const failingRecordingContents = 'fake mp4 bytes (FAIL_TRANSCRIPTION)';

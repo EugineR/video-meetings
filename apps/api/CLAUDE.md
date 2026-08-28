@@ -32,9 +32,20 @@ Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "cas
   Whisper `base` model, run in the background after an upload (see Invariants)
 - `src/meeting-summary/` — `MeetingSummaryService`, generating a per-meeting summary/action
   items/decisions via `ClaudeAgentService` once a recording's transcription reaches `READY`,
-  run in the background the same way (see Invariants)
+  run in the background the same way (see Invariants). Its `summarize` call gives the agent the
+  `meeting` MCP tools (`../meeting-tools`) and only those (`tools: [], allowedTools:
+MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summary itself
+  as it works, on top of the JSON reply `updateStatusIfCurrent` still persists — see Invariants.
+- `src/tasks/` — `TaskService`, a standalone `Task` model tracking action items independently of
+  `MeetingSummary.actionItems`'s JSON blob; `search`/`upsert` de-duplicate by title similarity
+  (Postgres `pg_trgm`). Reached from `summarize`'s agent run via the `meeting` MCP tools.
 - `src/claude-agent/` — `ClaudeAgentService`, a thin wrapper around the Claude Agent SDK for a
-  single-turn prompt/response call
+  single-turn prompt/response call; `ask` resolves a `ClaudeAgentReply` (`text` plus, when the
+  caller set `options.outputFormat`, the schema-validated `structuredOutput`)
+- `src/meeting-tools.ts` — `createMeetingToolsServer`, wrapping `TaskService`/`MeetingSummaryService`
+  (via structural interfaces, not the concrete classes, to avoid a circular import with
+  `meeting-summary/`) as a `meeting` SDK MCP server (`find_tasks`/`upsert_task`/`update_meeting`).
+  Wired into `MeetingSummaryService.summarize`'s `options.mcpServers`.
 
 ## CQRS pattern
 
@@ -103,6 +114,91 @@ The reasoning behind them is in `docs/architecture/api.md`.
   language is fixed to English (`transcription.module.ts`'s `WHISPER_LANGUAGE`) rather than left on
   auto-detection, which the `base` model gets wrong often enough on accented/noisy audio to
   mis-transcribe English speech as a different language entirely.
+- **`@anthropic-ai/claude-agent-sdk` is ESM-only** — every dynamic `import()` of it (in
+  `claude-agent.module.ts` and `meeting-tools.ts`) needs `node --experimental-vm-modules` under
+  Jest's CommonJS test VM, on **every** script that can reach that code path, not just the unit
+  `test` script — `test:e2e` runs it too (`MeetingSummaryService.summarize`, exercised by any e2e
+  spec that uploads a recording), so it carries the same flag.
+- **`update_meeting` (a `meeting-tools.ts` tool) always settles `MeetingSummary.status` to `READY`**
+  — when the agent calls it mid-fold, on a meeting with more than one recording still
+  transcribing, the row is briefly `READY` until `MeetingSummaryService.generateForMeeting`'s own
+  trailing `updateStatusIfCurrent` call corrects it back to `PENDING` moments later. That write is
+  still the authority on final status/content; `update_meeting`'s write is not required for
+  correctness, only for letting the agent record what it found as it works.
+- **`meeting-tools.ts`'s `upsert_task`/`update_meeting` take no meeting id in their input schema**
+  — `createMeetingTools`/`createMeetingToolsServer` are given the target `meetingId` by
+  `MeetingSummaryService.summarize` (its own trusted parameter) and close over it; the model never
+  supplies it. This is deliberate, not an oversight: a tool argument the model fills in from the
+  transcript is something a transcript can try to control, so a meeting id read that way could let
+  a hostile transcript (prompt injection) redirect a write to a different meeting. Keep new tools
+  in this file that write scoped-to-a-meeting data bound the same way — never add a meeting/task
+  id back to `upsert_task`'s or `update_meeting`'s schema, even to make testing more convenient.
+- **`TaskService.upsert`'s dedup lookup is scoped to `sourceMeetingId`, not just `upsert_task`'s
+  schema** — closing over `meetingId` at the tool layer isn't enough by itself: without this,
+  `upsert_task`'s title-similarity match could still find and _update_ a task belonging to a
+  completely different meeting, purely from a title that happens to match — no meeting id involved
+  at all, so binding one at the tool layer wouldn't have stopped it. `TaskRepository.search`'s
+  optional `sourceMeetingId` param is what enforces this at the query level; `TaskService.search`
+  (and `find_tasks`, which calls it) stays meeting-agnostic on purpose — it's read-only, so it can
+  safely surface a similar task from elsewhere for awareness without any risk of mutating it. Never
+  make `upsert`'s dedup search meeting-agnostic again, even to "let a recurring action item collapse
+  across meetings" — that reintroduces the same cross-meeting write this bullet exists to prevent.
+- **`MeetingSummaryService.summarize` retries the whole attempt (agent call + parse) up to
+  `MAX_SUMMARY_ATTEMPTS` (3) times** — both a `ClaudeAgentService.ask` rejection (a transient
+  SDK/API error) and a `parseSummaryReply` rejection (malformed reply) are retried; only the last
+  attempt's error propagates to `generateForMeeting`'s `FAILED`-marking catch. Keep the `ask()` call
+  itself inside the per-attempt `try` — pulling it back out (e.g. to destructure `text`/
+  `structuredOutput` before the `try`, as an earlier version did) silently drops retries for any
+  error the SDK call itself throws, leaving only parse failures retried. Usually safe to repeat: a
+  retried attempt is a brand-new agent conversation (each `ask()` call is a fresh `query()`, not a
+  resumed session), so it has no memory of what a failed earlier attempt already called
+  `upsert_task`/`update_meeting` with. `update_meeting` still just overwrites, so that part is fine
+  regardless of phrasing. `upsert_task`'s dedup is fuzzy title-similarity, though (see
+  `TaskService.upsert`), not a stable key — if the retried attempt phrases the same action item
+  differently enough to fall under `MIN_TITLE_SIMILARITY`, it creates a second `Task` for what a
+  human would recognize as the same item, rather than updating the one the failed attempt already
+  created. Known, accepted gap, not a guarantee — don't advertise retries as fully idempotent
+  without fixing this (e.g. resuming the same agent session across attempts) first.
+- **`summary-prompt.ts`'s user-turn prompt must never tell the model to answer with "only JSON,
+  nothing else"** — an earlier version did, left over from before the `meeting` tools existed, and
+  it silently made the model skip straight to a direct JSON answer without ever calling
+  `find_tasks`/`upsert_task`/`update_meeting`, even though `MEETING_AGENT_SYSTEM_PROMPT` told it to
+  use them — confirmed by comparing real tool-call traces with and without that line, same model,
+  same transcript. `options.outputFormat` (the SDK's own structured-output mechanism) is what
+  enforces the JSON shape on the final answer; the prompt doesn't need to ask for that too, and
+  doing so actively suppresses tool use. If a future prompt tweak needs to emphasize the reply
+  shape again, phrase it in terms of what to submit _after_ using the tools, never "just answer,
+  nothing else."
+- **`MeetingSummaryService.generateForMeeting` resumes folding instead of always refolding every
+  ready recording from scratch** — `MeetingSummary.foldedRecordingIds` records which recordings (in
+  order) are already reflected in the persisted result; `resumeFoldFrom` only falls back to a full
+  refold when the new ready-recording-id list isn't an exact, in-order extension of that (a
+  recording finished out of order, or the ready set shrank because one was deleted). Without this,
+  every recording finishing transcription re-triggers a full refold of every ready recording so
+  far — O(N²) real agent calls for N recordings finishing close together, since
+  `SummaryReconciliationService` chains (never parallelizes) runs for the same meeting. Never make
+  this always-refold again without also fixing the chaining, or reintroduce per-run refolding as a
+  "simplification" — it's the main driver of end-to-end summary latency once a meeting has more
+  than one or two recordings.
+- **`resumeFoldFrom` treats an empty `foldedRecordingIds` as "nothing folded yet," never as a seed**
+  — even when `existing.summaryText` is non-null. That combination happens when an `update_meeting`
+  tool call wrote content mid-fold (`MeetingSummaryRepository.upsertContent`, which never touches
+  `foldedRecordingIds`) on a run that then failed before its own trailing write — the only thing
+  that sets `foldedRecordingIds` — ever ran. An empty array is vacuously a prefix of any id list, so
+  without this special case a from-scratch refold would get seeded with that stale leftover content
+  instead of actually starting clean.
+- **`TaskService.upsert` chains calls per `sourceMeetingId` (`upsertQueues`)** — its search-then-write
+  isn't atomic, and the Claude Agent SDK can dispatch several tool calls from one model turn
+  concurrently, so two `upsert_task` calls for near-duplicate titles in the same meeting could both
+  search before either write commits and both create a duplicate `Task`. Never call
+  `TaskRepository.search`/`create`/`update` directly from a new code path that bypasses this
+  queue — go through `upsert` (or extend it) so every write for a given meeting stays serialized.
+- **`apps/api/tsconfig.json` excludes `uploads`/`whisper-models`/`dist`** — without it, `tsc`'s
+  default watch scope (no `include`, so the whole project directory) treats any file written under
+  `uploads/` — a recording upload, or whisper's own temp `.wav` files — as a "file change," and
+  `nest start --watch` restarts the entire app mid-upload, killing whatever background
+  transcription/summarization was in flight. Keep `tsconfig.build.json`'s `exclude` in sync with
+  this list (`extends` replaces `exclude` wholesale rather than merging it).
 
 ## Testing
 
@@ -126,8 +222,11 @@ plus `eslint-plugin-prettier`; `no-explicit-any` is off,
 
 `prisma/schema.prisma` + `prisma/migrations/`: `User` → `users`, `Meeting` → `meetings`,
 `MeetingRecording` → `meeting_recordings` (many per meeting, `status`/`transcriptText` tracking
-each recording's own background transcription — see Invariants), `UserAvatar` → `user_avatars` (at
-most one per user); every child FK is `onDelete: Cascade`.
+each recording's own background transcription — see Invariants), `MeetingSummary` →
+`meeting_summaries` (at most one per meeting, `foldedRecordingIds` tracking fold progress — see
+Invariants), `Task` → `tasks` (many per meeting, no assignee field by design, title-similarity
+search backed by Postgres `pg_trgm` — see Invariants), `UserAvatar` → `user_avatars` (at most one
+per user); every child FK is `onDelete: Cascade`.
 
 Env vars (`apps/api/.env`, see `.env.example`): `DATABASE_URL` (must match the root
 `docker-compose.yml` credentials), `JWT_SECRET`, `PORT` (default `3001` — **must differ from
