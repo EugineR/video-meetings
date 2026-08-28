@@ -3,18 +3,12 @@
 import { useState } from 'react';
 import { Button, Form, Input, Label, Modal } from '@heroui/react';
 import { ApiError, createMeeting, type Meeting } from '@/lib/api';
+import { parseParticipants } from '@/lib/meetings';
 
 interface CreateMeetingModalProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
   onCreated: (meeting: Meeting) => void;
-}
-
-function parseParticipants(value: string): string[] {
-  return value
-    .split(',')
-    .map((participant) => participant.trim())
-    .filter((participant) => participant.length > 0);
 }
 
 export function CreateMeetingModal({

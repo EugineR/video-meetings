@@ -8,29 +8,15 @@ import {
   UploadCancelledError,
   uploadMeetingRecording,
 } from '@/lib/api';
+import { RECORDING_UPLOAD } from '@/lib/uploads';
 import { UploadIcon, XMarkIcon } from '@/components/icons';
 
-/**
- * Mirrors apps/api/.env's ALLOWED_RECORDING_MIME_TYPES / MAX_UPLOAD_SIZE_BYTES
- * defaults. This is a client-side UX check only — the API enforces the real
- * limits and is the source of truth (see docs/meeting-recording-upload/prd.md).
- */
-const ALLOWED_MIME_TYPES = [
-  'video/mp4',
-  'video/webm',
-  'video/quicktime',
-  'audio/mpeg',
-];
-const ALLOWED_EXTENSIONS_LABEL = 'MP4, WebM, MOV, MP3';
-const MAX_SIZE_BYTES = 500 * 1024 * 1024;
-const MAX_SIZE_LABEL = '500 MB';
-
 function validateFile(file: File): string | null {
-  if (!ALLOWED_MIME_TYPES.includes(file.type)) {
-    return `Unsupported file type. Allowed types: ${ALLOWED_EXTENSIONS_LABEL}.`;
+  if (!RECORDING_UPLOAD.allowedMimeTypes.includes(file.type)) {
+    return `Unsupported file type. Allowed types: ${RECORDING_UPLOAD.allowedExtensionsLabel}.`;
   }
-  if (file.size > MAX_SIZE_BYTES) {
-    return `File is too large. Maximum size is ${MAX_SIZE_LABEL}.`;
+  if (file.size > RECORDING_UPLOAD.maxSizeBytes) {
+    return `File is too large. Maximum size is ${RECORDING_UPLOAD.maxSizeLabel}.`;
   }
   return null;
 }
@@ -160,13 +146,14 @@ export function RecordingUploader({
               Choose file
             </Button>
             <p className="text-xs text-muted">
-              {ALLOWED_EXTENSIONS_LABEL} · up to {MAX_SIZE_LABEL}
+              {RECORDING_UPLOAD.allowedExtensionsLabel} · up to{' '}
+              {RECORDING_UPLOAD.maxSizeLabel}
             </p>
           </>
         )}
 
         <input
-          accept={ALLOWED_MIME_TYPES.join(',')}
+          accept={RECORDING_UPLOAD.allowedMimeTypes.join(',')}
           className="hidden"
           disabled={isUploading}
           onChange={handleFileInputChange}

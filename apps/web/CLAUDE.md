@@ -27,20 +27,19 @@ remains. Every page is a client component and auth is client-side only.
 - `src/components/` — one component per file, in subfolders **by kind** (`layout/`, `meetings/`,
   `profile/`, `icons/`), not flat; icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
-  `format.ts`
+  `format.ts`, `validation.ts`, `meetings.ts`, `uploads.ts`
 
 ## Rules
 
 - **`src/lib/api.ts` is the only module that talks to `apps/api`.** It attaches
   `Authorization: Bearer <token>` and throws `ApiError` (status + the API's `message`) on any
   non-2xx. A component reaching for `fetch` itself is a bug.
-- **`ALLOWED_MIME_TYPES` and `MAX_SIZE_BYTES` in
-  `src/components/meetings/RecordingUploader.tsx` must stay in sync with
-  `ALLOWED_RECORDING_MIME_TYPES` (which includes `audio/mpeg` alongside the video types) and
-  `MAX_UPLOAD_SIZE_BYTES` in `apps/api/.env`, and the same
-  constants in `src/components/profile/AvatarSection.tsx` with `ALLOWED_AVATAR_MIME_TYPES` and
-  `MAX_AVATAR_SIZE_BYTES`** — they are the client-side mirror of the server's allowlist and size
-  cap. Change one, change the other, or the browser accepts a file the API then rejects.
+- **Every upload MIME allowlist, size cap and display label lives in `src/lib/uploads.ts`** —
+  `RECORDING_UPLOAD` mirrors `ALLOWED_RECORDING_MIME_TYPES` (which includes `audio/mpeg` alongside
+  the video types) and `MAX_UPLOAD_SIZE_BYTES` in `apps/api/.env`; `AVATAR_UPLOAD` mirrors
+  `ALLOWED_AVATAR_MIME_TYPES` and `MAX_AVATAR_SIZE_BYTES`. Change one, change the other, or the
+  browser accepts a file the API then rejects. A component declaring such a constant itself is a
+  bug: `RecordingUploader` and `AvatarSection` import theirs.
 - **`RecordingCard` renders an `<audio>` element when `recording.mimeType === 'audio/mpeg'` and a
   `<video>` element for the other (video) MIME types** — an mp3 upload plays back through the
   audio element, not a video player with no picture.
@@ -66,6 +65,11 @@ remains. Every page is a client component and auth is client-side only.
   decoded without signature verification, and nothing server-side reads it — there is no SSR or
   middleware gate. The API is the source of truth; the decoded payload is a hint.
 - **`formatDateTime()` in `src/lib/format.ts` is the only date formatter.**
+- **Pure domain logic and shared constants live in `src/lib/`, not at the top of a JSX file.**
+  `formatFileSize` and `getInitials` sit next to `formatDateTime` in `format.ts`, `EMAIL_PATTERN`
+  in `validation.ts`, `parseParticipants` in `meetings.ts`, the upload constraints in `uploads.ts`.
+  Re-declaring one of them in a component is how the login/register email pattern came to be
+  written twice.
 - **An unknown or another user's meeting is a 404 `ApiError` rendered inline**, never a blank page
   or a redirect.
 - **The meeting page polls while any of the meeting's recordings has `status` `UPLOADED` or

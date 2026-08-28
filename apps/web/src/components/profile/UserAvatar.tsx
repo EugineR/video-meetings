@@ -1,5 +1,6 @@
 import { Avatar } from '@heroui/react';
 import { getAvatarUrl } from '@/lib/api';
+import { getInitials } from '@/lib/format';
 
 export type UserAvatarSize = 'header' | 'profile';
 
@@ -14,25 +15,6 @@ interface UserAvatarProps {
   hasAvatar: boolean;
   avatarUpdatedAt: string | null;
   size: UserAvatarSize;
-}
-
-/** Up to two initials from whitespace/punctuation-separated words, e.g. "Jane Doe" -> "JD". */
-function initialsFrom(source: string): string {
-  const words = source.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-  return words
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join('')
-    .toUpperCase();
-}
-
-function getInitials(name: string | null, email: string): string {
-  const trimmedName = name?.trim();
-  if (trimmedName) {
-    return initialsFrom(trimmedName);
-  }
-  const [localPart] = email.split('@');
-  return initialsFrom(localPart || email);
 }
 
 /**

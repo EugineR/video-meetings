@@ -15,9 +15,8 @@ import {
 } from '@heroui/react';
 import { ApiError, loginUser } from '@/lib/api';
 import { storeAccessToken } from '@/lib/auth';
+import { EMAIL_PATTERN } from '@/lib/validation';
 import { EyeIcon, EyeOffIcon } from '@/components/icons';
-
-const EMAIL_PATTERN = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
 
 export default function LoginPage() {
   const router = useRouter();

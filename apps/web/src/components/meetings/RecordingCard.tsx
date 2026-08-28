@@ -3,24 +3,10 @@
 import { useState } from 'react';
 import { Button, Link, Modal, Spinner } from '@heroui/react';
 import { ApiError, deleteMeetingRecording, type Recording } from '@/lib/api';
-import { formatDateTime } from '@/lib/format';
+import { formatDateTime, formatFileSize } from '@/lib/format';
 import { ChevronDownIcon, PlayCircleIcon, TrashIcon } from '@/components/icons';
 import { RecordingStatusChip } from './RecordingStatusChip';
 import { RecordingPlayerModal } from './RecordingPlayerModal';
-
-function formatFileSize(sizeBytes: string): string {
-  const bytes = Number(sizeBytes);
-  if (!Number.isFinite(bytes)) return 'Unknown size';
-
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-}
 
 interface RecordingCardProps {
   meetingId: string;

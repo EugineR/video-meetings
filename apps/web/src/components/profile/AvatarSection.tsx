@@ -9,6 +9,7 @@ import {
   uploadAvatar,
   type Profile,
 } from '@/lib/api';
+import { AVATAR_UPLOAD } from '@/lib/uploads';
 import { TrashIcon, UploadIcon } from '@/components/icons';
 import { UserAvatar } from '@/components/profile/UserAvatar';
 
@@ -26,22 +27,12 @@ interface AvatarSectionProps {
   onProfileChange: (profile: Partial<Profile>) => void;
 }
 
-/**
- * Mirrors apps/api/.env's ALLOWED_AVATAR_MIME_TYPES / MAX_AVATAR_SIZE_BYTES
- * defaults. This is a client-side UX check only — the API enforces the real
- * limits and is the source of truth.
- */
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const ALLOWED_EXTENSIONS_LABEL = 'JPEG, PNG, WebP';
-const MAX_SIZE_BYTES = 5 * 1024 * 1024;
-const MAX_SIZE_LABEL = '5 MB';
-
 function validateFile(file: File): string | null {
-  if (!ALLOWED_MIME_TYPES.includes(file.type)) {
-    return `Unsupported file type. Allowed types: ${ALLOWED_EXTENSIONS_LABEL}.`;
+  if (!AVATAR_UPLOAD.allowedMimeTypes.includes(file.type)) {
+    return `Unsupported file type. Allowed types: ${AVATAR_UPLOAD.allowedExtensionsLabel}.`;
   }
-  if (file.size > MAX_SIZE_BYTES) {
-    return `File is too large. Maximum size is ${MAX_SIZE_LABEL}.`;
+  if (file.size > AVATAR_UPLOAD.maxSizeBytes) {
+    return `File is too large. Maximum size is ${AVATAR_UPLOAD.maxSizeLabel}.`;
   }
   return null;
 }
@@ -254,7 +245,8 @@ export function AvatarSection({
               </div>
 
               <p className="text-xs text-muted">
-                {ALLOWED_EXTENSIONS_LABEL} · up to {MAX_SIZE_LABEL}
+                {AVATAR_UPLOAD.allowedExtensionsLabel} · up to{' '}
+                {AVATAR_UPLOAD.maxSizeLabel}
               </p>
 
               {isUploading ? (
@@ -280,7 +272,7 @@ export function AvatarSection({
           ) : null}
 
           <input
-            accept={ALLOWED_MIME_TYPES.join(',')}
+            accept={AVATAR_UPLOAD.allowedMimeTypes.join(',')}
             className="hidden"
             disabled={isUploading}
             onChange={handleFileInputChange}
