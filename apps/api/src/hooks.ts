@@ -87,24 +87,50 @@ export function createCallBudgetHook(
 }
 
 /**
- * `PostToolUse` hook logging every completed tool call — name, arguments, and result — through
- * Nest's `Logger`. Read-only: it never returns `hookSpecificOutput`, so it can't influence what the
- * agent sees or does.
+ * `PostToolUse`/`PostToolUseFailure` hook logging every completed or failed tool call — name,
+ * arguments, and result/error — through Nest's `Logger`. Read-only: it never returns
+ * `hookSpecificOutput`, so it can't influence what the agent sees or does.
+ *
+ * Registered under both events (see `createMeetingHooks`) because they're mutually exclusive ways
+ * a tool call can finish: `PostToolUse` fires when the tool handler returns normally (including an
+ * MCP tool that reports its own failure via `{ isError: true }`, e.g. `update_meeting` against a
+ * deleted meeting — see `meeting-tools.ts`), `PostToolUseFailure` fires when the handler throws
+ * instead. Logging only `PostToolUse` would silently drop every thrown-exception failure now that
+ * `meeting-tools.ts`'s handlers no longer log their own calls. Both a thrown exception and an
+ * `isError: true` result log at `warn` instead of `log`, so severity-filtered monitoring still
+ * catches them the way the handlers' own `logger.warn` calls used to before this centralized hook
+ * replaced them.
  */
 export const auditLog: HookCallback = (input) => {
+  if (input.hook_event_name === 'PostToolUseFailure') {
+    logger.warn(
+      `tool_name=${input.tool_name} tool_input=${JSON.stringify(input.tool_input)} error=${input.error}`,
+    );
+    return Promise.resolve({});
+  }
+
   if (input.hook_event_name !== 'PostToolUse') {
     return Promise.resolve({});
   }
 
-  logger.log(
-    `tool_name=${input.tool_name} tool_input=${JSON.stringify(input.tool_input)} tool_response=${JSON.stringify(input.tool_response)}`,
-  );
+  const isError =
+    typeof input.tool_response === 'object' &&
+    input.tool_response !== null &&
+    (input.tool_response as { isError?: unknown }).isError === true;
+  const line = `tool_name=${input.tool_name} tool_input=${JSON.stringify(input.tool_input)} tool_response=${JSON.stringify(input.tool_response)}`;
+
+  if (isError) {
+    logger.warn(line);
+  } else {
+    logger.log(line);
+  }
 
   return Promise.resolve({});
 };
 
 /**
- * Assembles `preToolUseGuard`, a fresh `createCallBudgetHook`, and `auditLog` into the
+ * Assembles `preToolUseGuard`, a fresh `createCallBudgetHook`, and `auditLog` — the latter under
+ * both `PostToolUse` and `PostToolUseFailure`, see its own doc comment — into the
  * `Partial<Record<HookEvent, HookCallbackMatcher[]>>` shape `Options.hooks` expects, ready to spread
  * into a `ClaudeAgentService.ask` call's `options`:
  *
@@ -133,5 +159,6 @@ export function createMeetingHooks(
       { hooks: [preToolUseGuard, createCallBudgetHook(callBudget)] },
     ],
     PostToolUse: [{ hooks: [auditLog] }],
+    PostToolUseFailure: [{ hooks: [auditLog] }],
   };
 }

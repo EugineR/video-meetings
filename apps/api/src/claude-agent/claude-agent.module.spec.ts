@@ -70,7 +70,7 @@ describe('ClaudeAgentModule / runClaudeAgent', () => {
     service = moduleRef.get(ClaudeAgentService);
   });
 
-  it('wires PreToolUse: [preToolUseGuard, callBudget] and PostToolUse: [auditLog] into options.hooks', async () => {
+  it('wires PreToolUse: [preToolUseGuard, callBudget] and PostToolUse/PostToolUseFailure: [auditLog] into options.hooks', async () => {
     mockQuery.mockReturnValue([successResult()]);
 
     await service.ask('prompt', { model: 'x', tools: [] }, 'meeting-1');
@@ -81,6 +81,8 @@ describe('ClaudeAgentModule / runClaudeAgent', () => {
     expect(options.hooks.PreToolUse?.[0].hooks).toHaveLength(2);
     expect(options.hooks.PostToolUse).toHaveLength(1);
     expect(options.hooks.PostToolUse?.[0].hooks).toHaveLength(1);
+    expect(options.hooks.PostToolUseFailure).toHaveLength(1);
+    expect(options.hooks.PostToolUseFailure?.[0].hooks).toHaveLength(1);
   });
 
   it("logs total_cost_usd and usage tied to meetingId when a 'result' message arrives", async () => {

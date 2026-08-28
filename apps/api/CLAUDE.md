@@ -54,8 +54,10 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
   `ClaudeAgentService.ask` run (wired into `options.hooks` by `runClaudeAgent`, not by callers —
   see `src/claude-agent/` above): `preToolUseGuard` denies `upsert_task` calls with a too-short
   title, `createCallBudgetHook` caps total tool calls per run (`DEFAULT_TOOL_CALL_BUDGET`),
-  `auditLog` logs every completed tool call via Nest `Logger` — the sole place tool calls are
-  logged; `meeting-tools.ts`'s own handlers don't log.
+  `auditLog` logs every completed or failed tool call (`PostToolUse` and `PostToolUseFailure` —
+  a thrown handler is a separate SDK event from a normal return) via Nest `Logger`, at `warn` for a
+  thrown exception or an MCP `{ isError: true }` result and `log` otherwise — the sole place tool
+  calls are logged; `meeting-tools.ts`'s own handlers don't log.
 
 ## CQRS pattern
 

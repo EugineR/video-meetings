@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import type {
   HookJSONOutput,
+  PostToolUseFailureHookInput,
   PostToolUseHookInput,
   PreToolUseHookInput,
   SyncHookJSONOutput,
@@ -45,6 +46,22 @@ function postToolUseInput(
     tool_input: { title: 'Draft the roadmap doc' },
     tool_response: { id: 'task-1' },
     tool_use_id: 'tool-1',
+    ...overrides,
+  };
+}
+
+function postToolUseFailureInput(
+  overrides: Partial<PostToolUseFailureHookInput> = {},
+): PostToolUseFailureHookInput {
+  return {
+    session_id: 'session-1',
+    transcript_path: '/tmp/transcript.jsonl',
+    cwd: '/tmp',
+    hook_event_name: 'PostToolUseFailure',
+    tool_name: 'mcp__meeting__upsert_task',
+    tool_input: { title: 'Draft the roadmap doc' },
+    tool_use_id: 'tool-1',
+    error: 'DB connection reset',
     ...overrides,
   };
 }
@@ -200,7 +217,7 @@ describe('auditLog', () => {
     logSpy.mockRestore();
   });
 
-  it('ignores non-PostToolUse events', async () => {
+  it('ignores non-PostToolUse/PostToolUseFailure events', async () => {
     const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation();
 
     const result = await auditLog(preToolUseInput(), 'tool-1', hookOptions);
@@ -210,10 +227,64 @@ describe('auditLog', () => {
 
     logSpy.mockRestore();
   });
+
+  it('logs a PostToolUse result with isError: true at warn level, not log', async () => {
+    const logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+
+    const result = await auditLog(
+      postToolUseInput({
+        tool_name: 'mcp__meeting__update_meeting',
+        tool_response: {
+          content: [
+            { type: 'text', text: 'Meeting meeting-1 does not exist.' },
+          ],
+          isError: true,
+        },
+      }),
+      'tool-1',
+      hookOptions,
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('mcp__meeting__update_meeting'),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('does not exist'),
+    );
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(result).toEqual({});
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it('logs a PostToolUseFailure event (a thrown tool handler) at warn level with the error', async () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+
+    const result = await auditLog(
+      postToolUseFailureInput({
+        tool_name: 'mcp__meeting__upsert_task',
+        error: 'DB connection reset',
+      }),
+      'tool-1',
+      hookOptions,
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('mcp__meeting__upsert_task'),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('DB connection reset'),
+    );
+    expect(result).toEqual({});
+
+    warnSpy.mockRestore();
+  });
 });
 
 describe('createMeetingHooks', () => {
-  it('registers preToolUseGuard and a call budget hook under PreToolUse, and auditLog under PostToolUse', () => {
+  it('registers preToolUseGuard and a call budget hook under PreToolUse, and auditLog under PostToolUse/PostToolUseFailure', () => {
     const hooks = createMeetingHooks();
 
     expect(hooks.PreToolUse).toHaveLength(1);
@@ -222,6 +293,8 @@ describe('createMeetingHooks', () => {
 
     expect(hooks.PostToolUse).toHaveLength(1);
     expect(hooks.PostToolUse?.[0].hooks).toEqual([auditLog]);
+    expect(hooks.PostToolUseFailure).toHaveLength(1);
+    expect(hooks.PostToolUseFailure?.[0].hooks).toEqual([auditLog]);
   });
 
   it('passes its callBudget argument through to the call budget hook', async () => {
