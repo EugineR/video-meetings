@@ -23,6 +23,10 @@ interface UserAvatarProps {
  * hood) hides itself and lets `Avatar.Fallback` show through on a load error, so
  * an avatar file that 404s (e.g. deleted between requests) degrades to initials
  * automatically.
+ *
+ * A shared primitive rather than a profile component: `layout/AppHeader` renders it
+ * on every authenticated route, so keeping it in `components/profile/` pointed the
+ * header at a feature folder.
  */
 export function UserAvatar({
   name,

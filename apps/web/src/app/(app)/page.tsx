@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Spinner } from '@heroui/react';
+import { Button, Card } from '@heroui/react';
 import {
   ApiError,
   getMeetings,
@@ -11,6 +11,8 @@ import {
 import { CreateMeetingModal } from '@/components/meetings/CreateMeetingModal';
 import { MeetingRow } from '@/components/meetings/MeetingRow';
 import { PlusIcon } from '@/components/icons';
+import { ErrorText } from '@/components/ui/ErrorText';
+import { LoadingState } from '@/components/ui/LoadingState';
 
 export default function Home() {
   const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
@@ -94,13 +96,9 @@ export default function Home() {
         </Card.Header>
         <Card.Content>
           {meetingsError ? (
-            <p className="text-sm text-danger" role="alert">
-              {meetingsError}
-            </p>
+            <ErrorText>{meetingsError}</ErrorText>
           ) : meetings === null ? (
-            <div className="flex justify-center py-4">
-              <Spinner aria-label="Loading meetings" size="sm" />
-            </div>
+            <LoadingState subject="meetings" />
           ) : meetings.length === 0 ? (
             <p className="text-sm text-muted">
               You haven&apos;t created any meetings yet.

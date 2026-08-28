@@ -18,6 +18,7 @@ import { ApiError, registerUser } from '@/lib/api';
 import { storeAccessToken } from '@/lib/auth';
 import { EMAIL_PATTERN } from '@/lib/validation';
 import { EyeIcon, EyeOffIcon } from '@/components/icons';
+import { ErrorText } from '@/components/ui/ErrorText';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -123,11 +124,7 @@ export default function RegisterPage() {
               <FieldError />
             </TextField>
 
-            {error ? (
-              <p className="text-sm text-danger" role="alert">
-                {error}
-              </p>
-            ) : null}
+            {error ? <ErrorText>{error}</ErrorText> : null}
           </div>
         </Card.Content>
 

@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { Button, Card } from '@heroui/react';
+import { ErrorText } from '@/components/ui/ErrorText';
 
 interface AppErrorProps {
   error: Error & { digest?: string };
@@ -28,9 +29,7 @@ export default function AppError({ error, reset }: AppErrorProps) {
         </Card.Description>
       </Card.Header>
       <Card.Content>
-        <p className="text-sm text-danger" role="alert">
-          {error.message || 'Unexpected error.'}
-        </p>
+        <ErrorText>{error.message || 'Unexpected error.'}</ErrorText>
       </Card.Content>
       <Card.Footer>
         <Button className="h-11 md:h-10" onPress={reset}>

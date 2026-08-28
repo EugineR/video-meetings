@@ -10,6 +10,7 @@ import {
 } from '@/lib/api';
 import { RECORDING_UPLOAD } from '@/lib/uploads';
 import { UploadIcon, XMarkIcon } from '@/components/icons';
+import { ErrorText } from '@/components/ui/ErrorText';
 
 function validateFile(file: File): string | null {
   if (!RECORDING_UPLOAD.allowedMimeTypes.includes(file.type)) {
@@ -162,11 +163,7 @@ export function RecordingUploader({
         />
       </div>
 
-      {error ? (
-        <p className="text-sm text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <ErrorText>{error}</ErrorText> : null}
     </div>
   );
 }

@@ -13,6 +13,8 @@ import {
 } from '@heroui/react';
 import { ApiError, changePassword } from '@/lib/api';
 import { EyeIcon, EyeOffIcon } from '@/components/icons';
+import { ErrorText } from '@/components/ui/ErrorText';
+import { SuccessText } from '@/components/ui/SuccessText';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -233,13 +235,9 @@ export function PasswordSection({ onChanged }: PasswordSectionProps) {
             </TextField>
 
             {error ? (
-              <p className="text-sm text-danger" role="alert">
-                {error}
-              </p>
+              <ErrorText>{error}</ErrorText>
             ) : isSaved ? (
-              <p className="text-sm text-success" role="status">
-                Password changed.
-              </p>
+              <SuccessText>Password changed.</SuccessText>
             ) : null}
           </div>
         </Card.Content>

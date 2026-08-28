@@ -1,5 +1,6 @@
 import { Chip, Spinner } from '@heroui/react';
 import type { MeetingSummary } from '@/lib/api';
+import { ErrorText } from '@/components/ui/ErrorText';
 
 interface MeetingSummarySectionProps {
   summary: MeetingSummary | null;
@@ -27,9 +28,9 @@ export function MeetingSummarySection({
 }: MeetingSummarySectionProps) {
   if (summary?.status === 'FAILED') {
     return (
-      <p className="text-sm text-danger" role="alert">
+      <ErrorText>
         Summary generation failed. No summary is available for this meeting.
-      </p>
+      </ErrorText>
     );
   }
 

@@ -1,12 +1,12 @@
 'use client';
 
 import { createContext, useContext, type ReactNode } from 'react';
-import { Spinner } from '@heroui/react';
 import type { StoredUser } from '@/lib/auth';
 import {
   useAuthenticatedUser,
   type UseAuthenticatedUserResult,
 } from '@/lib/useAuthenticatedUser';
+import { LoadingState } from '@/components/ui/LoadingState';
 
 /**
  * What the `(app)` route group exposes to everything it renders. Identical to
@@ -43,11 +43,7 @@ export function AuthenticatedUserProvider({
   const { user, ...rest } = useAuthenticatedUser();
 
   if (!user) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Spinner aria-label="Loading" />
-      </div>
-    );
+    return <LoadingState variant="page" />;
   }
 
   return (

@@ -11,6 +11,8 @@ import {
   TextField,
 } from '@heroui/react';
 import { ApiError, updateProfile, type Profile } from '@/lib/api';
+import { ErrorText } from '@/components/ui/ErrorText';
+import { SuccessText } from '@/components/ui/SuccessText';
 
 interface DisplayNameSectionProps {
   name: string | null;
@@ -86,13 +88,9 @@ export function DisplayNameSection({ name, onSaved }: DisplayNameSectionProps) {
             </TextField>
 
             {error ? (
-              <p className="text-sm text-danger" role="alert">
-                {error}
-              </p>
+              <ErrorText>{error}</ErrorText>
             ) : isSaved ? (
-              <p className="text-sm text-success" role="status">
-                Display name saved.
-              </p>
+              <SuccessText>Display name saved.</SuccessText>
             ) : null}
           </div>
         </Card.Content>

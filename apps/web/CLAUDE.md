@@ -24,8 +24,10 @@ remains. Every page is a client component and auth is client-side only.
 - `src/app/` — two route groups plus the root `layout.tsx` and `globals.css`: `(app)` holds the
   authenticated routes `/`, `/meetings/[id]`, `/profile`, `/profile/edit` with their
   `layout.tsx` and `error.tsx`; `(auth)` holds `/login` and `/register` with their `layout.tsx`
-- `src/components/` — one component per file, in subfolders **by kind** (`layout/`, `meetings/`,
-  `profile/`, `icons/`), not flat; icons are re-exported through `icons/index.ts`
+- `src/components/` — one component per file, in subfolders **by kind** (`ui/`, `layout/`,
+  `meetings/`, `profile/`, `icons/`), not flat; `ui/` holds the shared, feature-agnostic
+  primitives (`ErrorText`, `SuccessText`, `LoadingState`, `UserAvatar`) and icons are re-exported
+  through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
   `format.ts`, `validation.ts`, `meetings.ts`, `uploads.ts`
 
@@ -53,11 +55,12 @@ remains. Every page is a client component and auth is client-side only.
   cannot set headers, and the API's guard accepts that form only on routes that opt in.
 - **The shell, the header and the auth guard belong to the layout, not to a page.** `(app)/layout.tsx`
   mounts `AuthenticatedUserProvider` (which runs `useAuthenticatedUser()`, holds the single
-  `if (!user) return <Spinner/>` guard and shares the session with everything below it) around
-  `AppShell` (background, `AppHeader`, the `max-w-2xl` content container); `(auth)/layout.tsx`
-  mounts `AuthShell` (the same background, the brand-only `BrandHeader`, the `max-w-md` card slot).
+  `if (!user) return <LoadingState variant="page"/>` guard and shares the session with everything
+  below it) around `AppShell` (background, `AppHeader`, the `max-w-2xl` content container);
+  `(auth)/layout.tsx` mounts `AuthShell` (the same background, the brand-only `BrandHeader`, the
+  `max-w-md` card slot).
   A page that renders `AppHeader`, the background gradient, a content container or its own `!user`
-  spinner is a bug. The gradient itself lives only in `PageShell`, which both shells wrap.
+  loading state is a bug. The gradient itself lives only in `PageShell`, which both shells wrap.
 - **A page inside `(app)` reads the session from `useAuthenticatedUserContext()`**, not by calling
   `useAuthenticatedUser()` again — a second call would fetch `GET /users/me` a second time and give
   the page a private copy of the profile the header would never see updated.

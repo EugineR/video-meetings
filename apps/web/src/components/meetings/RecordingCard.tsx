@@ -5,6 +5,7 @@ import { Button, Link, Modal, Spinner } from '@heroui/react';
 import { ApiError, deleteMeetingRecording, type Recording } from '@/lib/api';
 import { formatDateTime, formatFileSize } from '@/lib/format';
 import { ChevronDownIcon, PlayCircleIcon, TrashIcon } from '@/components/icons';
+import { ErrorText } from '@/components/ui/ErrorText';
 import { RecordingStatusChip } from './RecordingStatusChip';
 import { RecordingPlayerModal } from './RecordingPlayerModal';
 
@@ -84,9 +85,9 @@ export function RecordingCard({
       </div>
 
       {recording.status === 'FAILED' ? (
-        <p className="text-sm text-danger" role="alert">
+        <ErrorText>
           Transcription failed. No transcript is available for this recording.
-        </p>
+        </ErrorText>
       ) : isTranscribing ? (
         // Occupies the same slot the "Show transcript" toggle takes once ready (same
         // min-height as that button), so transcription finishing doesn't shift the rest
@@ -129,11 +130,7 @@ export function RecordingCard({
         </div>
       ) : null}
 
-      {error ? (
-        <p className="text-sm text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <ErrorText>{error}</ErrorText> : null}
 
       <RecordingPlayerModal
         isOpen={isPlayerOpen}

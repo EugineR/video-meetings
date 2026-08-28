@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Button, Card, Spinner } from '@heroui/react';
+import { Button, Card } from '@heroui/react';
 import {
   ApiError,
   getMeeting,
@@ -14,6 +14,8 @@ import { ArrowLeftIcon, CalendarIcon, UsersIcon } from '@/components/icons';
 import { MeetingSummarySection } from '@/components/meetings/MeetingSummarySection';
 import { RecordingCard } from '@/components/meetings/RecordingCard';
 import { RecordingUploader } from '@/components/meetings/RecordingUploader';
+import { ErrorText } from '@/components/ui/ErrorText';
+import { LoadingState } from '@/components/ui/LoadingState';
 
 /** Order-independent equality check for two recording-id lists. */
 function sameRecordingIds(a: string[], b: string[]): boolean {
@@ -178,15 +180,11 @@ export default function MeetingDetailPage() {
       {error ? (
         <Card>
           <Card.Content>
-            <p className="text-sm text-danger" role="alert">
-              {error}
-            </p>
+            <ErrorText>{error}</ErrorText>
           </Card.Content>
         </Card>
       ) : meeting === null ? (
-        <div className="flex justify-center py-12">
-          <Spinner aria-label="Loading meeting" />
-        </div>
+        <LoadingState subject="meeting" />
       ) : (
         <>
           <Card>

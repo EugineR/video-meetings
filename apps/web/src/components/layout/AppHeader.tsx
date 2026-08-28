@@ -1,6 +1,6 @@
 import { Button, Link } from '@heroui/react';
 import { BrandHeader } from '@/components/layout/BrandHeader';
-import { UserAvatar } from '@/components/profile/UserAvatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface AppHeaderProps {
   email: string;

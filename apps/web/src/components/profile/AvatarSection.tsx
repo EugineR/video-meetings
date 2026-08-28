@@ -11,7 +11,8 @@ import {
 } from '@/lib/api';
 import { AVATAR_UPLOAD } from '@/lib/uploads';
 import { TrashIcon, UploadIcon } from '@/components/icons';
-import { UserAvatar } from '@/components/profile/UserAvatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { ErrorText } from '@/components/ui/ErrorText';
 
 interface AvatarSectionProps {
   profile: Profile;
@@ -265,11 +266,7 @@ export function AvatarSection({
             </div>
           </div>
 
-          {error && !isRemoveModalOpen ? (
-            <p className="text-sm text-danger" role="alert">
-              {error}
-            </p>
-          ) : null}
+          {error && !isRemoveModalOpen ? <ErrorText>{error}</ErrorText> : null}
 
           <input
             accept={AVATAR_UPLOAD.allowedMimeTypes.join(',')}
@@ -297,11 +294,7 @@ export function AvatarSection({
                 This will remove your profile photo. You can upload a new one at
                 any time.
               </p>
-              {error ? (
-                <p className="text-sm text-danger" role="alert">
-                  {error}
-                </p>
-              ) : null}
+              {error ? <ErrorText>{error}</ErrorText> : null}
             </Modal.Body>
             <Modal.Footer>
               <Button slot="close" variant="secondary">

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button, Form, Input, Label, Modal } from '@heroui/react';
 import { ApiError, createMeeting, type Meeting } from '@/lib/api';
 import { parseParticipants } from '@/lib/meetings';
+import { ErrorText } from '@/components/ui/ErrorText';
 
 interface CreateMeetingModalProps {
   isOpen: boolean;
@@ -97,11 +98,7 @@ export function CreateMeetingModal({
                     value={title}
                     variant="secondary"
                   />
-                  {titleError ? (
-                    <p className="text-sm text-danger" role="alert">
-                      {titleError}
-                    </p>
-                  ) : null}
+                  {titleError ? <ErrorText>{titleError}</ErrorText> : null}
                 </div>
 
                 <div className="flex flex-col gap-1.5">
@@ -114,11 +111,7 @@ export function CreateMeetingModal({
                     value={date}
                     variant="secondary"
                   />
-                  {dateError ? (
-                    <p className="text-sm text-danger" role="alert">
-                      {dateError}
-                    </p>
-                  ) : null}
+                  {dateError ? <ErrorText>{dateError}</ErrorText> : null}
                 </div>
 
                 <div className="flex flex-col gap-1.5">
@@ -135,11 +128,7 @@ export function CreateMeetingModal({
                   />
                 </div>
 
-                {error ? (
-                  <p className="text-sm text-danger" role="alert">
-                    {error}
-                  </p>
-                ) : null}
+                {error ? <ErrorText>{error}</ErrorText> : null}
               </div>
             </Modal.Body>
             <Modal.Footer>

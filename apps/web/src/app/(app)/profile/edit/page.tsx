@@ -1,11 +1,13 @@
 'use client';
 
-import { Button, Card, Spinner } from '@heroui/react';
+import { Button, Card } from '@heroui/react';
 import { useRouter } from 'next/navigation';
 import { useAuthenticatedUserContext } from '@/components/layout/AuthenticatedUserProvider';
 import { AvatarSection } from '@/components/profile/AvatarSection';
 import { DisplayNameSection } from '@/components/profile/DisplayNameSection';
 import { PasswordSection } from '@/components/profile/PasswordSection';
+import { ErrorText } from '@/components/ui/ErrorText';
+import { LoadingState } from '@/components/ui/LoadingState';
 
 export default function ProfileEditPage() {
   const router = useRouter();
@@ -27,15 +29,11 @@ export default function ProfileEditPage() {
       {profileError ? (
         <Card>
           <Card.Content>
-            <p className="text-sm text-danger" role="alert">
-              {profileError}
-            </p>
+            <ErrorText>{profileError}</ErrorText>
           </Card.Content>
         </Card>
       ) : profile === null ? (
-        <div className="flex justify-center py-12">
-          <Spinner aria-label="Loading profile" />
-        </div>
+        <LoadingState subject="profile" />
       ) : (
         <>
           <AvatarSection onProfileChange={applyProfile} profile={profile} />

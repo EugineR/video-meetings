@@ -1,11 +1,13 @@
 'use client';
 
-import { Button, Card, Spinner } from '@heroui/react';
+import { Button, Card } from '@heroui/react';
 import { useRouter } from 'next/navigation';
 import { useAuthenticatedUserContext } from '@/components/layout/AuthenticatedUserProvider';
 import { formatDateTime } from '@/lib/format';
 import { CalendarIcon } from '@/components/icons';
-import { UserAvatar } from '@/components/profile/UserAvatar';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { ErrorText } from '@/components/ui/ErrorText';
+import { LoadingState } from '@/components/ui/LoadingState';
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -15,20 +17,14 @@ export default function ProfilePage() {
     return (
       <Card>
         <Card.Content>
-          <p className="text-sm text-danger" role="alert">
-            {profileError}
-          </p>
+          <ErrorText>{profileError}</ErrorText>
         </Card.Content>
       </Card>
     );
   }
 
   if (profile === null) {
-    return (
-      <div className="flex justify-center py-12">
-        <Spinner aria-label="Loading profile" />
-      </div>
-    );
+    return <LoadingState subject="profile" />;
   }
 
   return (
