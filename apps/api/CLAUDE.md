@@ -131,6 +131,14 @@ The reasoning behind them is in `docs/architecture/api.md`.
   Jest's CommonJS test VM, on **every** script that can reach that code path, not just the unit
   `test` script — `test:e2e` runs it too (`MeetingSummaryService.summarize`, exercised by any e2e
   spec that uploads a recording), so it carries the same flag.
+- **`runClaudeAgent` (`claude-agent.module.ts`) always overwrites `options.abortController` with a
+  fresh one tied to a `CLAUDE_AGENT_TIMEOUT_MS` (3 min) timer** — without it, a hung SDK subprocess
+  (a stalled network call, a stuck tool round-trip) left the run waiting on `query()` forever, with
+  no way for `MeetingSummaryService.generateForMeeting` to ever mark the meeting `FAILED`: the
+  `MeetingSummary.status` stayed `PROCESSING` and the web UI's "Generating summary…" spinner spun
+  indefinitely. Aborting the controller makes the SDK close the subprocess's stdin and kill it if it
+  doesn't exit on its own; the timeout is cleared once the call settles either way. Any
+  `options.abortController` a caller passes in is discarded without a warning, same as `hooks` below.
 - **`runClaudeAgent` (`claude-agent.module.ts`) always overwrites `options.hooks` with a fresh
   `createMeetingHooks()` call** (`hooks.ts`), built inside the function body on every invocation —
   never hoisted to module scope — so `createCallBudgetHook`'s tool-call counter starts at zero for

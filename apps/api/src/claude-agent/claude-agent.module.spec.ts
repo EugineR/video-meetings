@@ -7,6 +7,7 @@ import type {
 
 type CapturedOptions = {
   hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
+  abortController: AbortController;
 } & Record<string, unknown>;
 
 interface QueryCall {
@@ -53,7 +54,7 @@ function successResult(overrides: Record<string, unknown> = {}) {
  * fails at test time despite type-checking.
  */
 /* eslint-disable @typescript-eslint/no-require-imports -- see doc comment above */
-const { ClaudeAgentModule } =
+const { ClaudeAgentModule, CLAUDE_AGENT_TIMEOUT_MS } =
   require('./claude-agent.module') as typeof import('./claude-agent.module');
 const { ClaudeAgentService } =
   require('./claude-agent.service') as typeof import('./claude-agent.service');
@@ -130,5 +131,37 @@ describe('ClaudeAgentModule / runClaudeAgent', () => {
     expect(firstOptions.hooks.PreToolUse?.[0].hooks[1]).not.toBe(
       secondOptions.hooks.PreToolUse?.[0].hooks[1],
     );
+  });
+
+  it('aborts and rejects with a timeout error when the SDK subprocess never produces a result message', async () => {
+    jest.useFakeTimers();
+    try {
+      mockQuery.mockImplementation(({ options }: QueryCall) => ({
+        [Symbol.asyncIterator]: () => ({
+          next: () =>
+            new Promise((resolve) => {
+              options.abortController.signal.addEventListener('abort', () =>
+                resolve({ done: true, value: undefined }),
+              );
+            }),
+        }),
+      }));
+
+      const askPromise = service.ask(
+        'prompt',
+        { model: 'x', tools: [] },
+        'meeting-hang',
+      );
+      const assertion = expect(askPromise).rejects.toThrow(
+        `Claude agent query timed out after ${CLAUDE_AGENT_TIMEOUT_MS}ms for meetingId=meeting-hang and was aborted`,
+      );
+      await jest.advanceTimersByTimeAsync(CLAUDE_AGENT_TIMEOUT_MS);
+      await assertion;
+
+      const [{ options }] = mockQuery.mock.calls[0];
+      expect(options.abortController.signal.aborted).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

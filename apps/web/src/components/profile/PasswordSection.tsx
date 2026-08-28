@@ -244,7 +244,7 @@ export function PasswordSection({ onChanged }: PasswordSectionProps) {
           </div>
         </Card.Content>
 
-        <Card.Footer className="justify-end">
+        <Card.Footer className="mt-2 justify-end">
           <Button isPending={isPending} type="submit">
             {isPending ? 'Saving…' : 'Save'}
           </Button>

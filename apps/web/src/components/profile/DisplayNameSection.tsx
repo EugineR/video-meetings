@@ -97,7 +97,7 @@ export function DisplayNameSection({ name, onSaved }: DisplayNameSectionProps) {
           </div>
         </Card.Content>
 
-        <Card.Footer className="justify-end">
+        <Card.Footer className="mt-2 justify-end">
           <Button
             isDisabled={value === savedValue}
             isPending={isPending}

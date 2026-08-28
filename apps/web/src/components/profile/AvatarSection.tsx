@@ -49,7 +49,7 @@ function validateFile(file: File): string | null {
 /**
  * Selecting a file only stages a local preview (via `URL.createObjectURL`) and a
  * pending `File` — it does not upload. The upload only starts once the user presses
- * "Upload"; "Cancel" discards the pending selection (revoking the object URL) and
+ * "Save"; "Cancel" discards the pending selection (revoking the object URL) and
  * restores the current avatar/initials placeholder without touching the server. On
  * a successful upload, `onProfileChange` is called with just the avatar fields
  * (derived from the upload/delete response, not a refetch, and not merged with the
@@ -214,8 +214,7 @@ export function AvatarSection({
                       isPending={isUploading}
                       onPress={handleUpload}
                     >
-                      <UploadIcon aria-hidden="true" className="size-4" />
-                      Upload
+                      Save
                     </Button>
 
                     <Button
