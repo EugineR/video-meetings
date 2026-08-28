@@ -1,4 +1,4 @@
-import { Chip } from '@heroui/react';
+import { Chip, Spinner } from '@heroui/react';
 import type { RecordingStatus } from '@/lib/api';
 
 const STATUS_LABEL: Record<RecordingStatus, string> = {
@@ -23,8 +23,12 @@ interface RecordingStatusChipProps {
 }
 
 export function RecordingStatusChip({ status }: RecordingStatusChipProps) {
+  const isInProgress = status === 'UPLOADED' || status === 'PROCESSING';
   return (
     <Chip color={STATUS_COLOR[status]} variant="soft">
+      {isInProgress ? (
+        <Spinner aria-hidden="true" color="current" size="sm" />
+      ) : null}
       {STATUS_LABEL[status]}
     </Chip>
   );

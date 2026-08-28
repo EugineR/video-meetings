@@ -112,7 +112,7 @@ export function RecordingUploader({
   return (
     <div className="flex flex-col gap-3">
       <div
-        className={`flex flex-col items-center gap-3 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors ${
+        className={`flex h-64 flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed px-6 text-center transition-colors ${
           isDragging
             ? 'border-accent bg-accent/10'
             : 'border-default-200 bg-default-50'

@@ -8,3 +8,5 @@ export { TrashIcon } from './TrashIcon';
 export { XMarkIcon } from './XMarkIcon';
 export { ArrowLeftIcon } from './ArrowLeftIcon';
 export { PlusIcon } from './PlusIcon';
+export { PlayCircleIcon } from './PlayCircleIcon';
+export { ChevronDownIcon } from './ChevronDownIcon';

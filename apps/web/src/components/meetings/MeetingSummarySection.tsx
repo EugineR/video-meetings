@@ -3,6 +3,15 @@ import type { MeetingSummary } from '@/lib/api';
 
 interface MeetingSummarySectionProps {
   summary: MeetingSummary | null;
+  /**
+   * True while the summary hasn't caught up with the meeting's current recordings yet (see
+   * `MeetingDetailPage`'s `isSummaryPending`) — including the case where `summary.status` already
+   * reads `READY`: the API's `update_meeting` agent tool can briefly settle it to `READY` mid-fold,
+   * before the real, final result (and possibly more recordings) has been folded in. Shown as an
+   * inline "still updating" notice above the (possibly not-yet-final) content, rather than hiding
+   * it behind the full processing spinner, since there is real content to show in the meantime.
+   */
+  isUpdating: boolean;
 }
 
 /**
@@ -12,7 +21,10 @@ interface MeetingSummarySectionProps {
  * the summarization run itself errored. The caller decides whether to render this at all — see
  * `MeetingDetailPage`'s `showSummarySection`.
  */
-export function MeetingSummarySection({ summary }: MeetingSummarySectionProps) {
+export function MeetingSummarySection({
+  summary,
+  isUpdating,
+}: MeetingSummarySectionProps) {
   if (summary?.status === 'FAILED') {
     return (
       <p className="text-sm text-danger" role="alert">
@@ -34,6 +46,13 @@ export function MeetingSummarySection({ summary }: MeetingSummarySectionProps) {
 
   return (
     <div className="flex flex-col gap-6">
+      {isUpdating ? (
+        <div className="flex items-center gap-2 text-sm text-muted">
+          <Spinner aria-label="Updating summary" size="sm" />
+          Updating — more recordings are still being processed…
+        </div>
+      ) : null}
+
       {summaryText ? (
         <p className="text-sm whitespace-pre-wrap text-muted">{summaryText}</p>
       ) : null}
