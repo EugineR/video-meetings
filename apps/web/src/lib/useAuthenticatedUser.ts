@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   clearAccessToken,
   getStoredUser,
@@ -29,21 +29,29 @@ export interface UseAuthenticatedUserResult {
 }
 
 /**
- * Shared by every page that requires a signed-in user: redirects to /login
- * when there's no valid stored user (client-side only — see auth.ts),
+ * The client-side session behind the authenticated route group: redirects to
+ * /login when there's no valid stored user (client-side only — see auth.ts),
  * otherwise exposes that user plus a signOut() that clears the token and
- * redirects. `user` stays null until the check resolves, which callers use
- * as their own "auth check pending" loading state.
+ * redirects. `user` stays null until the check resolves.
+ *
+ * It is called in exactly one place — `AuthenticatedUserProvider` — which turns
+ * "`user` is still null" into the group's single guard screen and shares the
+ * rest with the header and the pages through context. A page must not call it
+ * again: that would fetch `GET /users/me` a second time into a private copy of
+ * the profile the header would never see updated.
+ *
+ * The provider lives in a layout, which Next.js does not remount on navigation
+ * inside the group, so the stored-token check is re-run on every `pathname`
+ * change — otherwise an expired token would only be caught on a full page load.
  *
  * `user` is the JWT-decoded email, available immediately so the header can
  * render before the network round-trip completes; `profile` is the
  * `GET /users/me` result (name, avatar presence) and stays null until that
- * request resolves. This is the only place that fetches it — callers that
- * need it (e.g. the profile page) read it from here rather than issuing
- * their own request.
+ * request resolves.
  */
 export function useAuthenticatedUser(): UseAuthenticatedUserResult {
   const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<StoredUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -51,13 +59,18 @@ export function useAuthenticatedUser(): UseAuthenticatedUserResult {
   useEffect(() => {
     const storedUser = getStoredUser();
     if (!storedUser) {
+      // localStorage is only available client-side, so this must run in an effect rather than during render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setUser(null);
       router.replace('/login');
       return;
     }
-    // localStorage is only available client-side, so this must run in an effect rather than during render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setUser(storedUser);
-  }, [router]);
+    // Keep the previous object while the session is unchanged: this effect re-runs on
+    // every in-group navigation, and a fresh object would refetch the profile each time.
+    setUser((previous) =>
+      previous?.email === storedUser.email ? previous : storedUser,
+    );
+  }, [pathname, router]);
 
   useEffect(() => {
     if (!user) {

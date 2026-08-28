@@ -21,8 +21,9 @@ port 3000) · `build` · `start` · `lint` (`eslint.config.mjs` composes `eslint
 Next.js App Router on Tailwind CSS v4 and HeroUI v3; nothing of the `create-next-app` scaffold
 remains. Every page is a client component and auth is client-side only.
 
-- `src/app/` — routes `/`, `/login`, `/register`, `/meetings/[id]`, `/profile`, `/profile/edit`,
-  plus `layout.tsx` and `globals.css`
+- `src/app/` — two route groups plus the root `layout.tsx` and `globals.css`: `(app)` holds the
+  authenticated routes `/`, `/meetings/[id]`, `/profile`, `/profile/edit` with their
+  `layout.tsx` and `error.tsx`; `(auth)` holds `/login` and `/register` with their `layout.tsx`
 - `src/components/` — one component per file, in subfolders **by kind** (`layout/`, `meetings/`,
   `profile/`, `icons/`), not flat; icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
@@ -51,9 +52,16 @@ remains. Every page is a client component and auth is client-side only.
   exactly one reason — `fetch` exposes no upload-progress events. Do not "modernise" it back.
 - **A recording URL carries its token as `?token=`, not a header**: a `<video>` element's `src`
   cannot set headers, and the API's guard accepts that form only on routes that opt in.
-- **`useAuthenticatedUser()` is the shared auth guard.** Every page needing a signed-in user uses
-  it rather than copying the redirect-then-spinner pattern; `user` stays `null` until the check
-  resolves, and that is the page's loading state.
+- **The shell, the header and the auth guard belong to the layout, not to a page.** `(app)/layout.tsx`
+  mounts `AuthenticatedUserProvider` (which runs `useAuthenticatedUser()`, holds the single
+  `if (!user) return <Spinner/>` guard and shares the session with everything below it) around
+  `AppShell` (background, `AppHeader`, the `max-w-2xl` content container); `(auth)/layout.tsx`
+  mounts `AuthShell` (the same background, the brand-only `BrandHeader`, the `max-w-md` card slot).
+  A page that renders `AppHeader`, the background gradient, a content container or its own `!user`
+  spinner is a bug. The gradient itself lives only in `PageShell`, which both shells wrap.
+- **A page inside `(app)` reads the session from `useAuthenticatedUserContext()`**, not by calling
+  `useAuthenticatedUser()` again — a second call would fetch `GET /users/me` a second time and give
+  the page a private copy of the profile the header would never see updated.
 - **Auth is client-side only.** The JWT lives in `localStorage` under `accessToken`, its payload is
   decoded without signature verification, and nothing server-side reads it — there is no SSR or
   middleware gate. The API is the source of truth; the decoded payload is a hint.
