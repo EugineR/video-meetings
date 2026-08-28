@@ -42,6 +42,7 @@ interface MeetingDetailResponseBody {
     summaryText: string | null;
     actionItems: ActionItemBody[];
     decisions: string[];
+    foldedRecordingIds: string[];
   } | null;
 }
 
@@ -274,6 +275,7 @@ describe('Meeting Summary (e2e)', () => {
         { description: 'Draft the roadmap doc', assignee: 'Priya' },
       ],
       decisions: ['Ship the beta in September'],
+      foldedRecordingIds: [detail.recordings[0].id],
     });
   });
 
@@ -380,6 +382,7 @@ describe('Meeting Summary (e2e)', () => {
         { description: 'Approve the budget' },
       ],
       decisions: ['Ship the beta in September', 'Cap spend at $10k'],
+      foldedRecordingIds: afterSecond.recordings.map((r) => r.id),
     });
   });
 
@@ -424,6 +427,9 @@ describe('Meeting Summary (e2e)', () => {
         { description: 'Draft the roadmap doc', assignee: 'Priya' },
       ],
       decisions: ['Ship the beta in September'],
+      foldedRecordingIds: detail.recordings
+        .filter((r) => r.status === 'READY')
+        .map((r) => r.id),
     });
   });
 

@@ -17,6 +17,15 @@ import { MeetingSummarySection } from '@/components/meetings/MeetingSummarySecti
 import { RecordingCard } from '@/components/meetings/RecordingCard';
 import { RecordingUploader } from '@/components/meetings/RecordingUploader';
 
+/** Order-independent equality check for two recording-id lists. */
+function sameRecordingIds(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  const sortedB = [...b].sort();
+  return [...a].sort().every((id, index) => id === sortedB[index]);
+}
+
 export default function MeetingDetailPage() {
   const params = useParams<{ id: string }>();
   const meetingId = params.id;
@@ -74,18 +83,28 @@ export default function MeetingDetailPage() {
     const everyRecordingTerminal = meeting.recordings.every(
       (r) => r.status === 'READY' || r.status === 'FAILED',
     );
+    const readyRecordingIds = meeting.recordings
+      .filter((r) => r.status === 'READY')
+      .map((r) => r.id);
     // The summary has caught up with the *current* set of recordings once it's reached a
-    // terminal state itself — `READY`/`FAILED`, or absent because none of them ever succeeded —
-    // while every recording is also terminal. Recording the fingerprint at that point (rather
-    // than trusting `summary.status` alone) is what lets a *later* recording transition (e.g. a
-    // second recording finishing after the first already produced a `READY` summary) be detected
-    // as "pending again", even though `summary.status` would still read as a final value from the
-    // earlier, now-outdated run.
+    // terminal state itself — `FAILED`, or `READY` with `foldedRecordingIds` covering every
+    // currently-`READY` recording, or absent because none of them ever succeeded — while every
+    // recording is also terminal. Recording the fingerprint at that point (rather than trusting
+    // `summary.status` alone) is what lets a *later* recording transition (e.g. a second recording
+    // finishing after the first already produced a `READY` summary) be detected as "pending again",
+    // even though `summary.status` would still read as a final value from the earlier, now-outdated
+    // run. Requiring `foldedRecordingIds` to match — rather than `status === 'READY'` alone — also
+    // rules out the API's `update_meeting` agent tool briefly settling `status` to `READY` mid-fold
+    // (it never touches `foldedRecordingIds`), which would otherwise read as caught up before the
+    // fold's real, final write lands.
     const summaryCaughtUp =
-      meeting.summary?.status === 'READY' ||
       meeting.summary?.status === 'FAILED' ||
-      (meeting.summary === null &&
-        meeting.recordings.every((r) => r.status !== 'READY'));
+      (meeting.summary?.status === 'READY' &&
+        sameRecordingIds(
+          meeting.summary.foldedRecordingIds,
+          readyRecordingIds,
+        )) ||
+      (meeting.summary === null && readyRecordingIds.length === 0);
     if (everyRecordingTerminal && summaryCaughtUp) {
       setReconciledRecordingsSignature(recordingsSignature);
     }
@@ -217,6 +236,10 @@ export default function MeetingDetailPage() {
                   <Card.Title>Recordings</Card.Title>
                 </Card.Header>
                 <Card.Content className="flex flex-col gap-6">
+                  <RecordingUploader
+                    meetingId={meeting.id}
+                    onUploaded={handleUploaded}
+                  />
                   {meeting.recordings.map((recording) => (
                     <RecordingCard
                       key={recording.id}
@@ -225,10 +248,6 @@ export default function MeetingDetailPage() {
                       recording={recording}
                     />
                   ))}
-                  <RecordingUploader
-                    meetingId={meeting.id}
-                    onUploaded={handleUploaded}
-                  />
                 </Card.Content>
               </Card>
 
@@ -238,7 +257,10 @@ export default function MeetingDetailPage() {
                     <Card.Title>Summary</Card.Title>
                   </Card.Header>
                   <Card.Content>
-                    <MeetingSummarySection summary={meeting.summary} />
+                    <MeetingSummarySection
+                      isUpdating={isSummaryPending}
+                      summary={meeting.summary}
+                    />
                   </Card.Content>
                 </Card>
               ) : null}

@@ -43,6 +43,14 @@ export interface MeetingSummary {
   summaryText: string | null;
   actionItems: ActionItem[];
   decisions: string[];
+  /**
+   * Ids of the recordings already folded into `summaryText`/`actionItems`/`decisions`. A `READY`
+   * summary whose `foldedRecordingIds` doesn't yet cover every currently-`READY` recording is a
+   * transient snapshot (the API's `update_meeting` agent tool can briefly settle `status` to
+   * `READY` mid-fold without this field) rather than the fold's real, final result — see
+   * `MeetingDetailPage`'s reconciliation logic.
+   */
+  foldedRecordingIds: string[];
 }
 
 export interface MeetingDetail extends Meeting {
