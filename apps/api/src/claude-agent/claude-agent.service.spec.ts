@@ -10,15 +10,27 @@ const HAIKU_MODEL = 'claude-haiku-4-5';
 describe('ClaudeAgentService', () => {
   it('delegates to the injected ClaudeAgentRunner', async () => {
     const runClaudeAgent = jest
-      .fn<ReturnType<ClaudeAgentRunner>, [string, Options]>()
+      .fn<ReturnType<ClaudeAgentRunner>, [string, Options, string?]>()
       .mockResolvedValue({ text: 'pong', structuredOutput: undefined });
     const service = new ClaudeAgentService(runClaudeAgent);
     const options: Options = { model: HAIKU_MODEL, tools: [] };
 
     const result = await service.ask('ping', options);
 
-    expect(runClaudeAgent).toHaveBeenCalledWith('ping', options);
+    expect(runClaudeAgent).toHaveBeenCalledWith('ping', options, undefined);
     expect(result).toEqual({ text: 'pong', structuredOutput: undefined });
+  });
+
+  it('forwards an explicit meetingId to the injected ClaudeAgentRunner', async () => {
+    const runClaudeAgent = jest
+      .fn<ReturnType<ClaudeAgentRunner>, [string, Options, string?]>()
+      .mockResolvedValue({ text: 'pong', structuredOutput: undefined });
+    const service = new ClaudeAgentService(runClaudeAgent);
+    const options: Options = { model: HAIKU_MODEL, tools: [] };
+
+    await service.ask('ping', options, 'meeting-1');
+
+    expect(runClaudeAgent).toHaveBeenCalledWith('ping', options, 'meeting-1');
   });
 
   it('propagates a rejection from the injected ClaudeAgentRunner', async () => {

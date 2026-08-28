@@ -13,10 +13,16 @@ export interface ClaudeAgentReply {
   structuredOutput: unknown;
 }
 
-/** A function that sends a prompt to Claude via the Claude Agent SDK and resolves with its reply. */
+/**
+ * A function that sends a prompt to Claude via the Claude Agent SDK and resolves with its reply.
+ *
+ * `meetingId` is optional and used only to tag the run's cost/usage log line (see
+ * `claude-agent.module.ts`'s `runClaudeAgent`) — it plays no part in the SDK call itself.
+ */
 export type ClaudeAgentRunner = (
   prompt: string,
   options: Options,
+  meetingId?: string,
 ) => Promise<ClaudeAgentReply>;
 
 /** DI token for the `ClaudeAgentRunner` in use — swapped for a stub in tests that don't need the real SDK subprocess. */
