@@ -12,6 +12,7 @@ export interface MeetingSummaryResponse {
   summaryText: string | null;
   actionItems: ActionItemPayload[];
   decisions: string[];
+  foldedRecordingIds: string[];
 }
 
 /** `null` when the meeting has no `MeetingSummary` row yet (e.g. no recording has reached `READY` transcription). */
@@ -26,5 +27,6 @@ export function toMeetingSummaryResponse(
     summaryText: summary.summaryText,
     actionItems: summary.actionItems as unknown as ActionItemPayload[],
     decisions: summary.decisions as unknown as string[],
+    foldedRecordingIds: summary.foldedRecordingIds,
   };
 }
