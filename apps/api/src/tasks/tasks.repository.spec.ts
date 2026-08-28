@@ -53,8 +53,8 @@ describe('TaskRepository', () => {
       await repository.search('roadmap doc');
 
       const sql = queryRaw.mock.calls[0][0];
-      expect(sql.text).not.toContain('AND "sourceMeetingId"');
-      expect(sql.values).toEqual(['roadmap doc', 0.3, 'roadmap doc', 10]);
+      expect(sql.text).not.toContain('WHERE "sourceMeetingId"');
+      expect(sql.values).toEqual(['roadmap doc', 0.3, 10]);
     });
 
     it('filters matches to the given meeting when sourceMeetingId is provided', async () => {
@@ -63,14 +63,17 @@ describe('TaskRepository', () => {
       await repository.search('roadmap doc', 1, 'meeting-1');
 
       const sql = queryRaw.mock.calls[0][0];
-      expect(sql.text).toContain('AND "sourceMeetingId"');
-      expect(sql.values).toEqual([
-        'roadmap doc',
-        0.3,
-        'meeting-1',
-        'roadmap doc',
-        1,
-      ]);
+      expect(sql.text).toContain('WHERE "sourceMeetingId"');
+      expect(sql.values).toEqual(['roadmap doc', 'meeting-1', 0.3, 1]);
+    });
+
+    it('computes the title-similarity expression only once per row', async () => {
+      queryRaw.mockResolvedValue([task]);
+
+      await repository.search('roadmap doc');
+
+      const sql = queryRaw.mock.calls[0][0];
+      expect(sql.text.match(/similarity\("title"/g)?.length).toBe(1);
     });
   });
 

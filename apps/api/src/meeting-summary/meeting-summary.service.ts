@@ -60,6 +60,15 @@ function resumeFoldFrom(
     return { startIndex: 0 };
   }
   const foldedIds = existing.foldedRecordingIds;
+  if (foldedIds.length === 0) {
+    // Nothing has ever been successfully folded into this row — e.g. `existing.summaryText` is
+    // leftover from an `update_meeting` tool call mid-fold on a run that then failed before its
+    // own trailing write (which is the only thing that sets `foldedRecordingIds`) ever ran. An
+    // empty array is vacuously a prefix of anything, so without this early return the checks below
+    // would seed a full-from-scratch fold (`startIndex: 0`) with that stale content instead of
+    // actually starting clean.
+    return { startIndex: 0 };
+  }
   const isPrefix =
     foldedIds.length <= newIds.length &&
     foldedIds.every((id, index) => id === newIds[index]);
@@ -166,24 +175,42 @@ export class MeetingSummaryService {
     }
 
     const newIds = readyRecordings.map((recording) => recording.id);
-    const existing =
-      await this.meetingSummaryRepository.findByMeetingId(meetingId);
-    const resumePoint = resumeFoldFrom(existing, newIds);
-
-    const started =
-      await this.meetingSummaryRepository.startProcessing(meetingId);
+    // Safe to run concurrently: `startProcessing` only ever touches `status`, never
+    // `foldedRecordingIds`/`summaryText`/`actionItems`/`decisions` — the fields `resumeFoldFrom`
+    // reads from `existing` — so it can't change what this read observes. In the one case where
+    // ordering could matter (no row exists yet and `startProcessing` creates one), `existing` may
+    // race to see that brand-new placeholder row instead of `null`, but `resumeFoldFrom` treats a
+    // row with `summaryText: null` exactly like no row at all, so the outcome is identical either
+    // way.
+    const [existing, started] = await Promise.all([
+      this.meetingSummaryRepository.findByMeetingId(meetingId),
+      this.meetingSummaryRepository.startProcessing(meetingId),
+    ]);
     if (!started) {
       return;
     }
+    const resumePoint = resumeFoldFrom(existing, newIds);
 
     try {
       let result = resumePoint.seed;
-      for (const recording of readyRecordings.slice(resumePoint.startIndex)) {
-        result = await this.summarize(
+      const toFold = readyRecordings.slice(resumePoint.startIndex);
+      if (toFold.length > 0) {
+        // Built once and reused across every recording still left to fold in this run, rather
+        // than once per `summarize` call — the tool set is identical every time (same `meetingId`),
+        // so rebuilding it per recording was pure overhead on top of the real agent calls.
+        const meetingToolsServer = await createMeetingToolsServer(
           meetingId,
-          recording.transcriptText,
-          result,
+          this.taskService,
+          this,
         );
+        for (const recording of toFold) {
+          result = await this.summarize(
+            meetingId,
+            recording.transcriptText,
+            result,
+            meetingToolsServer,
+          );
+        }
       }
       if (!result) {
         throw new Error(
@@ -234,30 +261,36 @@ export class MeetingSummaryService {
    * recordings of the same meeting; the prompt instructs the model to extend and de-duplicate
    * against it rather than restart from scratch.
    *
-   * If `parseSummaryReply` rejects the reply (malformed JSON, or a shape `outputFormat`'s schema
-   * didn't catch), this re-asks the agent with the same prompt/options up to
-   * `MAX_SUMMARY_ATTEMPTS` times rather than failing on the first bad reply — Claude occasionally
-   * returns a placeholder/truncated `result` instead of the schema-checked `structured_output`.
-   * A retried attempt re-running `upsert_task`/`update_meeting` is safe to repeat: `upsert_task`'s
-   * dedup is scoped to this same `meetingId` (see `meeting-tools.ts`), and `update_meeting` simply
-   * overwrites with what should be the same final content. Only the last attempt's error is
-   * thrown, once every attempt has failed.
+   * If the attempt fails — the agent call itself throws (e.g. a transient SDK/API error), or
+   * `parseSummaryReply` rejects a reply that came back (malformed JSON, or a shape `outputFormat`'s
+   * schema didn't catch) — this re-asks the agent with the same prompt/options up to
+   * `MAX_SUMMARY_ATTEMPTS` times rather than failing on the first bad attempt; Claude occasionally
+   * returns a placeholder/truncated `result` instead of the schema-checked `structured_output`, and
+   * the underlying SDK call can fail transiently too. A retried attempt re-running
+   * `upsert_task`/`update_meeting` is safe to repeat: `upsert_task`'s dedup is scoped to this same
+   * `meetingId` (see `meeting-tools.ts`), and `update_meeting` simply overwrites with what should
+   * be the same final content. Only the last attempt's error is thrown, once every attempt has
+   * failed.
+   *
+   * `meetingToolsServer` lets a caller folding several recordings in one `generateForMeeting` run
+   * (see above) build the `meeting` MCP tool set once and pass it into every `summarize` call
+   * instead of this method rebuilding an identical one (same `meetingId`) on every call; omitted,
+   * it builds its own — the shape a caller outside the fold loop (or a test) wants.
    */
   async summarize(
     meetingId: string,
     transcriptText: string,
     previous?: SummaryGenerationResult,
+    meetingToolsServer?: Awaited<ReturnType<typeof createMeetingToolsServer>>,
   ): Promise<SummaryGenerationResult> {
     const prompt = buildSummaryPrompt(transcriptText, previous);
     const options: Parameters<ClaudeAgentService['ask']>[1] = {
       model: SUMMARY_MODEL,
       tools: [],
       mcpServers: {
-        [MEETING_TOOLS_SERVER_NAME]: await createMeetingToolsServer(
-          meetingId,
-          this.taskService,
-          this,
-        ),
+        [MEETING_TOOLS_SERVER_NAME]:
+          meetingToolsServer ??
+          (await createMeetingToolsServer(meetingId, this.taskService, this)),
       },
       allowedTools: MEETING_ALLOWED_TOOLS,
       systemPrompt: MEETING_AGENT_SYSTEM_PROMPT,
@@ -268,22 +301,22 @@ export class MeetingSummaryService {
     };
 
     for (let attempt = 1; attempt <= MAX_SUMMARY_ATTEMPTS; attempt++) {
-      const { text, structuredOutput } = await this.claudeAgentService.ask(
-        prompt,
-        options,
-      );
-      const reply =
-        structuredOutput !== undefined
-          ? JSON.stringify(structuredOutput)
-          : text;
       try {
+        const { text, structuredOutput } = await this.claudeAgentService.ask(
+          prompt,
+          options,
+        );
+        const reply =
+          structuredOutput !== undefined
+            ? JSON.stringify(structuredOutput)
+            : text;
         return parseSummaryReply(reply);
       } catch (err) {
         if (attempt === MAX_SUMMARY_ATTEMPTS) {
           throw err;
         }
         this.logger.warn(
-          `summarize attempt ${attempt}/${MAX_SUMMARY_ATTEMPTS} for meeting ${meetingId} got an invalid reply, retrying: ${err instanceof Error ? err.message : String(err)}`,
+          `summarize attempt ${attempt}/${MAX_SUMMARY_ATTEMPTS} for meeting ${meetingId} failed, retrying: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }

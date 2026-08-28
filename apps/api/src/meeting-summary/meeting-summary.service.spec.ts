@@ -345,7 +345,7 @@ describe('MeetingSummaryService', () => {
       });
     });
 
-    it('marks the run FAILED when the underlying Claude call rejects', async () => {
+    it('retries and then marks the run FAILED when the underlying Claude call rejects', async () => {
       runClaudeAgent.mockRejectedValue(new Error('agent crashed'));
       const service = new MeetingSummaryService(
         claudeAgentService,
@@ -359,6 +359,10 @@ describe('MeetingSummaryService', () => {
         true,
       );
 
+      // The SDK call itself throwing must be retried the same as an invalid reply — not just a
+      // parse failure — since it's exactly the kind of transient failure MAX_SUMMARY_ATTEMPTS
+      // exists to tolerate.
+      expect(runClaudeAgent).toHaveBeenCalledTimes(3);
       expect(updateStatusIfCurrent).toHaveBeenCalledWith(meetingId, {
         status: SummaryStatus.FAILED,
       });
@@ -639,6 +643,53 @@ describe('MeetingSummaryService', () => {
           foldedRecordingIds: ['rec-1'],
         }),
       );
+    });
+
+    it('does not seed a full refold with stale content when foldedRecordingIds is empty but summaryText is not', async () => {
+      // This state happens when an earlier run's `update_meeting` tool call wrote content
+      // mid-fold (MeetingSummaryRepository.upsertContent, which never touches
+      // foldedRecordingIds) and that run then failed before its own trailing write — the only
+      // thing that sets foldedRecordingIds — ever ran. An empty foldedRecordingIds is vacuously a
+      // "prefix" of any id list, so without the fix this stale summaryText would get seeded into
+      // what should be a clean from-scratch fold.
+      findByMeetingId.mockResolvedValue({
+        summaryText: 'Stale content from a mid-fold update_meeting call.',
+        actionItems: [{ description: 'Stale action item' }],
+        decisions: ['Stale decision'],
+        foldedRecordingIds: [],
+      });
+      runClaudeAgent.mockResolvedValue(
+        textReply(
+          JSON.stringify({
+            summaryText: 'Clean refold, no stale content.',
+            actionItems: [],
+            decisions: [],
+          }),
+        ),
+      );
+      const service = new MeetingSummaryService(
+        claudeAgentService,
+        repository,
+        taskService,
+      );
+
+      await service.generateForMeeting(
+        meetingId,
+        [{ id: 'rec-1', transcriptText: 'the transcript text' }],
+        true,
+      );
+
+      const [prompt] = runClaudeAgent.mock.calls[0];
+      expect(prompt).not.toContain('Stale content from a mid-fold');
+      expect(prompt).not.toContain('Previous summary so far');
+
+      expect(updateStatusIfCurrent).toHaveBeenCalledWith(meetingId, {
+        status: SummaryStatus.READY,
+        summaryText: 'Clean refold, no stale content.',
+        actionItems: [],
+        decisions: [],
+        foldedRecordingIds: ['rec-1'],
+      });
     });
   });
 

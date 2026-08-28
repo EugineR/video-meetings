@@ -2,6 +2,11 @@ import { Task, TaskStatus } from '@prisma/client';
 import { TaskRepository } from './tasks.repository';
 import { TaskService } from './tasks.service';
 
+/** Lets a pending `.then`/`.catch` chain (any number of hops) settle before assertions. */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 describe('TaskService', () => {
   const existingTask: Task = {
     id: 'task-1',
@@ -127,6 +132,71 @@ describe('TaskService', () => {
         sourceMeetingId: 'meeting-2',
       });
       expect(update).not.toHaveBeenCalled();
+    });
+
+    it('serializes concurrent upserts for the same meeting so a later one always searches after the earlier one writes', async () => {
+      let resolveFirstSearch!: (tasks: Task[]) => void;
+      search.mockImplementationOnce(
+        () =>
+          new Promise<Task[]>((resolve) => {
+            resolveFirstSearch = resolve;
+          }),
+      );
+      search.mockResolvedValueOnce([existingTask]);
+      create.mockResolvedValue(existingTask);
+      const updatedTask = { ...existingTask, status: TaskStatus.DONE };
+      update.mockResolvedValue(updatedTask);
+
+      const firstUpsert = service.upsert({
+        title: 'Draft the roadmap doc',
+        sourceMeetingId: 'meeting-1',
+      });
+      const secondUpsert = service.upsert({
+        title: 'Draft roadmap document',
+        sourceMeetingId: 'meeting-1',
+      });
+
+      await flushMicrotasks();
+      // The second upsert's search must not have started yet — it's queued behind the first, which
+      // hasn't resolved. Without the per-meeting queue, both would search concurrently, each seeing
+      // no match, and both would create a duplicate task.
+      expect(search).toHaveBeenCalledTimes(1);
+
+      resolveFirstSearch([]);
+      await firstUpsert;
+      await secondUpsert;
+
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not serialize upserts for different meetings against each other', async () => {
+      let resolveFirstSearch!: (tasks: Task[]) => void;
+      search.mockImplementationOnce(
+        () =>
+          new Promise<Task[]>((resolve) => {
+            resolveFirstSearch = resolve;
+          }),
+      );
+      search.mockResolvedValueOnce([]);
+      create.mockResolvedValue(existingTask);
+
+      const firstUpsert = service.upsert({
+        title: 'Task for meeting 1',
+        sourceMeetingId: 'meeting-1',
+      });
+      const secondUpsert = service.upsert({
+        title: 'Task for meeting 2',
+        sourceMeetingId: 'meeting-2',
+      });
+
+      await flushMicrotasks();
+      expect(search).toHaveBeenCalledTimes(2);
+
+      resolveFirstSearch([]);
+      await firstUpsert;
+      await secondUpsert;
     });
   });
 });

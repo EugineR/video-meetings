@@ -10,6 +10,15 @@ export interface UpsertTaskInput {
 
 @Injectable()
 export class TaskService {
+  /**
+   * Chains `upsert` calls per `sourceMeetingId` so a search-then-write for one meeting never
+   * overlaps another in-flight one for the same meeting — see `upsert`'s own doc comment for why.
+   * Mirrors `SummaryReconciliationService.reconcile`'s per-`meetingId` chaining, except each queued
+   * call's result (or rejection) is returned to its own caller rather than swallowed, since
+   * `upsert_task` (`meeting-tools.ts`) needs the created/updated `Task` back.
+   */
+  private readonly upsertQueues = new Map<string, Promise<unknown>>();
+
   constructor(private readonly tasksRepository: TaskRepository) {}
 
   /** Tasks whose title is textually similar to `query`, most similar first. */
@@ -32,8 +41,33 @@ export class TaskService {
    * one meeting silently rewrite another meeting's task, with no meeting id involved at all — a
    * caller only ever needs `search` (read-only) to notice a similar task exists elsewhere; `upsert`
    * must never mutate a row it doesn't own.
+   *
+   * Chained per `sourceMeetingId` via `upsertQueues` rather than run directly: the Claude Agent SDK
+   * can dispatch several tool calls from one model turn concurrently (its own docs: "PostToolUse
+   * fires per-tool and may run concurrently for parallel tool calls"), and this search-then-write
+   * isn't atomic — two concurrent `upsert` calls for near-duplicate titles in the same meeting could
+   * both run `search` before either `create` commits, both find no match, and both create a
+   * duplicate `Task`. Chaining serializes every `upsert` for a given meeting so each one's `search`
+   * always sees the previous one's write.
    */
   async upsert(input: UpsertTaskInput): Promise<Task> {
+    const previous =
+      this.upsertQueues.get(input.sourceMeetingId) ?? Promise.resolve();
+    const thisUpsert = previous
+      .catch(() => undefined)
+      .then(() => this.doUpsert(input));
+    this.upsertQueues.set(input.sourceMeetingId, thisUpsert);
+    thisUpsert
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.upsertQueues.get(input.sourceMeetingId) === thisUpsert) {
+          this.upsertQueues.delete(input.sourceMeetingId);
+        }
+      });
+    return thisUpsert;
+  }
+
+  private async doUpsert(input: UpsertTaskInput): Promise<Task> {
     const [bestMatch] = await this.tasksRepository.search(
       input.title,
       1,

@@ -37,10 +37,14 @@ export class TaskRepository {
     return this.prisma.$queryRaw<Task[]>(
       Prisma.sql`
         SELECT "id", "title", "sourceMeetingId", "status", "createdAt"
-        FROM "tasks"
-        WHERE similarity("title", ${query}) > ${MIN_TITLE_SIMILARITY}
-        ${sourceMeetingId ? Prisma.sql`AND "sourceMeetingId" = ${sourceMeetingId}` : Prisma.empty}
-        ORDER BY similarity("title", ${query}) DESC
+        FROM (
+          SELECT "id", "title", "sourceMeetingId", "status", "createdAt",
+                 similarity("title", ${query}) AS "titleSimilarity"
+          FROM "tasks"
+          ${sourceMeetingId ? Prisma.sql`WHERE "sourceMeetingId" = ${sourceMeetingId}` : Prisma.empty}
+        ) "scored"
+        WHERE "titleSimilarity" > ${MIN_TITLE_SIMILARITY}
+        ORDER BY "titleSimilarity" DESC
         LIMIT ${limit}
       `,
     );
