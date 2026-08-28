@@ -80,3 +80,10 @@ apps/api/whisper-models/
 
 # Manual test fixtures + test-account credentials (never committed)
 .samples/
+
+# Skills installed by `npx skills add` live in .agents/skills/ and are committed there.
+# The entries the CLI adds under .claude/skills/ for them are machine-local symlinks
+# into that directory; recreate them with `npx skills install`.
+.claude/skills/playwright-best-practices
+.claude/skills/vercel-composition-patterns
+.claude/skills/verification-before-completion
