@@ -1,13 +1,23 @@
 import { SummaryGenerationResult } from './summary-response-parser';
 
 /**
- * Builds the single-turn prompt sent to Claude for meeting summarization. Asks for a defined JSON
- * shape only (no prose, no markdown fences) so `parseSummaryReply` can deserialize it
- * deterministically instead of scraping free-form text. Deliberately does not mention which
- * meeting this is — the `meeting` MCP tools (`upsert_task`/`update_meeting`) take no meeting id
- * as input; `createMeetingToolsServer` binds the actual meeting id itself (see
- * `MeetingSummaryService.summarize`), so the model has no way to redirect a tool call to a
- * different meeting even if the transcript tries to instruct it to.
+ * Builds the prompt sent to Claude for meeting summarization. Deliberately does not tell the
+ * model to answer with "only JSON, nothing else" or otherwise imply a single-turn reply: the
+ * agent is expected to first call the `meeting` MCP tools (`find_tasks`/`upsert_task` per
+ * `MEETING_AGENT_SYSTEM_PROMPT`, then `update_meeting`) and only then submit its final answer —
+ * `options.outputFormat` (see `MeetingSummaryService.summarize`) is what enforces the JSON shape
+ * on that final answer via the SDK's own structured-output mechanism, so nothing here needs to.
+ * An earlier version of this prompt *did* say "reply with ONLY a single JSON object ... nothing
+ * before or after it", left over from before the `meeting` tools existed — that line made the
+ * model skip straight to a direct JSON answer without ever calling a tool, silently defeating the
+ * whole find_tasks/upsert_task/update_meeting flow (confirmed by comparing tool-call traces with
+ * and without that line — same prompt otherwise, same model). Do not reintroduce it or any
+ * equivalent "just answer now" phrasing.
+ *
+ * Deliberately does not mention which meeting this is — the `meeting` MCP tools
+ * (`upsert_task`/`update_meeting`) take no meeting id as input; `createMeetingToolsServer` binds
+ * the actual meeting id itself (see `MeetingSummaryService.summarize`), so the model has no way to
+ * redirect a tool call to a different meeting even if the transcript tries to instruct it to.
  *
  * When `previous` is given (a meeting with more than one recording, folding in a later one), the
  * prompt includes the summary/action items/decisions already generated from earlier recordings of
@@ -40,7 +50,7 @@ Produce an UPDATED summary/action items/decisions for the meeting as a whole: ex
 
   return `You are generating a meeting summary from a transcript for a note-taking application.
 
-${previousSection}Read the transcript below and reply with ONLY a single JSON object — no prose, no markdown code fences, nothing before or after it — with exactly these fields:
+${previousSection}Read the transcript below. First, use the meeting tools available to you to record any action items as tasks and to write the meeting's summary and decisions, following the rules in your instructions. Once you've done that, submit your final answer with exactly these fields:
 
 - "summaryText": a concise prose summary of the meeting (string).
 - "actionItems": an array of objects, each with "description" (string, required, free text) and "assignee" (string, include this field only when the transcript names a specific person responsible for that item; omit the field entirely otherwise — never invent a name).

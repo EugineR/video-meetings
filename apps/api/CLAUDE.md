@@ -148,6 +148,27 @@ The reasoning behind them is in `docs/architecture/api.md`.
   the reply, before letting the error propagate to `generateForMeeting`'s `FAILED`-marking catch.
   Safe to repeat: a retried attempt re-running `upsert_task`/`update_meeting` just re-applies the
   same meeting-scoped dedup/overwrite, not a duplicate write.
+- **`summary-prompt.ts`'s user-turn prompt must never tell the model to answer with "only JSON,
+  nothing else"** — an earlier version did, left over from before the `meeting` tools existed, and
+  it silently made the model skip straight to a direct JSON answer without ever calling
+  `find_tasks`/`upsert_task`/`update_meeting`, even though `MEETING_AGENT_SYSTEM_PROMPT` told it to
+  use them — confirmed by comparing real tool-call traces with and without that line, same model,
+  same transcript. `options.outputFormat` (the SDK's own structured-output mechanism) is what
+  enforces the JSON shape on the final answer; the prompt doesn't need to ask for that too, and
+  doing so actively suppresses tool use. If a future prompt tweak needs to emphasize the reply
+  shape again, phrase it in terms of what to submit _after_ using the tools, never "just answer,
+  nothing else."
+- **`MeetingSummaryService.generateForMeeting` resumes folding instead of always refolding every
+  ready recording from scratch** — `MeetingSummary.foldedRecordingIds` records which recordings (in
+  order) are already reflected in the persisted result; `resumeFoldFrom` only falls back to a full
+  refold when the new ready-recording-id list isn't an exact, in-order extension of that (a
+  recording finished out of order, or the ready set shrank because one was deleted). Without this,
+  every recording finishing transcription re-triggers a full refold of every ready recording so
+  far — O(N²) real agent calls for N recordings finishing close together, since
+  `SummaryReconciliationService` chains (never parallelizes) runs for the same meeting. Never make
+  this always-refold again without also fixing the chaining, or reintroduce per-run refolding as a
+  "simplification" — it's the main driver of end-to-end summary latency once a meeting has more
+  than one or two recordings.
 
 ## Testing
 

@@ -58,10 +58,12 @@ export class SummaryReconciliationService {
     const recordings =
       await this.recordingsRepository.findByMeetingId(meetingId);
 
-    const readyTranscripts = recordings
-      .filter((r) => r.status === RecordingStatus.READY)
-      .map((r) => r.transcriptText)
-      .filter((text): text is string => text !== null);
+    const readyRecordings = recordings
+      .filter(
+        (r): r is typeof r & { transcriptText: string } =>
+          r.status === RecordingStatus.READY && r.transcriptText !== null,
+      )
+      .map((r) => ({ id: r.id, transcriptText: r.transcriptText }));
 
     const allRecordingsTerminal = recordings.every(
       (r) =>
@@ -71,7 +73,7 @@ export class SummaryReconciliationService {
 
     await this.meetingSummaryService.generateForMeeting(
       meetingId,
-      readyTranscripts,
+      readyRecordings,
       allRecordingsTerminal,
     );
   }

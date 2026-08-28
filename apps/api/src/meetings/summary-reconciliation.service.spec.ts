@@ -60,7 +60,7 @@ describe('SummaryReconciliationService', () => {
 
     expect(generateForMeeting).toHaveBeenCalledWith(
       meetingId,
-      ['the transcript'],
+      [{ id: 'recording-1', transcriptText: 'the transcript' }],
       true,
     );
   });
@@ -79,7 +79,7 @@ describe('SummaryReconciliationService', () => {
 
     expect(generateForMeeting).toHaveBeenCalledWith(
       meetingId,
-      ['the transcript'],
+      [{ id: 'recording-1', transcriptText: 'the transcript' }],
       false,
     );
   });
@@ -110,7 +110,7 @@ describe('SummaryReconciliationService', () => {
 
     expect(generateForMeeting).toHaveBeenCalledWith(
       meetingId,
-      ['earlier transcript'],
+      [{ id: 'recording-2', transcriptText: 'earlier transcript' }],
       true,
     );
   });
@@ -129,7 +129,7 @@ describe('SummaryReconciliationService', () => {
 
     expect(generateForMeeting).toHaveBeenCalledWith(
       meetingId,
-      ['the transcript'],
+      [{ id: 'recording-1', transcriptText: 'the transcript' }],
       true,
     );
   });
@@ -183,7 +183,10 @@ describe('SummaryReconciliationService', () => {
     expect(generateForMeeting).toHaveBeenNthCalledWith(
       2,
       meetingId,
-      ['first transcript', 'second transcript'],
+      [
+        { id: 'recording-1', transcriptText: 'first transcript' },
+        { id: 'recording-2', transcriptText: 'second transcript' },
+      ],
       true,
     );
   });

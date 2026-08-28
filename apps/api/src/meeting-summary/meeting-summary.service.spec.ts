@@ -210,16 +210,19 @@ describe('MeetingSummaryService', () => {
   });
 
   describe('generateForMeeting', () => {
+    let findByMeetingId: jest.Mock;
     let startProcessing: jest.Mock;
     let updateStatusIfCurrent: jest.Mock;
     let deleteIfExists: jest.Mock;
     let repository: MeetingSummaryRepository;
 
     beforeEach(() => {
+      findByMeetingId = jest.fn().mockResolvedValue(null);
       startProcessing = jest.fn().mockResolvedValue({ id: 'summary-1' });
       updateStatusIfCurrent = jest.fn().mockResolvedValue(true);
       deleteIfExists = jest.fn().mockResolvedValue(undefined);
       repository = {
+        findByMeetingId,
         startProcessing,
         updateStatusIfCurrent,
         deleteIfExists,
@@ -236,7 +239,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
-        ['the transcript text'],
+        [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );
 
@@ -249,6 +252,7 @@ describe('MeetingSummaryService', () => {
           { description: 'Book the kickoff room' },
         ],
         decisions: ['Ship the beta in September'],
+        foldedRecordingIds: ['rec-1'],
       });
     });
 
@@ -262,7 +266,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
-        ['the transcript text'],
+        [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         false,
       );
 
@@ -293,7 +297,10 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
-        ['first recording transcript', 'second recording transcript'],
+        [
+          { id: 'rec-1', transcriptText: 'first recording transcript' },
+          { id: 'rec-2', transcriptText: 'second recording transcript' },
+        ],
         true,
       );
 
@@ -315,6 +322,7 @@ describe('MeetingSummaryService', () => {
           { description: 'Approve the budget' },
         ],
         decisions: ['Ship the beta in September', 'Cap spend at $10k'],
+        foldedRecordingIds: ['rec-1', 'rec-2'],
       });
     });
 
@@ -328,7 +336,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
-        ['the transcript text'],
+        [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );
 
@@ -347,7 +355,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
-        ['the transcript text'],
+        [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );
 
@@ -368,7 +376,10 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
-        ['first recording transcript', 'second recording transcript'],
+        [
+          { id: 'rec-1', transcriptText: 'first recording transcript' },
+          { id: 'rec-2', transcriptText: 'second recording transcript' },
+        ],
         true,
       );
 
@@ -388,7 +399,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
-        ['the transcript text'],
+        [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );
 
@@ -436,7 +447,11 @@ describe('MeetingSummaryService', () => {
       );
 
       await expect(
-        service.generateForMeeting(meetingId, ['the transcript text'], true),
+        service.generateForMeeting(
+          meetingId,
+          [{ id: 'rec-1', transcriptText: 'the transcript text' }],
+          true,
+        ),
       ).resolves.toBeUndefined();
 
       expect(updateStatusIfCurrent).toHaveBeenCalledWith(meetingId, {
@@ -447,7 +462,183 @@ describe('MeetingSummaryService', () => {
           { description: 'Book the kickoff room' },
         ],
         decisions: ['Ship the beta in September'],
+        foldedRecordingIds: ['rec-1'],
       });
+    });
+
+    it('resumes from the persisted result instead of refolding when new recordings only extend the folded set', async () => {
+      findByMeetingId.mockResolvedValue({
+        summaryText: 'The team agreed on the Q3 roadmap.',
+        actionItems: [
+          { description: 'Draft the roadmap doc', assignee: 'Priya' },
+          { description: 'Book the kickoff room' },
+        ],
+        decisions: ['Ship the beta in September'],
+        foldedRecordingIds: ['rec-1'],
+      });
+      const secondReply = JSON.stringify({
+        summaryText: 'Extended: also covered the budget.',
+        actionItems: [
+          { description: 'Draft the roadmap doc', assignee: 'Priya' },
+          { description: 'Book the kickoff room' },
+          { description: 'Approve the budget' },
+        ],
+        decisions: ['Ship the beta in September', 'Cap spend at $10k'],
+      });
+      runClaudeAgent.mockResolvedValue(textReply(secondReply));
+      const service = new MeetingSummaryService(
+        claudeAgentService,
+        repository,
+        taskService,
+      );
+
+      await service.generateForMeeting(
+        meetingId,
+        [
+          { id: 'rec-1', transcriptText: 'first recording transcript' },
+          { id: 'rec-2', transcriptText: 'second recording transcript' },
+        ],
+        true,
+      );
+
+      expect(runClaudeAgent).toHaveBeenCalledTimes(1);
+      const [prompt] = runClaudeAgent.mock.calls[0];
+      expect(prompt).toContain('second recording transcript');
+      expect(prompt).not.toContain('first recording transcript');
+      expect(prompt).toContain('The team agreed on the Q3 roadmap.');
+
+      expect(updateStatusIfCurrent).toHaveBeenCalledWith(meetingId, {
+        status: SummaryStatus.READY,
+        summaryText: 'Extended: also covered the budget.',
+        actionItems: [
+          { description: 'Draft the roadmap doc', assignee: 'Priya' },
+          { description: 'Book the kickoff room' },
+          { description: 'Approve the budget' },
+        ],
+        decisions: ['Ship the beta in September', 'Cap spend at $10k'],
+        foldedRecordingIds: ['rec-1', 'rec-2'],
+      });
+    });
+
+    it('skips calling Claude entirely when the ready set is unchanged (e.g. a FAILED-only transition)', async () => {
+      findByMeetingId.mockResolvedValue({
+        summaryText: 'The team agreed on the Q3 roadmap.',
+        actionItems: [
+          { description: 'Draft the roadmap doc', assignee: 'Priya' },
+        ],
+        decisions: ['Ship the beta in September'],
+        foldedRecordingIds: ['rec-1'],
+      });
+      const service = new MeetingSummaryService(
+        claudeAgentService,
+        repository,
+        taskService,
+      );
+
+      await service.generateForMeeting(
+        meetingId,
+        [{ id: 'rec-1', transcriptText: 'first recording transcript' }],
+        true,
+      );
+
+      expect(runClaudeAgent).not.toHaveBeenCalled();
+      expect(updateStatusIfCurrent).toHaveBeenCalledWith(meetingId, {
+        status: SummaryStatus.READY,
+        summaryText: 'The team agreed on the Q3 roadmap.',
+        actionItems: [
+          { description: 'Draft the roadmap doc', assignee: 'Priya' },
+        ],
+        decisions: ['Ship the beta in September'],
+        foldedRecordingIds: ['rec-1'],
+      });
+    });
+
+    it('falls back to a full refold when a recording finished out of order (not a suffix append)', async () => {
+      findByMeetingId.mockResolvedValue({
+        summaryText: 'Existing summary covering only rec-2.',
+        actionItems: [],
+        decisions: [],
+        foldedRecordingIds: ['rec-2'],
+      });
+      runClaudeAgent
+        .mockResolvedValueOnce(textReply(validReply))
+        .mockResolvedValueOnce(
+          textReply(
+            JSON.stringify({
+              summaryText: 'Refolded from scratch.',
+              actionItems: [],
+              decisions: [],
+            }),
+          ),
+        );
+      const service = new MeetingSummaryService(
+        claudeAgentService,
+        repository,
+        taskService,
+      );
+
+      await service.generateForMeeting(
+        meetingId,
+        [
+          { id: 'rec-1', transcriptText: 'earlier recording, finished late' },
+          { id: 'rec-2', transcriptText: 'already-folded recording' },
+        ],
+        true,
+      );
+
+      expect(runClaudeAgent).toHaveBeenCalledTimes(2);
+      const [firstPrompt] = runClaudeAgent.mock.calls[0];
+      expect(firstPrompt).toContain('earlier recording, finished late');
+      expect(firstPrompt).not.toContain('Existing summary covering only');
+
+      expect(updateStatusIfCurrent).toHaveBeenCalledWith(
+        meetingId,
+        expect.objectContaining({
+          summaryText: 'Refolded from scratch.',
+          foldedRecordingIds: ['rec-1', 'rec-2'],
+        }),
+      );
+    });
+
+    it('falls back to a full refold when the ready set shrank (a recording was deleted)', async () => {
+      findByMeetingId.mockResolvedValue({
+        summaryText: 'Existing summary covering rec-1 and rec-2.',
+        actionItems: [],
+        decisions: [],
+        foldedRecordingIds: ['rec-1', 'rec-2'],
+      });
+      runClaudeAgent.mockResolvedValue(
+        textReply(
+          JSON.stringify({
+            summaryText: 'Refolded after a deletion.',
+            actionItems: [],
+            decisions: [],
+          }),
+        ),
+      );
+      const service = new MeetingSummaryService(
+        claudeAgentService,
+        repository,
+        taskService,
+      );
+
+      await service.generateForMeeting(
+        meetingId,
+        [{ id: 'rec-1', transcriptText: 'the only remaining recording' }],
+        true,
+      );
+
+      expect(runClaudeAgent).toHaveBeenCalledTimes(1);
+      const [prompt] = runClaudeAgent.mock.calls[0];
+      expect(prompt).not.toContain('Existing summary covering');
+
+      expect(updateStatusIfCurrent).toHaveBeenCalledWith(
+        meetingId,
+        expect.objectContaining({
+          summaryText: 'Refolded after a deletion.',
+          foldedRecordingIds: ['rec-1'],
+        }),
+      );
     });
   });
 

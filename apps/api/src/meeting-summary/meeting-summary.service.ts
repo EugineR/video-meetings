@@ -10,10 +10,71 @@ import { TaskService } from '../tasks/tasks.service';
 import { MeetingSummaryRepository } from './meeting-summary.repository';
 import { buildSummaryPrompt } from './summary-prompt';
 import {
+  ActionItemPayload,
   parseSummaryReply,
   SUMMARY_OUTPUT_JSON_SCHEMA,
   SummaryGenerationResult,
 } from './summary-response-parser';
+
+/** One `READY` recording's transcript, as `SummaryReconciliationService` derives it from the DB. */
+export interface FoldableRecording {
+  id: string;
+  transcriptText: string;
+}
+
+/**
+ * Where `generateForMeeting` should resume folding `readyRecordings` from: `startIndex` is the
+ * first recording not yet reflected in `seed` (0 means fold everyone from scratch), and `seed` is
+ * the already-persisted result to extend, or `undefined` when there's nothing to extend.
+ * `startIndex` and `seed` always agree — `startIndex > 0` never appears without a `seed`, and
+ * `startIndex === readyRecordings.length` (nothing new to fold) always comes with one.
+ */
+interface FoldResumePoint {
+  startIndex: number;
+  seed?: SummaryGenerationResult;
+}
+
+/**
+ * Decides how much of `readyRecordings`' fold work (see `generateForMeeting`) can be skipped by
+ * reusing `existing`'s already-persisted result, instead of refolding every ready recording from
+ * scratch on every run.
+ *
+ * Resuming is safe only when `existing.foldedRecordingIds` is an exact, in-order PREFIX of
+ * `newIds` — i.e. every recording this run considers ready was already folded in, in the same
+ * order, and the only thing that changed is that more recordings joined the tail. That covers the
+ * common case (recordings finish transcribing roughly in upload order) including the case where
+ * nothing changed at all (e.g. a run triggered by an unrelated recording's `FAILED` transition):
+ * `startIndex` lands on `newIds.length` and the caller's fold loop simply doesn't run.
+ *
+ * Anything else — a recording finished out of order and needs to be folded in earlier than the
+ * tail, or the ready set shrank (a recording was deleted) — falls back to `startIndex: 0` (no
+ * `seed`), which makes the caller refold every ready recording from scratch, exactly like before
+ * this resume logic existed. That fallback is what keeps the result correct in those cases: see
+ * `generateForMeeting`'s own doc comment for why a full refold is required there.
+ */
+function resumeFoldFrom(
+  existing: MeetingSummary | null,
+  newIds: string[],
+): FoldResumePoint {
+  if (!existing || existing.summaryText === null) {
+    return { startIndex: 0 };
+  }
+  const foldedIds = existing.foldedRecordingIds;
+  const isPrefix =
+    foldedIds.length <= newIds.length &&
+    foldedIds.every((id, index) => id === newIds[index]);
+  if (!isPrefix) {
+    return { startIndex: 0 };
+  }
+  return {
+    startIndex: foldedIds.length,
+    seed: {
+      summaryText: existing.summaryText,
+      actionItems: existing.actionItems as unknown as ActionItemPayload[],
+      decisions: existing.decisions as unknown as string[],
+    },
+  };
+}
 
 /**
  * Haiku is deliberately cheap/fast here: this is a structured-extraction task (summarize +
@@ -63,14 +124,24 @@ export class MeetingSummaryService {
    * conditioned on the meeting still existing via `MeetingSummaryRepository`
    * (`startProcessing`/`updateStatusIfCurrent`), which are no-ops once it doesn't.
    *
-   * `readyTranscripts` is every currently-`READY` recording's transcript for this meeting, already
-   * ordered by `MeetingRecording.createdAt` (the caller derives it fresh from the database rather
-   * than accumulating it across calls) — `FAILED` recordings are excluded by the caller before this
-   * is ever invoked. Re-running the fold over the full ordered list on every call, rather than
-   * appending only the single newest transcript to whatever was last persisted, keeps the result
-   * correct even when recordings finish transcribing out of the order they were created in, and
-   * means a call triggered by nothing but a `FAILED` transition (see below) still recomputes the
-   * right thing.
+   * `readyRecordings` is every currently-`READY` recording's id/transcript for this meeting,
+   * already ordered by `MeetingRecording.createdAt` (the caller derives it fresh from the database
+   * rather than accumulating it across calls) — `FAILED` recordings are excluded by the caller
+   * before this is ever invoked.
+   *
+   * Folding every ready recording from scratch on every call would keep the result correct
+   * regardless of completion order, but costs one real agent call per recording *per run* — a
+   * meeting with N recordings finishing close together triggers O(N²) agent calls in total, since
+   * each new arrival's run re-folds every recording already folded by an earlier run too.
+   * `resumeFoldFrom` avoids that in the common case: when `readyRecordings`' ids are an exact,
+   * in-order extension of what the persisted `MeetingSummary.foldedRecordingIds` already reflects
+   * (recordings finishing in upload order, the usual case), this resumes from that persisted
+   * result and only folds the new tail — including the case where nothing changed at all (e.g. a
+   * run triggered by nothing but an unrelated recording's `FAILED` transition, see below), which
+   * costs zero agent calls. It falls back to a full refold from scratch — the only thing that can
+   * still go wrong being a recording that finished out of order (needs folding in earlier than the
+   * tail) or the ready set having shrunk (a recording was deleted) — see `resumeFoldFrom`'s own
+   * doc comment for the exact rule.
    *
    * `allRecordingsTerminal` tells this run whether every one of the meeting's recordings (`READY`
    * or `FAILED`) has now finished, in which case a successful run settles the summary at `READY`;
@@ -79,20 +150,25 @@ export class MeetingSummaryService {
    * recording to finish happens to fail would stay stuck at `PENDING` forever even though its
    * earlier, successfully transcribed recordings already have a summary.
    *
-   * When `readyTranscripts` is empty (no recording has reached `READY` yet, e.g. every recording so
+   * When `readyRecordings` is empty (no recording has reached `READY` yet, e.g. every recording so
    * far has failed transcription, or the one recording that had reached `READY` was since deleted),
    * there is nothing to summarize: any existing `MeetingSummary` row is removed — rather than left
    * in place with stale content, or in a processing state — and none is (re)created.
    */
   async generateForMeeting(
     meetingId: string,
-    readyTranscripts: string[],
+    readyRecordings: FoldableRecording[],
     allRecordingsTerminal: boolean,
   ): Promise<void> {
-    if (readyTranscripts.length === 0) {
+    if (readyRecordings.length === 0) {
       await this.meetingSummaryRepository.deleteIfExists(meetingId);
       return;
     }
+
+    const newIds = readyRecordings.map((recording) => recording.id);
+    const existing =
+      await this.meetingSummaryRepository.findByMeetingId(meetingId);
+    const resumePoint = resumeFoldFrom(existing, newIds);
 
     const started =
       await this.meetingSummaryRepository.startProcessing(meetingId);
@@ -101,18 +177,28 @@ export class MeetingSummaryService {
     }
 
     try {
-      let result: SummaryGenerationResult | undefined;
-      for (const transcriptText of readyTranscripts) {
-        result = await this.summarize(meetingId, transcriptText, result);
+      let result = resumePoint.seed;
+      for (const recording of readyRecordings.slice(resumePoint.startIndex)) {
+        result = await this.summarize(
+          meetingId,
+          recording.transcriptText,
+          result,
+        );
+      }
+      if (!result) {
+        throw new Error(
+          'unreachable: resumeFoldFrom always seeds a startIndex that reaches the end of readyRecordings',
+        );
       }
 
       await this.meetingSummaryRepository.updateStatusIfCurrent(meetingId, {
         status: allRecordingsTerminal
           ? SummaryStatus.READY
           : SummaryStatus.PENDING,
-        summaryText: result!.summaryText,
-        actionItems: result!.actionItems as unknown as Prisma.InputJsonValue,
-        decisions: result!.decisions,
+        summaryText: result.summaryText,
+        actionItems: result.actionItems as unknown as Prisma.InputJsonValue,
+        decisions: result.decisions,
+        foldedRecordingIds: newIds,
       });
     } catch (err) {
       this.logger.error(

@@ -12,6 +12,7 @@ export interface UpdateSummaryStatusInput {
   summaryText?: string | null;
   actionItems?: Prisma.InputJsonValue;
   decisions?: Prisma.InputJsonValue;
+  foldedRecordingIds?: string[];
 }
 
 @Injectable()
