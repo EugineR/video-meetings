@@ -1,8 +1,5 @@
-import { Logger } from '@nestjs/common';
 import { Task, TaskStatus } from '@prisma/client';
 import { z } from 'zod';
-
-const logger = new Logger('MeetingTools');
 
 /**
  * The `meeting` server name and each tool's fully-qualified MCP name
@@ -78,6 +75,10 @@ function errorResult(message: string) {
  * `@anthropic-ai/claude-agent-sdk` is ESM-only, while this app compiles to CommonJS, so `tool` is
  * loaded via a dynamic `import()` rather than a static one — the same reason
  * `claude-agent.module.ts`'s `runClaudeAgent` does.
+ *
+ * None of these handlers log their own call/result — `auditLog` (`./hooks`), wired into every
+ * agent run's `options.hooks.PostToolUse` by `runClaudeAgent`, already logs every tool call's name,
+ * arguments and result centrally; a per-handler `Logger` call here would just duplicate that.
  */
 export async function createMeetingTools(
   meetingId: string,
@@ -96,13 +97,7 @@ export async function createMeetingTools(
         .describe('Free text to match task titles against'),
     },
     async ({ query }) => {
-      logger.log(
-        `find_tasks meetingId=${meetingId} query=${JSON.stringify(query)}`,
-      );
       const matches = await taskService.search(query);
-      logger.log(
-        `find_tasks meetingId=${meetingId} -> ${matches.length} match(es): ${matches.map((m) => m.id).join(', ')}`,
-      );
       return textResult(matches);
     },
     { annotations: { readOnlyHint: true } },
@@ -121,17 +116,11 @@ export async function createMeetingTools(
         ),
     },
     async ({ title, status }) => {
-      logger.log(
-        `upsert_task meetingId=${meetingId} title=${JSON.stringify(title)} status=${status ?? '(unset)'}`,
-      );
       const task = await taskService.upsert({
         title,
         status,
         sourceMeetingId: meetingId,
       });
-      logger.log(
-        `upsert_task meetingId=${meetingId} -> id=${task.id} status=${task.status}`,
-      );
       return textResult(task);
     },
   );
@@ -144,21 +133,14 @@ export async function createMeetingTools(
       decisions: z.array(z.string().min(1)),
     },
     async ({ summary, decisions }) => {
-      logger.log(
-        `update_meeting meetingId=${meetingId} summaryLength=${summary.length} decisions=${decisions.length}`,
-      );
       const updated = await meetingSummaryService.updateContent(
         meetingId,
         summary,
         decisions,
       );
       if (!updated) {
-        logger.warn(
-          `update_meeting meetingId=${meetingId} -> meeting not found`,
-        );
         return errorResult(`Meeting ${meetingId} does not exist.`);
       }
-      logger.log(`update_meeting meetingId=${meetingId} -> ok`);
       return textResult(updated);
     },
   );

@@ -276,6 +276,14 @@ export class MeetingSummaryService {
    * (see above) build the `meeting` MCP tool set once and pass it into every `summarize` call
    * instead of this method rebuilding an identical one (same `meetingId`) on every call; omitted,
    * it builds its own — the shape a caller outside the fold loop (or a test) wants.
+   *
+   * `meetingId` is also passed through to `ClaudeAgentService.ask` purely to tag that run's
+   * cost/usage log line — `runClaudeAgent` (`../claude-agent/claude-agent.module.ts`) is what
+   * installs the `../hooks` policy hooks (`options.hooks` is not set here) and logs
+   * `total_cost_usd`/`usage` once the run's `result` message arrives. `runClaudeAgent` builds a
+   * fresh hook set on every call, so the tool-call budget resets on each retry attempt below rather
+   * than accumulating across them — each attempt is its own agent run either way (see the retry
+   * paragraph above).
    */
   async summarize(
     meetingId: string,
@@ -305,6 +313,7 @@ export class MeetingSummaryService {
         const { text, structuredOutput } = await this.claudeAgentService.ask(
           prompt,
           options,
+          meetingId,
         );
         const reply =
           structuredOutput !== undefined

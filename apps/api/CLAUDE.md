@@ -41,11 +41,21 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
   (Postgres `pg_trgm`). Reached from `summarize`'s agent run via the `meeting` MCP tools.
 - `src/claude-agent/` — `ClaudeAgentService`, a thin wrapper around the Claude Agent SDK for a
   single-turn prompt/response call; `ask` resolves a `ClaudeAgentReply` (`text` plus, when the
-  caller set `options.outputFormat`, the schema-validated `structuredOutput`)
+  caller set `options.outputFormat`, the schema-validated `structuredOutput`). `ClaudeAgentModule`'s
+  `runClaudeAgent` always overwrites `options.hooks` with a fresh `createMeetingHooks()` call
+  (`../hooks`) before calling `query()` — see Invariants — and, once the run's `result` message
+  arrives, logs `total_cost_usd`/`usage` (input/output tokens) tagged with the optional `meetingId`
+  `ask`/`ClaudeAgentRunner` take purely for that log line.
 - `src/meeting-tools.ts` — `createMeetingToolsServer`, wrapping `TaskService`/`MeetingSummaryService`
   (via structural interfaces, not the concrete classes, to avoid a circular import with
   `meeting-summary/`) as a `meeting` SDK MCP server (`find_tasks`/`upsert_task`/`update_meeting`).
   Wired into `MeetingSummaryService.summarize`'s `options.mcpServers`.
+- `src/hooks.ts` — `createMeetingHooks`, the Claude Agent SDK `HookCallback`s guarding every
+  `ClaudeAgentService.ask` run (wired into `options.hooks` by `runClaudeAgent`, not by callers —
+  see `src/claude-agent/` above): `preToolUseGuard` denies `upsert_task` calls with a too-short
+  title, `createCallBudgetHook` caps total tool calls per run (`DEFAULT_TOOL_CALL_BUDGET`),
+  `auditLog` logs every completed tool call via Nest `Logger` — the sole place tool calls are
+  logged; `meeting-tools.ts`'s own handlers don't log.
 
 ## CQRS pattern
 
@@ -119,6 +129,14 @@ The reasoning behind them is in `docs/architecture/api.md`.
   Jest's CommonJS test VM, on **every** script that can reach that code path, not just the unit
   `test` script — `test:e2e` runs it too (`MeetingSummaryService.summarize`, exercised by any e2e
   spec that uploads a recording), so it carries the same flag.
+- **`runClaudeAgent` (`claude-agent.module.ts`) always overwrites `options.hooks` with a fresh
+  `createMeetingHooks()` call** (`hooks.ts`), built inside the function body on every invocation —
+  never hoisted to module scope — so `createCallBudgetHook`'s tool-call counter starts at zero for
+  each run instead of being shared (and silently exhausted) across unrelated meetings. Any
+  `options.hooks` a caller passes in is discarded without a warning; there is currently only one
+  caller (`MeetingSummaryService.summarize`), which doesn't set `hooks` itself for exactly this
+  reason. If a second, non-meeting caller of `ClaudeAgentService.ask` is ever added, this needs to
+  become configurable instead of hardcoded.
 - **`update_meeting` (a `meeting-tools.ts` tool) always settles `MeetingSummary.status` to `READY`**
   — when the agent calls it mid-fold, on a meeting with more than one recording still
   transcribing, the row is briefly `READY` until `MeetingSummaryService.generateForMeeting`'s own
