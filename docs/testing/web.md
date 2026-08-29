@@ -62,7 +62,7 @@ Recording tile flows worth walking explicitly on any change to `RecordingCard.ts
   redesign.
 
 Summary catch-up flow worth walking on any change to `MeetingSummarySection.tsx` or
-`MeetingDetailPage`'s reconciliation logic: a `MeetingSummary` whose `status` is already
+`useMeetingSummaryStatus`/`isMeetingSettled`: a `MeetingSummary` whose `status` is already
 `READY` but whose `foldedRecordingIds` doesn't yet cover every currently-`READY` recording
 (the API's `update_meeting` agent tool can leave the row in exactly this state mid-fold —
 see `docs/architecture/api.md`) must render the existing summary/action items/decisions

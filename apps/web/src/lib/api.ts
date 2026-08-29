@@ -48,7 +48,7 @@ export interface MeetingSummary {
    * summary whose `foldedRecordingIds` doesn't yet cover every currently-`READY` recording is a
    * transient snapshot (the API's `update_meeting` agent tool can briefly settle `status` to
    * `READY` mid-fold without this field) rather than the fold's real, final result — see
-   * `MeetingDetailPage`'s reconciliation logic.
+   * `isMeetingSettled()` in `src/lib/meetings.ts`.
    */
   foldedRecordingIds: string[];
 }

@@ -6,11 +6,12 @@ interface MeetingSummarySectionProps {
   summary: MeetingSummary | null;
   /**
    * True while the summary hasn't caught up with the meeting's current recordings yet (see
-   * `MeetingDetailPage`'s `isSummaryPending`) — including the case where `summary.status` already
-   * reads `READY`: the API's `update_meeting` agent tool can briefly settle it to `READY` mid-fold,
-   * before the real, final result (and possibly more recordings) has been folded in. Shown as an
-   * inline "still updating" notice above the (possibly not-yet-final) content, rather than hiding
-   * it behind the full processing spinner, since there is real content to show in the meantime.
+   * `useMeetingSummaryStatus`'s `isSummaryPending`) — including the case where `summary.status`
+   * already reads `READY`: the API's `update_meeting` agent tool can briefly settle it to `READY`
+   * mid-fold, before the real, final result (and possibly more recordings) has been folded in.
+   * Shown as an inline "still updating" notice above the (possibly not-yet-final) content, rather
+   * than hiding it behind the full processing spinner, since there is real content to show in the
+   * meantime.
    */
   isUpdating: boolean;
 }
@@ -20,7 +21,7 @@ interface MeetingSummarySectionProps {
  * is `READY`, a processing indicator while it's `PENDING`/`PROCESSING` (including while `summary`
  * itself is still `null`, before the background job has created its row), or a failure notice if
  * the summarization run itself errored. The caller decides whether to render this at all — see
- * `MeetingDetailPage`'s `showSummarySection`.
+ * `useMeetingSummaryStatus`'s `showSummarySection`.
  */
 export function MeetingSummarySection({
   summary,

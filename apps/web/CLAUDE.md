@@ -29,8 +29,8 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   primitives (`ErrorText`, `SuccessText`, `LoadingState`, `UserAvatar`) and icons are re-exported
   through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
-  `format.ts`, `validation.ts`, `meetings.ts`, `uploads.ts`, and `queries/` (`client.ts`,
-  `session.ts`, `profile.ts`) — the TanStack Query layer
+  `useMeetingSummaryStatus.ts`, `format.ts`, `validation.ts`, `meetings.ts`, `uploads.ts`, and
+  `queries/` (`client.ts`, `session.ts`, `profile.ts`, `meetings.ts`) — the TanStack Query layer
 
 ## Rules
 
@@ -73,6 +73,14 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   is fetched once — navigating between those routes hits the cache and the header's avatar never
   drops back to initials. Nothing else writes the profile, so a save calls `useApplyProfile()`
   (a `setQueryData` merge of the fields it just saved) instead of invalidating and refetching.
+  The meetings list and the meeting detail follow the same shape in `queries/meetings.ts`: a
+  creation or a row upload writes the one field it knows (`useAddCreatedMeeting`,
+  `useCountUploadedRecording`), while an upload or a deletion on the detail page writes the one
+  row it knows (the recording added or removed) _and_ invalidates that meeting, because the rest
+  of what changed — transcript, summary, `foldedRecordingIds` — only the API can produce. The
+  write is not just cosmetic: `invalidateQueries` does not clear `data`, so without it the page
+  would keep rendering the deleted tile and would re-trust the pre-deletion summary until the
+  refetch landed.
 - **Every session boundary clears the query cache** — `useResetQueryCache()` in `/login`,
   `/register` and `signOut`. Without it the next sign-in on the tab inherits the previous user's
   cached profile, and the cached "no valid token" answer bounces them straight back to `/login`.
@@ -87,10 +95,14 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   written twice.
 - **An unknown or another user's meeting is a 404 `ApiError` rendered inline**, never a blank page
   or a redirect.
-- **The meeting page polls while any of the meeting's recordings has `status` `UPLOADED` or
-  `PROCESSING`**, refetching until each one settles to `READY` (transcript shown) or `FAILED`
-  (failure notice, no transcript) — transcription runs per-file on the API in the background after
-  upload, so the page must catch up to it without a manual reload.
+- **The meeting detail query polls until the meeting is settled**, and the page never sets up an
+  interval of its own: `useMeetingDetailQuery()`'s `refetchInterval` refetches while any recording
+  has `status` `UPLOADED`/`PROCESSING` or the summary has not caught up with them
+  (`isMeetingSettled()` in `src/lib/meetings.ts`), because transcription and summarization run on
+  the API in the background after an upload and the page must catch up without a manual reload.
+  A `READY` summary counts as caught up only when its `foldedRecordingIds` covers exactly the
+  currently-`READY` recordings — the API's `update_meeting` agent tool can settle `status` to
+  `READY` mid-fold, and trusting that stops the polling one write too early.
 
 ## HeroUI v3
 

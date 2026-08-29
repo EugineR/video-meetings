@@ -1,13 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button, Card } from '@heroui/react';
 import {
-  ApiError,
-  getMeetings,
-  type Meeting,
-  type MeetingListItem,
-} from '@/lib/api';
+  useAddCreatedMeeting,
+  useCountUploadedRecording,
+  useMeetingsQuery,
+} from '@/lib/queries/meetings';
 import { CreateMeetingModal } from '@/components/meetings/CreateMeetingModal';
 import { MeetingRow } from '@/components/meetings/MeetingRow';
 import { PlusIcon } from '@/components/icons';
@@ -15,40 +14,10 @@ import { ErrorText } from '@/components/ui/ErrorText';
 import { LoadingState } from '@/components/ui/LoadingState';
 
 export default function Home() {
-  const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
-  const [meetingsError, setMeetingsError] = useState<string | null>(null);
+  const { meetings, meetingsError } = useMeetingsQuery();
+  const addCreatedMeeting = useAddCreatedMeeting();
+  const countUploadedRecording = useCountUploadedRecording();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-
-  useEffect(() => {
-    getMeetings()
-      .then(setMeetings)
-      .catch((err: unknown) => {
-        setMeetingsError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load meetings. Please try again.',
-        );
-      });
-  }, []);
-
-  const handleMeetingCreated = useCallback((meeting: Meeting) => {
-    setMeetings((current) => {
-      const newMeeting: MeetingListItem = { ...meeting, recordingCount: 0 };
-      return current ? [newMeeting, ...current] : [newMeeting];
-    });
-  }, []);
-
-  const handleRecordingUploaded = useCallback((meetingId: string) => {
-    setMeetings((current) =>
-      current
-        ? current.map((meeting) =>
-            meeting.id === meetingId
-              ? { ...meeting, recordingCount: meeting.recordingCount + 1 }
-              : meeting,
-          )
-        : current,
-    );
-  }, []);
 
   const recentMeetings = meetings
     ? [...meetings]
@@ -79,7 +48,7 @@ export default function Home() {
                   highlighted
                   key={meeting.id}
                   meeting={meeting}
-                  onUploaded={handleRecordingUploaded}
+                  onUploaded={countUploadedRecording}
                 />
               ))}
             </ul>
@@ -94,11 +63,15 @@ export default function Home() {
             <Card.Description>Total: {meetings.length}</Card.Description>
           ) : null}
         </Card.Header>
-        <Card.Content>
-          {meetingsError ? (
-            <ErrorText>{meetingsError}</ErrorText>
-          ) : meetings === null ? (
-            <LoadingState subject="meetings" />
+        <Card.Content className="flex flex-col gap-4">
+          {/* A failed *refetch* leaves the cached list in place, so the error is a line
+              above the list rather than a replacement for it — the rows on screen are
+              still real data, and blanking them out would lose more than it explains. */}
+          {meetingsError ? <ErrorText>{meetingsError}</ErrorText> : null}
+          {meetings === null ? (
+            meetingsError ? null : (
+              <LoadingState subject="meetings" />
+            )
           ) : meetings.length === 0 ? (
             <p className="text-sm text-muted">
               You haven&apos;t created any meetings yet.
@@ -109,7 +82,7 @@ export default function Home() {
                 <MeetingRow
                   key={meeting.id}
                   meeting={meeting}
-                  onUploaded={handleRecordingUploaded}
+                  onUploaded={countUploadedRecording}
                 />
               ))}
             </ul>
@@ -119,7 +92,7 @@ export default function Home() {
 
       <CreateMeetingModal
         isOpen={isCreateOpen}
-        onCreated={handleMeetingCreated}
+        onCreated={addCreatedMeeting}
         onOpenChange={setIsCreateOpen}
       />
     </>
