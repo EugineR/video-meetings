@@ -2,39 +2,31 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  Button,
-  Card,
-  FieldError,
-  Form,
-  Input,
-  InputGroup,
-  Label,
-  Link,
-  TextField,
-} from '@heroui/react';
-import { ApiError, loginUser } from '@/lib/api';
+import { Button, Card, Form, Link } from '@heroui/react';
+import { loginUser } from '@/lib/api';
 import { storeAccessToken } from '@/lib/auth';
+import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
 import { useResetQueryCache } from '@/lib/queries/session';
-import { EMAIL_PATTERN } from '@/lib/validation';
-import { EyeIcon, EyeOffIcon } from '@/components/icons';
+import { validateEmail } from '@/lib/validation';
 import { ErrorText } from '@/components/ui/ErrorText';
+import { PasswordField } from '@/components/ui/PasswordField';
+import { TextInputField } from '@/components/ui/TextInputField';
 
 export default function LoginPage() {
   const router = useRouter();
   const resetQueryCache = useResetQueryCache();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [isPending, setIsPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [errors, setErrors] = useState(NO_FORM_ERRORS);
+
+  // Same as everywhere else on the convention: editing a field drops the previous attempt's
+  // API error rather than leaving a stale "Invalid credentials" under a corrected password.
+  const clearErrors = () => setErrors(NO_FORM_ERRORS);
 
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setError(null);
-
-    const formData = new FormData(event.currentTarget);
-    const email = String(formData.get('email') ?? '');
-    const password = String(formData.get('password') ?? '');
-
+    setErrors(NO_FORM_ERRORS);
     setIsPending(true);
     try {
       const { accessToken } = await loginUser(email, password);
@@ -44,10 +36,10 @@ export default function LoginPage() {
       resetQueryCache();
       router.push('/');
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Something went wrong. Please try again.',
+      // No field mapping: the API answers wrong credentials with one 401 and one message
+      // regardless of which of the two was wrong, and guessing a field here would be a lie.
+      setErrors(
+        toFormErrorState(err, 'Something went wrong. Please try again.'),
       );
     } finally {
       setIsPending(false);
@@ -63,66 +55,43 @@ export default function LoginPage() {
         </Card.Description>
       </Card.Header>
 
-      <Form onSubmit={(event) => void onSubmit(event)}>
+      <Form
+        onSubmit={(event) => void onSubmit(event)}
+        validationErrors={errors.fieldErrors}
+      >
         <Card.Content>
           <div className="flex flex-col gap-4">
-            <TextField
+            <TextInputField
+              autoComplete="email"
               isRequired
+              label="Email"
               name="email"
-              type="email"
-              validate={(value) => {
-                if (!value) return 'Email is required';
-                return EMAIL_PATTERN.test(value)
-                  ? null
-                  : 'Please enter a valid email address';
+              onChange={(value) => {
+                setEmail(value);
+                clearErrors();
               }}
-            >
-              <Label>Email</Label>
-              <Input
-                autoComplete="email"
-                className="h-11 md:h-10"
-                placeholder="you@example.com"
-                variant="secondary"
-              />
-              <FieldError />
-            </TextField>
+              placeholder="you@example.com"
+              type="email"
+              validate={validateEmail}
+              value={email}
+            />
 
-            <TextField
+            <PasswordField
+              autoComplete="current-password"
               isRequired
+              label="Password"
               name="password"
-              type="password"
+              onChange={(value) => {
+                setPassword(value);
+                clearErrors();
+              }}
               validate={(value) => (value ? null : 'Password is required')}
-            >
-              <Label>Password</Label>
-              <InputGroup className="h-11 md:h-10" variant="secondary">
-                <InputGroup.Input
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  type={isPasswordVisible ? 'text' : 'password'}
-                />
-                <InputGroup.Suffix className="px-1">
-                  <Button
-                    aria-label={
-                      isPasswordVisible ? 'Hide password' : 'Show password'
-                    }
-                    isIconOnly
-                    onPress={() => setIsPasswordVisible((v) => !v)}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    {isPasswordVisible ? (
-                      <EyeOffIcon className="size-5" />
-                    ) : (
-                      <EyeIcon className="size-5" />
-                    )}
-                  </Button>
-                </InputGroup.Suffix>
-              </InputGroup>
-              <FieldError />
-            </TextField>
+              value={password}
+            />
 
-            {error ? <ErrorText>{error}</ErrorText> : null}
+            {errors.formError ? (
+              <ErrorText>{errors.formError}</ErrorText>
+            ) : null}
           </div>
         </Card.Content>
 

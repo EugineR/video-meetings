@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Form, Input, Label, Modal } from '@heroui/react';
-import { ApiError, createMeeting, type Meeting } from '@/lib/api';
+import { Button, Form, Modal } from '@heroui/react';
+import { createMeeting, type Meeting } from '@/lib/api';
+import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
 import { parseParticipants } from '@/lib/meetings';
 import { ErrorText } from '@/components/ui/ErrorText';
+import { TextInputField } from '@/components/ui/TextInputField';
 
 interface CreateMeetingModalProps {
   isOpen: boolean;
@@ -20,18 +22,14 @@ export function CreateMeetingModal({
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
   const [participants, setParticipants] = useState('');
-  const [titleError, setTitleError] = useState<string | null>(null);
-  const [dateError, setDateError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState(NO_FORM_ERRORS);
   const [isPending, setIsPending] = useState(false);
 
   const resetForm = () => {
     setTitle('');
     setDate('');
     setParticipants('');
-    setTitleError(null);
-    setDateError(null);
-    setError(null);
+    setErrors(NO_FORM_ERRORS);
   };
 
   const handleOpenChange = (open: boolean) => {
@@ -41,25 +39,15 @@ export function CreateMeetingModal({
     onOpenChange(open);
   };
 
+  // Reached only once every field's `validate` passed: the form blocks its own submit
+  // otherwise and focuses the first invalid field.
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
-    const trimmedTitle = title.trim();
-    const isTitleMissing = trimmedTitle.length === 0;
-    const isDateMissing = date.length === 0;
-
-    setTitleError(isTitleMissing ? 'Title is required' : null);
-    setDateError(isDateMissing ? 'Date is required' : null);
-
-    if (isTitleMissing || isDateMissing) {
-      return;
-    }
-
-    setError(null);
+    setErrors(NO_FORM_ERRORS);
     setIsPending(true);
     try {
       const meeting = await createMeeting(
-        trimmedTitle,
+        title.trim(),
         new Date(date).toISOString(),
         parseParticipants(participants),
       );
@@ -67,10 +55,11 @@ export function CreateMeetingModal({
       resetForm();
       onOpenChange(false);
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not create the meeting. Please try again.',
+      setErrors(
+        toFormErrorState(
+          err,
+          'Could not create the meeting. Please try again.',
+        ),
       );
     } finally {
       setIsPending(false);
@@ -85,50 +74,45 @@ export function CreateMeetingModal({
           <Modal.Header>
             <Modal.Heading>Create meeting</Modal.Heading>
           </Modal.Header>
-          <Form onSubmit={(event) => void handleSubmit(event)}>
+          <Form
+            onSubmit={(event) => void handleSubmit(event)}
+            validationErrors={errors.fieldErrors}
+          >
             <Modal.Body>
               <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="create-meeting-title">Title</Label>
-                  <Input
-                    className="h-11 md:h-10"
-                    id="create-meeting-title"
-                    onChange={(event) => setTitle(event.target.value)}
-                    placeholder="Weekly sync"
-                    value={title}
-                    variant="secondary"
-                  />
-                  {titleError ? <ErrorText>{titleError}</ErrorText> : null}
-                </div>
+                <TextInputField
+                  isRequired
+                  label="Title"
+                  name="title"
+                  onChange={setTitle}
+                  placeholder="Weekly sync"
+                  validate={(value) =>
+                    value.trim() ? null : 'Title is required'
+                  }
+                  value={title}
+                />
 
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="create-meeting-date">Date</Label>
-                  <Input
-                    className="h-11 md:h-10"
-                    id="create-meeting-date"
-                    onChange={(event) => setDate(event.target.value)}
-                    type="datetime-local"
-                    value={date}
-                    variant="secondary"
-                  />
-                  {dateError ? <ErrorText>{dateError}</ErrorText> : null}
-                </div>
+                <TextInputField
+                  isRequired
+                  label="Date"
+                  name="date"
+                  onChange={setDate}
+                  type="datetime-local"
+                  validate={(value) => (value ? null : 'Date is required')}
+                  value={date}
+                />
 
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="create-meeting-participants">
-                    Participants
-                  </Label>
-                  <Input
-                    className="h-11 md:h-10"
-                    id="create-meeting-participants"
-                    onChange={(event) => setParticipants(event.target.value)}
-                    placeholder="alice@example.com, bob@example.com"
-                    value={participants}
-                    variant="secondary"
-                  />
-                </div>
+                <TextInputField
+                  label="Participants"
+                  name="participants"
+                  onChange={setParticipants}
+                  placeholder="alice@example.com, bob@example.com"
+                  value={participants}
+                />
 
-                {error ? <ErrorText>{error}</ErrorText> : null}
+                {errors.formError ? (
+                  <ErrorText>{errors.formError}</ErrorText>
+                ) : null}
               </div>
             </Modal.Body>
             <Modal.Footer>
@@ -136,7 +120,7 @@ export function CreateMeetingModal({
                 Cancel
               </Button>
               <Button isPending={isPending} type="submit">
-                Create meeting
+                {isPending ? 'Creating…' : 'Create meeting'}
               </Button>
             </Modal.Footer>
           </Form>

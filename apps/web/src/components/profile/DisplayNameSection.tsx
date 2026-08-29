@@ -1,18 +1,13 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import {
-  Button,
-  Card,
-  FieldError,
-  Form,
-  Input,
-  Label,
-  TextField,
-} from '@heroui/react';
-import { ApiError, updateProfile, type Profile } from '@/lib/api';
+import { Button, Card, Form } from '@heroui/react';
+import { updateProfile, type Profile } from '@/lib/api';
+import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
+import { MAX_DISPLAY_NAME_LENGTH } from '@/lib/validation';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { SuccessText } from '@/components/ui/SuccessText';
+import { TextInputField } from '@/components/ui/TextInputField';
 
 interface DisplayNameSectionProps {
   name: string | null;
@@ -30,12 +25,12 @@ export function DisplayNameSection({ name, onSaved }: DisplayNameSectionProps) {
   const [value, setValue] = useState(name ?? '');
   const [savedValue, setSavedValue] = useState(name ?? '');
   const [isPending, setIsPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState(NO_FORM_ERRORS);
   const [isSaved, setIsSaved] = useState(false);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setError(null);
+    setErrors(NO_FORM_ERRORS);
     setIsSaved(false);
     setIsPending(true);
     try {
@@ -45,10 +40,8 @@ export function DisplayNameSection({ name, onSaved }: DisplayNameSectionProps) {
       setIsSaved(true);
       onSaved(updated);
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Something went wrong. Please try again.',
+      setErrors(
+        toFormErrorState(err, 'Something went wrong. Please try again.'),
       );
     } finally {
       setIsPending(false);
@@ -64,31 +57,28 @@ export function DisplayNameSection({ name, onSaved }: DisplayNameSectionProps) {
         </Card.Description>
       </Card.Header>
 
-      <Form onSubmit={(event) => void onSubmit(event)}>
+      <Form
+        onSubmit={(event) => void onSubmit(event)}
+        validationErrors={errors.fieldErrors}
+      >
         <Card.Content>
           <div className="flex flex-col gap-4">
-            <TextField
-              maxLength={100}
+            <TextInputField
+              autoComplete="name"
+              label="Display name"
+              maxLength={MAX_DISPLAY_NAME_LENGTH}
               name="name"
               onChange={(newValue) => {
                 setValue(newValue);
                 setIsSaved(false);
-                setError(null);
+                setErrors(NO_FORM_ERRORS);
               }}
+              placeholder="Jane Doe"
               value={value}
-            >
-              <Label>Display name</Label>
-              <Input
-                autoComplete="name"
-                className="h-11 md:h-10"
-                placeholder="Jane Doe"
-                variant="secondary"
-              />
-              <FieldError />
-            </TextField>
+            />
 
-            {error ? (
-              <ErrorText>{error}</ErrorText>
+            {errors.formError ? (
+              <ErrorText>{errors.formError}</ErrorText>
             ) : isSaved ? (
               <SuccessText>Display name saved.</SuccessText>
             ) : null}

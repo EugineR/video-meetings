@@ -26,10 +26,11 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   `layout.tsx` and `error.tsx`; `(auth)` holds `/login` and `/register` with their `layout.tsx`
 - `src/components/` — one component per file, in subfolders **by kind** (`ui/`, `layout/`,
   `meetings/`, `profile/`, `icons/`), not flat; `ui/` holds the shared, feature-agnostic
-  primitives (`ErrorText`, `SuccessText`, `LoadingState`, `UserAvatar`) and icons are re-exported
-  through `icons/index.ts`
+  primitives (`ErrorText`, `SuccessText`, `LoadingState`, `TextInputField`, `PasswordField`,
+  `UserAvatar`) and icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
-  `useMeetingSummaryStatus.ts`, `format.ts`, `validation.ts`, `meetings.ts`, `uploads.ts`, and
+  `useMeetingSummaryStatus.ts`, `format.ts`, `validation.ts`, `formErrors.ts`, `meetings.ts`,
+  `uploads.ts`, and
   `queries/` (`client.ts`, `session.ts`, `profile.ts`, `meetings.ts`) — the TanStack Query layer
 
 ## Rules
@@ -89,10 +90,39 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   middleware gate. The API is the source of truth; the decoded payload is a hint.
 - **`formatDateTime()` in `src/lib/format.ts` is the only date formatter.**
 - **Pure domain logic and shared constants live in `src/lib/`, not at the top of a JSX file.**
-  `formatFileSize` and `getInitials` sit next to `formatDateTime` in `format.ts`, `EMAIL_PATTERN`
-  in `validation.ts`, `parseParticipants` in `meetings.ts`, the upload constraints in `uploads.ts`.
-  Re-declaring one of them in a component is how the login/register email pattern came to be
-  written twice.
+  `formatFileSize` and `getInitials` sit next to `formatDateTime` in `format.ts`, the field rules
+  (`validateEmail`, `validatePasswordLength`, `PASSWORD_LENGTH_HINT`, `MIN_PASSWORD_LENGTH`,
+  `MAX_DISPLAY_NAME_LENGTH`) in `validation.ts`, `parseParticipants` in `meetings.ts`, the upload
+  constraints in `uploads.ts`. A rule the API also enforces is stated once there, message
+  included — a field writing out its own "at least N characters" is how the two password forms
+  came to disagree. Re-declaring one of them in a component is how the login/register
+  email pattern came to be written twice.
+- **Every form is a HeroUI `Form` over the controlled field primitives in `src/components/ui/`** —
+  `TextInputField` and `PasswordField`, each a `TextField` owning its own `Label`, `Description`
+  and `FieldError`. Field validation is that field's `validate` prop, pending state is `isPending`
+  on the submit `Button`, a form-level failure is one `ErrorText` under the fields, and a
+  field-level failure arrives through the `Form`'s `validationErrors`. Controlled rather than
+  uncontrolled `FormData` because three of the five forms need a field's value during render: the
+  confirmation field validates against the new password, Save disables itself once the display
+  name matches what was saved, and the create-meeting modal resets on close. **Editing a field
+  clears the form's API errors** — every `onChange` resets the state back to `NO_FORM_ERRORS`.
+  On a field-level error that is not cosmetic: HeroUI's `Form` validates natively, so a message
+  routed onto a field also sets that input's `customError`, and leaving it there blocks the
+  resubmit that would have cleared it. The two approaches
+  this replaced — manual `useState` error flags with raw `Label htmlFor` + `Input id` wiring in
+  `CreateMeetingModal`, and uncontrolled `FormData` on `/login` and `/register` — were removed on
+  purpose. A form that hand-rolls a password input with an eye toggle, writes `h-11 md:h-10` on a
+  field, or keeps its own per-field error state is a bug.
+- **An API error is identified by its HTTP status, never by matching its message text.**
+  `toFormErrorState(error, fallbackMessage, fieldByStatus)` in `src/lib/formErrors.ts` is the only
+  mechanism: the status→field map is declared at the call site, and every status it does not name
+  — like every non-`ApiError` failure — becomes the form-level message. `apps/api` returns no
+  machine-readable error code, so a status may only be pinned to a field once the client has ruled
+  out the endpoint's other answers with the same status: `PasswordSection` checks the minimum
+  length, the confirmation match and "must differ from the current password" before it sends,
+  which is what leaves 400 meaning "the current password is wrong" and nothing else. The regex on
+  the API's prose (`/current password is incorrect/i`) that used to do this job broke silently on
+  a reworded message.
 - **An unknown or another user's meeting is a 404 `ApiError` rendered inline**, never a blank page
   or a redirect.
 - **The meeting detail query polls until the meeting is settled**, and the page never sets up an
