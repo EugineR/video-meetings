@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card } from '@heroui/react';
+import { recentMeetings } from '@/lib/meetings';
 import {
   useAddCreatedMeeting,
   useCountUploadedRecording,
@@ -20,11 +21,10 @@ export default function Home() {
   const countUploadedRecording = useCountUploadedRecording();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-  const recentMeetings = meetings
-    ? [...meetings]
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .slice(0, 3)
-    : [];
+  const recent = useMemo(
+    () => (meetings ? recentMeetings(meetings) : []),
+    [meetings],
+  );
 
   return (
     <>
@@ -33,7 +33,7 @@ export default function Home() {
         Create meeting
       </Button>
 
-      {recentMeetings.length > 0 ? (
+      {recent.length > 0 ? (
         <Card>
           <Card.Header>
             <Card.Title render={(props) => <h2 {...props} />}>
@@ -43,7 +43,7 @@ export default function Home() {
           </Card.Header>
           <Card.Content>
             <ul className="flex flex-col gap-2">
-              {recentMeetings.map((meeting) => (
+              {recent.map((meeting) => (
                 <MeetingRow
                   highlighted
                   key={meeting.id}

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState, type ChangeEvent, type Ref } from 'react';
-import { ApiError, UploadCancelledError, type UploadOptions } from '@/lib/api';
+import { UploadCancelledError, type UploadOptions } from '@/lib/api';
+import { apiErrorMessage } from '@/lib/formErrors';
 import { validateFile, type UploadConstraints } from '@/lib/uploads';
 
 export interface FileSelectionOptions<TResult> {
@@ -87,6 +88,11 @@ export function useFileSelection<TResult>({
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
       }
+      // Aborting here — rather than leaving the request to resolve on its own —
+      // is what keeps `startUpload`'s `.then`/`.catch` from touching this hook's
+      // state after the owning component is gone: the abort rejects with
+      // `UploadCancelledError`, which the catch already treats as a no-op.
+      abortControllerRef.current?.abort();
     };
   }, []);
 
@@ -124,11 +130,7 @@ export function useFileSelection<TResult>({
           return;
         }
         discardSelection();
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Upload failed. Please try again.',
-        );
+        setError(apiErrorMessage(err, 'Upload failed. Please try again.'));
       });
   };
 

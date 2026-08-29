@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { Avatar, Card, Label, ProgressBar } from '@heroui/react';
-import { ApiError, deleteAvatar, uploadAvatar, type Profile } from '@/lib/api';
+import { deleteAvatar, uploadAvatar, type Profile } from '@/lib/api';
+import { apiErrorMessage } from '@/lib/formErrors';
 import type { ProfileSaved } from '@/lib/queries/profile';
 import { AVATAR_UPLOAD } from '@/lib/uploads';
 import { useFileSelection } from '@/lib/useFileSelection';
@@ -73,9 +74,7 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
       onSaved({ profile: { hasAvatar: false, avatarUpdatedAt: null } });
     } catch (err) {
       setRemoveError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not remove the avatar. Please try again.',
+        apiErrorMessage(err, 'Could not remove the avatar. Please try again.'),
       );
     } finally {
       setIsRemoving(false);

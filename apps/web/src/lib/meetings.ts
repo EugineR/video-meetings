@@ -1,4 +1,19 @@
-import type { MeetingDetail } from '@/lib/api';
+import type { MeetingDetail, MeetingListItem } from '@/lib/api';
+
+/**
+ * The `count` most recently dated meetings, most recent first — the home page's
+ * "Recent meetings" card. Sorts a copy: `Array.prototype.sort` mutates in place, and
+ * the cached list `useMeetingsQuery` returns is also what "All meetings" renders in
+ * API order right below, so resorting it in place would resort that section too.
+ */
+export function recentMeetings(
+  meetings: MeetingListItem[],
+  count = 3,
+): MeetingListItem[] {
+  return [...meetings]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, count);
+}
 
 /**
  * Splits the free-text participants field into the string array the API takes.

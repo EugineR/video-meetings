@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { MeetingDetail } from '@/lib/api';
 import {
   hasSummarySection,
@@ -56,7 +56,13 @@ export function useMeetingSummaryStatus(
   const [reconciledRecordingsSignature, setReconciledRecordingsSignature] =
     useState<string | null>(null);
 
-  const signature = meeting ? recordingsSignature(meeting) : null;
+  // Memoized on the `meeting` reference: the query cache only produces a new one when
+  // the data actually changed, so re-renders that leave it in place (opening a
+  // recording's transcript or delete modal, say) skip re-sorting its recordings.
+  const signature = useMemo(
+    () => (meeting ? recordingsSignature(meeting) : null),
+    [meeting],
+  );
   if (
     meeting &&
     signature !== reconciledRecordingsSignature &&

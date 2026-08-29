@@ -20,6 +20,21 @@ export const NO_FORM_ERRORS: FormErrorState = Object.freeze({
 });
 
 /**
+ * The message a failed request should show: an `ApiError`'s own message, or
+ * `fallbackMessage` for anything else — a network failure, or a thrown non-`ApiError`.
+ * The one place that unwraps `unknown` into user-facing text outside a form's own
+ * field/form-level split (a query's error string, a confirmation dialog's own error
+ * state), so a change to how a non-`ApiError` failure reads has one call site to update
+ * instead of a copy of this ternary at each.
+ */
+export function apiErrorMessage(
+  error: unknown,
+  fallbackMessage: string,
+): string {
+  return error instanceof ApiError ? error.message : fallbackMessage;
+}
+
+/**
  * Turns a rejected request into the two things a form can display: a form-level message,
  * or a message attached to one field.
  *

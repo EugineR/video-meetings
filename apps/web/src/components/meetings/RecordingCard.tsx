@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { Spinner } from '@heroui/react';
-import { ApiError, deleteMeetingRecording, type Recording } from '@/lib/api';
+import { deleteMeetingRecording, type Recording } from '@/lib/api';
 import { formatDateTime, formatFileSize } from '@/lib/format';
+import { apiErrorMessage } from '@/lib/formErrors';
 import { touchTarget } from '@/lib/touchTarget';
 import { ChevronDownIcon, PlayCircleIcon, TrashIcon } from '@/components/icons';
 import { RecordingPlayerModal } from '@/components/meetings/RecordingPlayerModal';
@@ -48,9 +49,10 @@ export function RecordingCard({
       onDeleted(recording.id);
     } catch (err) {
       setDeleteError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not delete the recording. Please try again.',
+        apiErrorMessage(
+          err,
+          'Could not delete the recording. Please try again.',
+        ),
       );
     } finally {
       setIsDeleting(false);

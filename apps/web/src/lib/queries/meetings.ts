@@ -3,7 +3,6 @@
 import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ApiError,
   getMeeting,
   getMeetings,
   type Meeting,
@@ -11,6 +10,7 @@ import {
   type MeetingListItem,
   type Recording,
 } from '@/lib/api';
+import { apiErrorMessage } from '@/lib/formErrors';
 import { isMeetingSettled } from '@/lib/meetings';
 import { useMeetingSummaryStatus } from '@/lib/useMeetingSummaryStatus';
 
@@ -55,9 +55,7 @@ export function useMeetingsQuery(): MeetingsQueryResult {
   return {
     meetings: data ?? null,
     meetingsError: error
-      ? error instanceof ApiError
-        ? error.message
-        : 'Could not load meetings. Please try again.'
+      ? apiErrorMessage(error, 'Could not load meetings. Please try again.')
       : null,
   };
 }
@@ -208,9 +206,7 @@ export function useMeetingDetailQuery(
   return {
     meeting,
     meetingError: error
-      ? error instanceof ApiError
-        ? error.message
-        : 'Could not load the meeting. Please try again.'
+      ? apiErrorMessage(error, 'Could not load the meeting. Please try again.')
       : null,
     isSummaryPending,
     showSummarySection,

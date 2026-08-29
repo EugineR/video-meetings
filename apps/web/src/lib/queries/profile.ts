@@ -2,7 +2,8 @@
 
 import { useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ApiError, getProfile, type Profile } from '@/lib/api';
+import { getProfile, type Profile } from '@/lib/api';
+import { apiErrorMessage } from '@/lib/formErrors';
 
 /** Cache key of `GET /users/me`. See `useProfileQuery()`. */
 export const profileQueryKey = ['profile'] as const;
@@ -36,9 +37,7 @@ export function useProfileQuery(): ProfileQueryResult {
     profile: data ?? null,
     // A failed profile fetch leaves `profile` null; the header still has `user.email`.
     profileError: error
-      ? error instanceof ApiError
-        ? error.message
-        : 'Could not load your profile. Please try again.'
+      ? apiErrorMessage(error, 'Could not load your profile. Please try again.')
       : null,
   };
 }
