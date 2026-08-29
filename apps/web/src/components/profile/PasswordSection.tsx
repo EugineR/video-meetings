@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { Button, Card, Form } from '@heroui/react';
+import { Card, Form } from '@heroui/react';
 import { changePassword } from '@/lib/api';
 import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
 import type { ProfileSaved } from '@/lib/queries/profile';
@@ -10,6 +10,7 @@ import {
   PASSWORD_LENGTH_HINT,
   validatePasswordLength,
 } from '@/lib/validation';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { PasswordField } from '@/components/ui/PasswordField';
 import { SuccessText } from '@/components/ui/SuccessText';

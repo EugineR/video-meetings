@@ -2,14 +2,15 @@
 
 import { useState } from 'react';
 import {
-  Button,
   Description,
   FieldError,
   InputGroup,
   Label,
   TextField,
 } from '@heroui/react';
+import { touchTarget } from '@/lib/touchTarget';
 import { EyeIcon, EyeOffIcon } from '@/components/icons';
+import { Button } from '@/components/ui/Button';
 
 interface PasswordFieldProps {
   autoComplete: 'current-password' | 'new-password';
@@ -64,7 +65,7 @@ export function PasswordField({
       value={value}
     >
       <Label>{label}</Label>
-      <InputGroup className="h-11 md:h-10" variant="secondary">
+      <InputGroup className={touchTarget()} variant="secondary">
         <InputGroup.Input
           autoComplete={autoComplete}
           placeholder="••••••••"
@@ -76,6 +77,7 @@ export function PasswordField({
             isIconOnly
             onPress={() => setIsVisible((visible) => !visible)}
             size="sm"
+            touchTarget="inset"
             type="button"
             variant="ghost"
           >

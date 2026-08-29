@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Card, Form, Link } from '@heroui/react';
+import { Card, Form, Link } from '@heroui/react';
 import { registerUser } from '@/lib/api';
 import { storeAccessToken } from '@/lib/auth';
 import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
@@ -13,6 +13,7 @@ import {
   validateEmail,
   validatePasswordLength,
 } from '@/lib/validation';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { PasswordField } from '@/components/ui/PasswordField';
 import { TextInputField } from '@/components/ui/TextInputField';
@@ -56,7 +57,9 @@ export default function RegisterPage() {
   return (
     <Card className="w-full">
       <Card.Header>
-        <Card.Title>Create your account</Card.Title>
+        <Card.Title render={(props) => <h2 {...props} />}>
+          Create your account
+        </Card.Title>
         <Card.Description>
           Enter your email and a password to get started.
         </Card.Description>
@@ -105,12 +108,7 @@ export default function RegisterPage() {
         </Card.Content>
 
         <Card.Footer className="mt-2 flex flex-col gap-3">
-          <Button
-            className="w-full"
-            isPending={isPending}
-            size="lg"
-            type="submit"
-          >
+          <Button className="w-full" isPending={isPending} type="submit">
             {isPending ? 'Creating account…' : 'Create account'}
           </Button>
           <p className="text-center text-sm text-muted">

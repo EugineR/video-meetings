@@ -1,13 +1,14 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { Button, Card } from '@heroui/react';
+import { Card } from '@heroui/react';
 import { formatDateTime } from '@/lib/format';
 import { useMeetingDetailQuery } from '@/lib/queries/meetings';
 import { ArrowLeftIcon, CalendarIcon, UsersIcon } from '@/components/icons';
 import { MeetingSummarySection } from '@/components/meetings/MeetingSummarySection';
 import { RecordingCard } from '@/components/meetings/RecordingCard';
 import { RecordingUploader } from '@/components/meetings/RecordingUploader';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { LoadingState } from '@/components/ui/LoadingState';
 
@@ -26,7 +27,7 @@ export default function MeetingDetailPage() {
   return (
     <>
       <Button
-        className="h-11 self-start md:h-10"
+        className="self-start"
         onPress={() => router.back()}
         variant="secondary"
       >
@@ -45,7 +46,9 @@ export default function MeetingDetailPage() {
         <>
           <Card>
             <Card.Header>
-              <Card.Title>{meeting.title}</Card.Title>
+              <Card.Title render={(props) => <h2 {...props} />}>
+                {meeting.title}
+              </Card.Title>
             </Card.Header>
             <Card.Content className="flex flex-col gap-1.5">
               <p className="flex items-center gap-1.5 text-sm text-muted">
@@ -63,7 +66,9 @@ export default function MeetingDetailPage() {
 
           <Card>
             <Card.Header>
-              <Card.Title>Recordings</Card.Title>
+              <Card.Title render={(props) => <h2 {...props} />}>
+                Recordings
+              </Card.Title>
             </Card.Header>
             <Card.Content className="flex flex-col gap-6">
               <RecordingUploader
@@ -84,7 +89,9 @@ export default function MeetingDetailPage() {
           {showSummarySection ? (
             <Card>
               <Card.Header>
-                <Card.Title>Summary</Card.Title>
+                <Card.Title render={(props) => <h2 {...props} />}>
+                  Summary
+                </Card.Title>
               </Card.Header>
               <Card.Content>
                 <MeetingSummarySection

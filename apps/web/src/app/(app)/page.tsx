@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Card } from '@heroui/react';
+import { Card } from '@heroui/react';
 import {
   useAddCreatedMeeting,
   useCountUploadedRecording,
@@ -10,6 +10,7 @@ import {
 import { CreateMeetingModal } from '@/components/meetings/CreateMeetingModal';
 import { MeetingRow } from '@/components/meetings/MeetingRow';
 import { PlusIcon } from '@/components/icons';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { LoadingState } from '@/components/ui/LoadingState';
 
@@ -27,10 +28,7 @@ export default function Home() {
 
   return (
     <>
-      <Button
-        className="h-11 self-start md:h-10"
-        onPress={() => setIsCreateOpen(true)}
-      >
+      <Button className="self-start" onPress={() => setIsCreateOpen(true)}>
         <PlusIcon className="size-4" />
         Create meeting
       </Button>
@@ -38,7 +36,9 @@ export default function Home() {
       {recentMeetings.length > 0 ? (
         <Card>
           <Card.Header>
-            <Card.Title>Recent meetings</Card.Title>
+            <Card.Title render={(props) => <h2 {...props} />}>
+              Recent meetings
+            </Card.Title>
             <Card.Description>Your 3 most recent meetings.</Card.Description>
           </Card.Header>
           <Card.Content>
@@ -58,7 +58,9 @@ export default function Home() {
 
       <Card>
         <Card.Header>
-          <Card.Title>All meetings</Card.Title>
+          <Card.Title render={(props) => <h2 {...props} />}>
+            All meetings
+          </Card.Title>
           {meetings && meetings.length > 0 ? (
             <Card.Description>Total: {meetings.length}</Card.Description>
           ) : null}

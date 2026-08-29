@@ -122,8 +122,9 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   resubmit that would have cleared it. The two approaches
   this replaced — manual `useState` error flags with raw `Label htmlFor` + `Input id` wiring in
   `CreateMeetingModal`, and uncontrolled `FormData` on `/login` and `/register` — were removed on
-  purpose. A form that hand-rolls a password input with an eye toggle, writes `h-11 md:h-10` on a
-  field, or keeps its own per-field error state is a bug.
+  purpose. A form that hand-rolls a password input with an eye toggle, writes a touch-target
+  height on a field by hand instead of taking it from `src/lib/touchTarget.ts`, or keeps its own
+  per-field error state is a bug.
 - **An API error is identified by its HTTP status, never by matching its message text.**
   `toFormErrorState(error, fallbackMessage, fieldByStatus)` in `src/lib/formErrors.ts` is the only
   mechanism: the status→field map is declared at the call site, and every status it does not name
@@ -176,13 +177,18 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
 - Packages `@heroui/react`, `@heroui/styles`, `tailwind-variants` on the Tailwind v4 base
   (`tailwindcss`, `@tailwindcss/postcss`, `postcss`; `postcss.config.mjs` registers the plugin).
 - **No provider component** — unlike HeroUI v2 there is no `HeroUIProvider`.
-- **Compound composition (`Card.Header`) and `onPress`, not `onClick`**; import from `@heroui/react`.
+- **Compound composition (`Card.Header`) and `onPress`, not `onClick`.** Import from
+  `@heroui/react` — except buttons, which come from `@/components/ui/Button`, HeroUI's `Button`
+  with the shared touch target already applied. A `Button` imported from `@heroui/react` renders
+  below the minimum and is a bug.
 - Theming is CSS-variable/`oklch`-based and switches on `[data-theme='dark']`/`[data-theme='light']`,
   **not** `prefers-color-scheme`. No switcher is wired up; the default light theme renders.
 - **`src/app/globals.css` imports `tailwindcss` before `@heroui/styles` — the order matters.** It
   also darkens HeroUI's default `--accent`/`--muted`, whose originals fail WCAG AA (4.5:1) for
   button text on `--accent` and placeholder text on `--muted`. Keep contrast at AA, and controls at
-  the 44px (mobile) / 40px (desktop) touch-target minimum.
+  the 44px (mobile) / 40px (desktop) touch-target minimum — which is `src/lib/touchTarget.ts` and
+  nothing else: `@/components/ui/Button` applies it to every button, the field primitives and any
+  standalone non-button control call the recipe. Never hand-write the heights at a call site.
 
 ## Testing UI changes
 

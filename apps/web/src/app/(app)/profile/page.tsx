@@ -1,10 +1,11 @@
 'use client';
 
-import { Button, Card } from '@heroui/react';
+import { Card } from '@heroui/react';
 import { useRouter } from 'next/navigation';
 import { useProfileQuery } from '@/lib/queries/profile';
 import { formatDateTime } from '@/lib/format';
 import { CalendarIcon } from '@/components/icons';
+import { Button } from '@/components/ui/Button';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { LoadingState } from '@/components/ui/LoadingState';
@@ -38,10 +39,12 @@ export default function ProfilePage() {
             name={profile.name}
             size="profile"
           />
-          <Card.Title>{profile.name?.trim() || profile.email}</Card.Title>
+          <Card.Title render={(props) => <h2 {...props} />}>
+            {profile.name?.trim() || profile.email}
+          </Card.Title>
         </div>
         <Button
-          className="h-11 shrink-0 md:h-10"
+          className="shrink-0"
           onPress={() => router.push('/profile/edit')}
           variant="secondary"
         >

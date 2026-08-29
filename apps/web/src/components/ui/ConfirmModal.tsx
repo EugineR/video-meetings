@@ -1,7 +1,8 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Button, Modal } from '@heroui/react';
+import { Modal } from '@heroui/react';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 
 interface ConfirmModalProps {

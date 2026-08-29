@@ -7,6 +7,7 @@ import {
   Label,
   TextField,
 } from '@heroui/react';
+import { touchTarget } from '@/lib/touchTarget';
 
 interface TextInputFieldProps {
   autoComplete?: string;
@@ -65,7 +66,7 @@ export function TextInputField({
       <Label>{label}</Label>
       <Input
         autoComplete={autoComplete}
-        className="h-11 md:h-10"
+        className={touchTarget()}
         placeholder={placeholder}
         type={type}
         variant="secondary"

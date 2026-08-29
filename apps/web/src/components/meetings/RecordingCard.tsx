@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Link, Spinner } from '@heroui/react';
+import { Spinner } from '@heroui/react';
 import { ApiError, deleteMeetingRecording, type Recording } from '@/lib/api';
 import { formatDateTime, formatFileSize } from '@/lib/format';
+import { touchTarget } from '@/lib/touchTarget';
 import { ChevronDownIcon, PlayCircleIcon, TrashIcon } from '@/components/icons';
 import { RecordingPlayerModal } from '@/components/meetings/RecordingPlayerModal';
 import { RecordingStatusChip } from '@/components/meetings/RecordingStatusChip';
+import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { ErrorText } from '@/components/ui/ErrorText';
 
@@ -58,23 +60,30 @@ export function RecordingCard({
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-default-200 bg-default-50 p-4">
       <div className="flex flex-wrap items-center gap-3">
-        <PlayCircleIcon
-          aria-hidden="true"
-          className="size-5 shrink-0 text-muted"
-        />
-
-        <div className="min-w-0 flex-1">
-          <Link
-            className="block max-w-full truncate font-medium text-foreground hover:text-accent"
-            onPress={() => setIsPlayerOpen(true)}
-          >
-            {recording.originalFilename}
-          </Link>
-          <p className="text-sm text-muted">
-            {formatFileSize(recording.sizeBytes)} · Added{' '}
-            {formatDateTime(recording.createdAt)}
-          </p>
-        </div>
+        {/* The whole title block is the button that opens the player. It used to be an
+            `href`-less `<Link onPress>`, which announced itself as a link that went
+            nowhere; a button is what it always was. Its label carries the filename and
+            the meta line, so the two lines below are spans rather than a sibling <p>. */}
+        <Button
+          className="min-w-0 flex-1 justify-start gap-3 rounded-lg px-2 py-1 font-normal"
+          onPress={() => setIsPlayerOpen(true)}
+          touchTarget="block"
+          variant="ghost"
+        >
+          <PlayCircleIcon
+            aria-hidden="true"
+            className="size-5 shrink-0 text-muted"
+          />
+          <span className="flex min-w-0 flex-1 flex-col text-left">
+            <span className="truncate text-base font-medium">
+              {recording.originalFilename}
+            </span>
+            <span className="truncate text-sm text-muted">
+              {formatFileSize(recording.sizeBytes)} · Added{' '}
+              {formatDateTime(recording.createdAt)}
+            </span>
+          </span>
+        </Button>
 
         <RecordingStatusChip status={recording.status} />
 
@@ -83,7 +92,6 @@ export function RecordingCard({
           className="text-danger hover:text-danger"
           isIconOnly
           onPress={() => setIsDeleteOpen(true)}
-          size="lg"
           variant="ghost"
         >
           <TrashIcon className="size-4" />
@@ -95,10 +103,15 @@ export function RecordingCard({
           Transcription failed. No transcript is available for this recording.
         </ErrorText>
       ) : isTranscribing ? (
-        // Occupies the same slot the "Show transcript" toggle takes once ready (same
-        // min-height as that button), so transcription finishing doesn't shift the rest
-        // of the tile's layout.
-        <div className="flex min-h-[44px] items-center gap-2 text-sm text-muted md:min-h-10">
+        // Occupies the same slot the "Show transcript" toggle takes once ready — hence
+        // the same `touchTarget` height the toggle gets from `ui/Button` — so
+        // transcription finishing doesn't shift the rest of the tile's layout.
+        <div
+          className={touchTarget({
+            className: 'flex items-center gap-2 text-sm text-muted',
+            fit: 'block',
+          })}
+        >
           <Spinner aria-label="Transcribing" size="sm" />
           Transcribing…
         </div>
@@ -106,7 +119,7 @@ export function RecordingCard({
         <div className="flex flex-col gap-2">
           <Button
             aria-expanded={isTranscriptOpen}
-            className="w-fit min-h-[44px] gap-1 text-accent hover:text-accent md:min-h-10"
+            className="w-fit gap-1 text-accent hover:text-accent"
             onPress={() => setIsTranscriptOpen((open) => !open)}
             size="sm"
             variant="ghost"

@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Card } from '@heroui/react';
+import { Card } from '@heroui/react';
 import { useRouter } from 'next/navigation';
 import {
   useApplyProfile,
@@ -11,6 +11,7 @@ import { useAuthenticatedUserContext } from '@/components/layout/AuthenticatedUs
 import { AvatarSection } from '@/components/profile/AvatarSection';
 import { DisplayNameSection } from '@/components/profile/DisplayNameSection';
 import { PasswordSection } from '@/components/profile/PasswordSection';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { LoadingState } from '@/components/ui/LoadingState';
 
@@ -41,11 +42,7 @@ export default function ProfileEditPage() {
     <>
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Edit profile</h2>
-        <Button
-          className="h-11 md:h-10"
-          onPress={() => router.push('/profile')}
-          variant="secondary"
-        >
+        <Button onPress={() => router.push('/profile')} variant="secondary">
           Back to profile
         </Button>
       </div>

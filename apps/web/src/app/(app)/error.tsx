@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect } from 'react';
-import { Button, Card } from '@heroui/react';
+import { Card } from '@heroui/react';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 
 interface AppErrorProps {
@@ -23,7 +24,9 @@ export default function AppError({ error, reset }: AppErrorProps) {
   return (
     <Card>
       <Card.Header>
-        <Card.Title>Something went wrong</Card.Title>
+        <Card.Title render={(props) => <h2 {...props} />}>
+          Something went wrong
+        </Card.Title>
         <Card.Description>
           This page could not be displayed. You can try again.
         </Card.Description>
@@ -32,9 +35,7 @@ export default function AppError({ error, reset }: AppErrorProps) {
         <ErrorText>{error.message || 'Unexpected error.'}</ErrorText>
       </Card.Content>
       <Card.Footer>
-        <Button className="h-11 md:h-10" onPress={reset}>
-          Try again
-        </Button>
+        <Button onPress={reset}>Try again</Button>
       </Card.Footer>
     </Card>
   );

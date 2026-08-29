@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Label, ProgressBar } from '@heroui/react';
+import { Label, ProgressBar } from '@heroui/react';
 import { type Recording, uploadMeetingRecording } from '@/lib/api';
 import { RECORDING_UPLOAD } from '@/lib/uploads';
 import { useFileSelection } from '@/lib/useFileSelection';
 import { UploadIcon, XMarkIcon } from '@/components/icons';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 
 interface RecordingUploaderProps {
@@ -70,7 +71,7 @@ export function RecordingUploader({
               </ProgressBar.Track>
             </ProgressBar>
             <Button
-              className="h-11 self-center md:h-10"
+              className="self-center"
               onPress={selection.cancelUpload}
               size="sm"
               variant="secondary"
@@ -84,11 +85,7 @@ export function RecordingUploader({
             <p className="text-sm text-muted">
               Drag and drop a recording here, or
             </p>
-            <Button
-              className="h-11 md:h-10"
-              onPress={selection.openFilePicker}
-              variant="secondary"
-            >
+            <Button onPress={selection.openFilePicker} variant="secondary">
               Choose file
             </Button>
             <p className="text-xs text-muted">

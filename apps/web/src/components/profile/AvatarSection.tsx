@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Avatar, Button, Card, Label, ProgressBar } from '@heroui/react';
+import { Avatar, Card, Label, ProgressBar } from '@heroui/react';
 import { ApiError, deleteAvatar, uploadAvatar, type Profile } from '@/lib/api';
 import type { ProfileSaved } from '@/lib/queries/profile';
 import { AVATAR_UPLOAD } from '@/lib/uploads';
 import { useFileSelection } from '@/lib/useFileSelection';
 import { TrashIcon, UploadIcon } from '@/components/icons';
+import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -115,7 +116,7 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
                 {selection.selectedFile ? (
                   <>
                     <Button
-                      className="h-11 self-start md:h-10"
+                      className="self-start"
                       isDisabled={isUploading}
                       isPending={isUploading}
                       onPress={selection.uploadSelectedFile}
@@ -124,7 +125,7 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
                     </Button>
 
                     <Button
-                      className="h-11 self-start md:h-10"
+                      className="self-start"
                       isDisabled={isUploading}
                       onPress={selection.clearSelection}
                       variant="secondary"
@@ -135,7 +136,7 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
                 ) : (
                   <>
                     <Button
-                      className="h-11 self-start md:h-10"
+                      className="self-start"
                       isDisabled={isRemoving}
                       onPress={selection.openFilePicker}
                       variant="secondary"
@@ -146,7 +147,7 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
 
                     {canRemove ? (
                       <Button
-                        className="h-11 self-start md:h-10"
+                        className="self-start"
                         isDisabled={isRemoving}
                         onPress={() => setIsRemoveModalOpen(true)}
                         variant="danger"

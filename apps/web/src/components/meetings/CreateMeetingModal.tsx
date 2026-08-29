@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Form, Modal } from '@heroui/react';
+import { Form, Modal } from '@heroui/react';
 import { createMeeting, type Meeting } from '@/lib/api';
 import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
 import { parseParticipants } from '@/lib/meetings';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { TextInputField } from '@/components/ui/TextInputField';
 

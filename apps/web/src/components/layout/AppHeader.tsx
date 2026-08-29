@@ -1,7 +1,9 @@
 'use client';
 
-import { Button, Link } from '@heroui/react';
+import { Link } from '@heroui/react';
+import { touchTarget } from '@/lib/touchTarget';
 import { BrandHeader } from '@/components/layout/BrandHeader';
+import { Button } from '@/components/ui/Button';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface AppHeaderProps {
@@ -26,7 +28,16 @@ export function AppHeader({
 }: AppHeaderProps) {
   return (
     <BrandHeader>
-      <Link className="flex items-center gap-2 rounded-lg py-1" href="/profile">
+      {/* A link, but a standalone control rather than inline text, so it takes the same
+          touch target as the button beside it — which already sets the row's height, so
+          filling it costs no extra space. */}
+      <Link
+        className={touchTarget({
+          className: 'flex items-center gap-2 rounded-lg py-1',
+          fit: 'block',
+        })}
+        href="/profile"
+      >
         <UserAvatar
           avatarUpdatedAt={avatarUpdatedAt}
           email={email}
@@ -38,7 +49,7 @@ export function AppHeader({
           {name?.trim() || email}
         </span>
       </Link>
-      <Button className="h-11 md:h-10" onPress={onSignOut} variant="secondary">
+      <Button onPress={onSignOut} variant="secondary">
         Sign out
       </Button>
     </BrandHeader>

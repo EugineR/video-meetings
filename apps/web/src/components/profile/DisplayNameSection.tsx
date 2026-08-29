@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { Button, Card, Form } from '@heroui/react';
+import { Card, Form } from '@heroui/react';
 import { updateProfile } from '@/lib/api';
 import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
 import type { ProfileSaved } from '@/lib/queries/profile';
 import { MAX_DISPLAY_NAME_LENGTH } from '@/lib/validation';
+import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { SuccessText } from '@/components/ui/SuccessText';
 import { TextInputField } from '@/components/ui/TextInputField';
