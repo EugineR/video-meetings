@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Chip } from '@heroui/react';
-import type { MeetingListItem } from '@/lib/api';
+import type { MeetingListItem, Recording } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import {
   CalendarIcon,
@@ -11,17 +11,23 @@ import {
   UsersIcon,
   VideoCameraIcon,
 } from '@/components/icons';
-import { UploadRecordingModal } from './UploadRecordingModal';
+import { UploadRecordingModal } from '@/components/meetings/UploadRecordingModal';
 
 interface MeetingRowProps {
-  meeting: MeetingListItem;
+  /** Blue-tinted treatment for the "Recent meetings" list. */
   highlighted?: boolean;
-  onUploaded?: (meetingId: string) => void;
+  meeting: MeetingListItem;
+  /**
+   * The recording the row's upload modal just stored — the same payload
+   * `RecordingUploader` and `UploadRecordingModal` hand up, so `onUploaded` means one
+   * thing everywhere. The caller already knows which meeting the row is for.
+   */
+  onUploaded: (recording: Recording) => void;
 }
 
 export function MeetingRow({
-  meeting,
   highlighted,
+  meeting,
   onUploaded,
 }: MeetingRowProps) {
   const router = useRouter();
@@ -78,9 +84,9 @@ export function MeetingRow({
         isOpen={isUploadOpen}
         meetingId={meeting.id}
         onOpenChange={setIsUploadOpen}
-        onUploaded={() => {
+        onUploaded={(recording) => {
           setIsUploadOpen(false);
-          onUploaded?.(meeting.id);
+          onUploaded(recording);
         }}
       />
     </li>

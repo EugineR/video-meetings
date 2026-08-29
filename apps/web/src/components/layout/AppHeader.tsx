@@ -1,12 +1,14 @@
+'use client';
+
 import { Button, Link } from '@heroui/react';
 import { BrandHeader } from '@/components/layout/BrandHeader';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface AppHeaderProps {
-  email: string;
-  name?: string | null;
-  hasAvatar?: boolean;
   avatarUpdatedAt?: string | null;
+  email: string;
+  hasAvatar?: boolean;
+  name?: string | null;
   onSignOut: () => void;
 }
 
@@ -16,10 +18,10 @@ interface AppHeaderProps {
  * `AppShell`; a page that renders it itself is a bug.
  */
 export function AppHeader({
-  email,
-  name = null,
-  hasAvatar = false,
   avatarUpdatedAt = null,
+  email,
+  hasAvatar = false,
+  name = null,
   onSignOut,
 }: AppHeaderProps) {
   return (
@@ -36,7 +38,7 @@ export function AppHeader({
           {name?.trim() || email}
         </span>
       </Link>
-      <Button className="h-11 md:h-10" variant="secondary" onPress={onSignOut}>
+      <Button className="h-11 md:h-10" onPress={onSignOut} variant="secondary">
         Sign out
       </Button>
     </BrandHeader>

@@ -1,9 +1,10 @@
+'use client';
+
 import { Chip, Spinner } from '@heroui/react';
 import type { MeetingSummary } from '@/lib/api';
 import { ErrorText } from '@/components/ui/ErrorText';
 
 interface MeetingSummarySectionProps {
-  summary: MeetingSummary | null;
   /**
    * True while the summary hasn't caught up with the meeting's current recordings yet (see
    * `useMeetingSummaryStatus`'s `isSummaryPending`) — including the case where `summary.status`
@@ -14,6 +15,7 @@ interface MeetingSummarySectionProps {
    * meantime.
    */
   isUpdating: boolean;
+  summary: MeetingSummary | null;
 }
 
 /**
@@ -24,8 +26,8 @@ interface MeetingSummarySectionProps {
  * `useMeetingSummaryStatus`'s `showSummarySection`.
  */
 export function MeetingSummarySection({
-  summary,
   isUpdating,
+  summary,
 }: MeetingSummarySectionProps) {
   if (summary?.status === 'FAILED') {
     return (

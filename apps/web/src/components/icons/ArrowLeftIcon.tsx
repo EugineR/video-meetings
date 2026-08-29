@@ -1,3 +1,5 @@
+'use client';
+
 export function ArrowLeftIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

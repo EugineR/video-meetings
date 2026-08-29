@@ -41,10 +41,13 @@ export interface FileSelection {
   /** 0–100 while an upload is in flight, `null` otherwise. */
   progress: number | null;
   isUploading: boolean;
-  /** A rejected file or a failed upload; never a cancellation. */
+  /**
+   * A rejected file or a failed upload; never a cancellation. Read-only on purpose —
+   * a failure the owning component raises itself (deleting an avatar, say) is its own
+   * state, and routing it through here is what once put a removal error under the
+   * uploader's buttons instead of inside the confirmation dialog that caused it.
+   */
   error: string | null;
-  /** For failures the owning component raises itself (e.g. deleting an avatar). */
-  setError: (message: string | null) => void;
   /** Drops the staged file and its preview without touching the server. */
   clearSelection: () => void;
   /** Uploads the staged file; a no-op when nothing is staged. */
@@ -178,7 +181,6 @@ export function useFileSelection<TResult>({
     progress,
     isUploading,
     error,
-    setError,
     clearSelection: () => {
       discardSelection();
       setError(null);

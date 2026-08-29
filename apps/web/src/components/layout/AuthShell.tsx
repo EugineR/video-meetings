@@ -1,3 +1,5 @@
+'use client';
+
 import type { ReactNode } from 'react';
 import { BrandHeader } from '@/components/layout/BrandHeader';
 import { PageShell } from '@/components/layout/PageShell';

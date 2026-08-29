@@ -3,12 +3,16 @@
 import { useCallback, useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { clearAccessToken, refreshAccessToken, type StoredUser } from './auth';
+import {
+  clearAccessToken,
+  refreshAccessToken,
+  type StoredUser,
+} from '@/lib/auth';
 import {
   sessionQueryKey,
   useResetQueryCache,
   useSessionQuery,
-} from './queries/session';
+} from '@/lib/queries/session';
 
 export interface UseAuthenticatedUserResult {
   user: StoredUser | null;

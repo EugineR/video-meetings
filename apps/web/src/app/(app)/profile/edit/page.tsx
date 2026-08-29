@@ -2,8 +2,12 @@
 
 import { Button, Card } from '@heroui/react';
 import { useRouter } from 'next/navigation';
+import {
+  useApplyProfile,
+  useProfileQuery,
+  type ProfileSaved,
+} from '@/lib/queries/profile';
 import { useAuthenticatedUserContext } from '@/components/layout/AuthenticatedUserProvider';
-import { useApplyProfile, useProfileQuery } from '@/lib/queries/profile';
 import { AvatarSection } from '@/components/profile/AvatarSection';
 import { DisplayNameSection } from '@/components/profile/DisplayNameSection';
 import { PasswordSection } from '@/components/profile/PasswordSection';
@@ -16,14 +20,31 @@ export default function ProfileEditPage() {
   const { profile, profileError } = useProfileQuery();
   const applyProfile = useApplyProfile();
 
+  /**
+   * The one place the sections' shared `onSaved` payload is applied: a `profile` delta
+   * goes into the query cache, a reissued `accessToken` into the session. A section
+   * fills only the half it produced, so both branches are conditional.
+   */
+  const handleSaved = ({
+    accessToken,
+    profile: savedProfile,
+  }: ProfileSaved) => {
+    if (savedProfile) {
+      applyProfile(savedProfile);
+    }
+    if (accessToken) {
+      applyAccessToken(accessToken);
+    }
+  };
+
   return (
     <>
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Edit profile</h2>
         <Button
           className="h-11 md:h-10"
-          variant="secondary"
           onPress={() => router.push('/profile')}
+          variant="secondary"
         >
           Back to profile
         </Button>
@@ -38,9 +59,9 @@ export default function ProfileEditPage() {
         <LoadingState subject="profile" />
       ) : (
         <>
-          <AvatarSection onProfileChange={applyProfile} profile={profile} />
-          <DisplayNameSection name={profile.name} onSaved={applyProfile} />
-          <PasswordSection onChanged={applyAccessToken} />
+          <AvatarSection onSaved={handleSaved} profile={profile} />
+          <DisplayNameSection name={profile.name} onSaved={handleSaved} />
+          <PasswordSection onSaved={handleSaved} />
         </>
       )}
     </>

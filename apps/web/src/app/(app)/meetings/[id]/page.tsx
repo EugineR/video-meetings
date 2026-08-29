@@ -27,8 +27,8 @@ export default function MeetingDetailPage() {
     <>
       <Button
         className="h-11 self-start md:h-10"
-        variant="secondary"
         onPress={() => router.back()}
+        variant="secondary"
       >
         <ArrowLeftIcon className="size-4" />
         Back

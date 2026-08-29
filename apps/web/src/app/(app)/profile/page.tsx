@@ -42,8 +42,8 @@ export default function ProfilePage() {
         </div>
         <Button
           className="h-11 shrink-0 md:h-10"
-          variant="secondary"
           onPress={() => router.push('/profile/edit')}
+          variant="secondary"
         >
           Edit profile
         </Button>

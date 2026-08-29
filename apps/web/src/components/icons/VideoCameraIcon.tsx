@@ -1,3 +1,5 @@
+'use client';
+
 export function VideoCameraIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

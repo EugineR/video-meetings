@@ -2,8 +2,9 @@
 
 import { useState, type FormEvent } from 'react';
 import { Button, Card, Form } from '@heroui/react';
-import { updateProfile, type Profile } from '@/lib/api';
+import { updateProfile } from '@/lib/api';
 import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
+import type { ProfileSaved } from '@/lib/queries/profile';
 import { MAX_DISPLAY_NAME_LENGTH } from '@/lib/validation';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { SuccessText } from '@/components/ui/SuccessText';
@@ -11,8 +12,11 @@ import { TextInputField } from '@/components/ui/TextInputField';
 
 interface DisplayNameSectionProps {
   name: string | null;
-  /** Called with the API's response right after a successful save, so the caller can propagate it (e.g. to the header) without refetching. */
-  onSaved: (profile: Profile) => void;
+  /**
+   * The shared "saved, here is the result" callback (see `ProfileSaved`): the display
+   * name this section just wrote, for the caller to apply without refetching.
+   */
+  onSaved: (saved: ProfileSaved) => void;
 }
 
 /**
@@ -38,7 +42,7 @@ export function DisplayNameSection({ name, onSaved }: DisplayNameSectionProps) {
       setValue(updated.name ?? '');
       setSavedValue(updated.name ?? '');
       setIsSaved(true);
-      onSaved(updated);
+      onSaved({ profile: { name: updated.name } });
     } catch (err) {
       setErrors(
         toFormErrorState(err, 'Something went wrong. Please try again.'),

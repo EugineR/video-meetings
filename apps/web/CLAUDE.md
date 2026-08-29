@@ -27,7 +27,7 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
 - `src/components/` — one component per file, in subfolders **by kind** (`ui/`, `layout/`,
   `meetings/`, `profile/`, `icons/`), not flat; `ui/` holds the shared, feature-agnostic
   primitives (`ErrorText`, `SuccessText`, `LoadingState`, `TextInputField`, `PasswordField`,
-  `UserAvatar`) and icons are re-exported through `icons/index.ts`
+  `ConfirmModal`, `UserAvatar`) and icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
   `useMeetingSummaryStatus.ts`, `useFileSelection.ts`, `format.ts`, `validation.ts`,
   `formErrors.ts`, `meetings.ts`, `uploads.ts`, and
@@ -134,6 +134,32 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   which is what leaves 400 meaning "the current password is wrong" and nothing else. The regex on
   the API's prose (`/current password is incorrect/i`) that used to do this job broke silently on
   a reworded message.
+- **A component that saves something calls it `onSaved`, and one that stores a file calls it
+  `onUploaded`** — the same name always carries the same payload. The three `/profile/edit`
+  sections share `onSaved(saved: ProfileSaved)` (`src/lib/queries/profile.ts`): a `profile`
+  delta, an `accessToken`, or whichever half that section produced, applied in one place by the
+  page. `onUploaded` is always `(recording: Recording)` — `MeetingRow` used to hand up a
+  `meetingId` instead, so the same prop name meant two things one component apart. The three
+  names this replaced (`onSaved(Profile)`, `onProfileChange(Partial<Profile>)`,
+  `onChanged(accessToken)`) were one convention per component.
+- **Every modal is controlled by `isOpen` + `onOpenChange(isOpen)`** and never wraps a HeroUI
+  `<Modal>` trigger; the caller owns the open state. A **destructive confirmation is
+  `ConfirmModal`** (`src/components/ui/ConfirmModal.tsx`) — Cancel is HeroUI's `slot="close"`, so
+  Escape, the backdrop, the close control and Cancel all leave the same way, and a failure raised
+  by the confirmed action goes in its `error` prop, which renders **inside** the still-open
+  dialog. Rendering that failure in the page behind the modal (as `RecordingCard` did) hides it
+  until the dialog is dismissed. A second hand-written `Modal.Backdrop` confirmation is a bug.
+- **Every `.tsx` under `src/components/` starts with `'use client'`** — icons and purely
+  presentational components included. The app has no server components below the root layout, so
+  "only where a hook needs it" would be a rule with no observable effect and four files that
+  silently drifted out of it.
+- **Props are alphabetical** — in the props interface, in the destructuring, and in the JSX
+  attributes at the call site, so a component's declaration and its usage read in the same order.
+- **Module paths use the `@/` alias; there are no relative imports in `src/`**, not even between
+  siblings in the same folder. `grep -rn "from '\./" apps/web/src` must stay empty.
+- **A component used by exactly one page still lives in `src/components/<feature>/`**, not beside
+  the route: `src/app/` holds routes, and `AvatarSection`, `DisplayNameSection` and
+  `PasswordSection` sit in `components/profile/` for the same reason every other component does.
 - **An unknown or another user's meeting is a 404 `ApiError` rendered inline**, never a blank page
   or a redirect.
 - **The meeting detail query polls until the meeting is settled**, and the page never sets up an

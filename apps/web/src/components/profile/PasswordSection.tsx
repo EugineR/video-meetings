@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { Button, Card, Form } from '@heroui/react';
 import { changePassword } from '@/lib/api';
 import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
+import type { ProfileSaved } from '@/lib/queries/profile';
 import {
   MIN_PASSWORD_LENGTH,
   PASSWORD_LENGTH_HINT,
@@ -14,8 +15,12 @@ import { PasswordField } from '@/components/ui/PasswordField';
 import { SuccessText } from '@/components/ui/SuccessText';
 
 interface PasswordSectionProps {
-  /** Called with the freshly issued token right after a successful change, so the caller can keep the session alive without a re-login. */
-  onChanged: (accessToken: string) => void;
+  /**
+   * The shared "saved, here is the result" callback (see `ProfileSaved`): the token the
+   * API reissued, for the caller to keep the session alive without a re-login. This
+   * section changes no profile field, so it never fills the `profile` half.
+   */
+  onSaved: (saved: ProfileSaved) => void;
 }
 
 /**
@@ -33,7 +38,7 @@ interface PasswordSectionProps {
  * letting the case through would put the API's "New password must be different…" on the
  * `currentPassword` field, since both answers share the 400 the map above pins to it.
  */
-export function PasswordSection({ onChanged }: PasswordSectionProps) {
+export function PasswordSection({ onSaved }: PasswordSectionProps) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -59,7 +64,7 @@ export function PasswordSection({ onChanged }: PasswordSectionProps) {
       setNewPassword('');
       setConfirmPassword('');
       setIsSaved(true);
-      onChanged(accessToken);
+      onSaved({ accessToken });
     } catch (err) {
       setErrors(
         toFormErrorState(err, 'Something went wrong. Please try again.', {

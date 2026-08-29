@@ -1,3 +1,5 @@
+'use client';
+
 import { Spinner } from '@heroui/react';
 
 export type LoadingStateVariant = 'section' | 'page';

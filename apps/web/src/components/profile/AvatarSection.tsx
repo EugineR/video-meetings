@@ -1,26 +1,24 @@
 'use client';
 
 import { useState } from 'react';
-import { Avatar, Button, Card, Label, Modal, ProgressBar } from '@heroui/react';
+import { Avatar, Button, Card, Label, ProgressBar } from '@heroui/react';
 import { ApiError, deleteAvatar, uploadAvatar, type Profile } from '@/lib/api';
+import type { ProfileSaved } from '@/lib/queries/profile';
 import { AVATAR_UPLOAD } from '@/lib/uploads';
 import { useFileSelection } from '@/lib/useFileSelection';
 import { TrashIcon, UploadIcon } from '@/components/icons';
-import { UserAvatar } from '@/components/ui/UserAvatar';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { ErrorText } from '@/components/ui/ErrorText';
+import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface AvatarSectionProps {
-  profile: Profile;
   /**
-   * Called with only the avatar-specific fields right after a successful
-   * upload or removal, so the caller can merge them (e.g. into the header)
-   * without refetching. Deliberately a delta, not a full `Profile` built from
-   * the `profile` prop: this callback can resolve well after it captured
-   * `profile` (an upload has its own progress bar), by which point another
-   * section may have saved a newer profile — spreading the stale `profile`
-   * here would clobber that update.
+   * The shared "saved, here is the result" callback (see `ProfileSaved`): only the
+   * avatar-specific fields, right after a successful upload or removal, for the caller
+   * to merge (e.g. into the header) without refetching.
    */
-  onProfileChange: (profile: Partial<Profile>) => void;
+  onSaved: (saved: ProfileSaved) => void;
+  profile: Profile;
 }
 
 /**
@@ -29,25 +27,28 @@ interface AvatarSectionProps {
  * The upload starts only when the user presses "Save"; "Cancel" discards the
  * pending selection (revoking the object URL) and restores the current
  * avatar/initials placeholder without touching the server. On a successful
- * upload, `onProfileChange` is called with just the avatar fields (derived from
- * the upload/delete response, not a refetch, and not merged with the `profile`
- * prop here — see `AvatarSectionProps`) so the header and /profile pick up the
- * change immediately.
+ * upload, `onSaved` is called with just the avatar fields (derived from the
+ * upload/delete response, not a refetch, and not merged with the `profile` prop
+ * here — see `ProfileSaved`) so the header and /profile pick up the change
+ * immediately.
+ *
+ * Removal keeps its own `removeError`, separate from the selection's upload error:
+ * one belongs inside the confirmation dialog, the other under the buttons.
  */
-export function AvatarSection({
-  profile,
-  onProfileChange,
-}: AvatarSectionProps) {
+export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
   const [isRemoved, setIsRemoved] = useState(false);
   const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const selection = useFileSelection({
     constraints: AVATAR_UPLOAD,
     mode: 'staged',
     upload: uploadAvatar,
     onUploaded: (avatar) => {
       setIsRemoved(false);
-      onProfileChange({ hasAvatar: true, avatarUpdatedAt: avatar.updatedAt });
+      onSaved({
+        profile: { hasAvatar: true, avatarUpdatedAt: avatar.updatedAt },
+      });
     },
   });
 
@@ -55,17 +56,22 @@ export function AvatarSection({
   const hasStoredAvatar = profile.hasAvatar && !isRemoved;
   const canRemove = hasStoredAvatar;
 
+  const handleRemoveOpenChange = (isOpen: boolean) => {
+    setRemoveError(null);
+    setIsRemoveModalOpen(isOpen);
+  };
+
   const handleConfirmRemove = async () => {
     setIsRemoving(true);
-    selection.setError(null);
+    setRemoveError(null);
     try {
       await deleteAvatar();
       selection.clearSelection();
       setIsRemoved(true);
       setIsRemoveModalOpen(false);
-      onProfileChange({ hasAvatar: false, avatarUpdatedAt: null });
+      onSaved({ profile: { hasAvatar: false, avatarUpdatedAt: null } });
     } catch (err) {
-      selection.setError(
+      setRemoveError(
         err instanceof ApiError
           ? err.message
           : 'Could not remove the avatar. Please try again.',
@@ -174,48 +180,26 @@ export function AvatarSection({
             </div>
           </div>
 
-          {selection.error && !isRemoveModalOpen ? (
-            <ErrorText>{selection.error}</ErrorText>
-          ) : null}
+          {selection.error ? <ErrorText>{selection.error}</ErrorText> : null}
 
           <input {...selection.inputProps} />
         </div>
       </Card.Content>
 
-      <Modal.Backdrop
+      <ConfirmModal
+        confirmLabel="Remove"
+        error={removeError}
+        heading="Remove avatar?"
         isOpen={isRemoveModalOpen}
-        onOpenChange={setIsRemoveModalOpen}
+        isPending={isRemoving}
+        onConfirm={() => void handleConfirmRemove()}
+        onOpenChange={handleRemoveOpenChange}
       >
-        <Modal.Container>
-          <Modal.Dialog className="sm:max-w-[400px]">
-            <Modal.CloseTrigger />
-            <Modal.Header>
-              <Modal.Heading>Remove avatar?</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
-              <p>
-                This will remove your profile photo. You can upload a new one at
-                any time.
-              </p>
-              {selection.error ? (
-                <ErrorText>{selection.error}</ErrorText>
-              ) : null}
-            </Modal.Body>
-            <Modal.Footer>
-              <Button slot="close" variant="secondary">
-                Cancel
-              </Button>
-              <Button
-                isPending={isRemoving}
-                onPress={() => void handleConfirmRemove()}
-                variant="danger"
-              >
-                Remove
-              </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+        <p>
+          This will remove your profile photo. You can upload a new one at any
+          time.
+        </p>
+      </ConfirmModal>
     </Card>
   );
 }

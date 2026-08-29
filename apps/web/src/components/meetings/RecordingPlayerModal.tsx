@@ -4,17 +4,17 @@ import { Modal } from '@heroui/react';
 import { getRecordingContentUrl, type Recording } from '@/lib/api';
 
 interface RecordingPlayerModalProps {
-  meetingId: string;
-  recording: Recording;
   isOpen: boolean;
+  meetingId: string;
   onOpenChange: (isOpen: boolean) => void;
+  recording: Recording;
 }
 
 export function RecordingPlayerModal({
-  meetingId,
-  recording,
   isOpen,
+  meetingId,
   onOpenChange,
+  recording,
 }: RecordingPlayerModalProps) {
   return (
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>

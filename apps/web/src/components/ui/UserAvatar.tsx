@@ -1,3 +1,5 @@
+'use client';
+
 import { Avatar } from '@heroui/react';
 import { getAvatarUrl } from '@/lib/api';
 import { getInitials } from '@/lib/format';
@@ -10,10 +12,10 @@ const HEROUI_SIZE: Record<UserAvatarSize, 'sm' | 'lg'> = {
 };
 
 interface UserAvatarProps {
-  name: string | null;
+  avatarUpdatedAt: string | null;
   email: string;
   hasAvatar: boolean;
-  avatarUpdatedAt: string | null;
+  name: string | null;
   size: UserAvatarSize;
 }
 
@@ -29,10 +31,10 @@ interface UserAvatarProps {
  * header at a feature folder.
  */
 export function UserAvatar({
-  name,
+  avatarUpdatedAt,
   email,
   hasAvatar,
-  avatarUpdatedAt,
+  name,
   size,
 }: UserAvatarProps) {
   const label = name?.trim() || email;

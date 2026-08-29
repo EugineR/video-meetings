@@ -10,14 +10,14 @@ import { TextInputField } from '@/components/ui/TextInputField';
 
 interface CreateMeetingModalProps {
   isOpen: boolean;
-  onOpenChange: (isOpen: boolean) => void;
   onCreated: (meeting: Meeting) => void;
+  onOpenChange: (isOpen: boolean) => void;
 }
 
 export function CreateMeetingModal({
   isOpen,
-  onOpenChange,
   onCreated,
+  onOpenChange,
 }: CreateMeetingModalProps) {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');

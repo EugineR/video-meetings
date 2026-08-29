@@ -1,3 +1,5 @@
+'use client';
+
 export function PlayCircleIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

@@ -44,6 +44,26 @@ export function useProfileQuery(): ProfileQueryResult {
 }
 
 /**
+ * What a `/profile/edit` section hands back after a successful save — the one payload
+ * shape behind the one callback name (`onSaved`) all three of them use. Every field is
+ * optional because a section reports only what it actually changed: the display name and
+ * the avatar produce a `profile` delta, the password change produces a reissued
+ * `accessToken`, and the page applies whichever half arrives (`useApplyProfile()` here,
+ * `applyAccessToken` from the session context).
+ *
+ * `profile` is a delta rather than a whole `Profile` on purpose: a save can resolve well
+ * after it read the profile — an avatar upload has its own progress bar — by which point
+ * another section may have saved a newer one, and a whole profile built from the stale
+ * copy would clobber that update. See `useApplyProfile()` below.
+ */
+export interface ProfileSaved {
+  /** A freshly issued token, when the save invalidated the previous one. */
+  accessToken?: string;
+  /** Only the profile fields the save changed. */
+  profile?: Partial<Profile>;
+}
+
+/**
  * Merges freshly saved fields (a name change, an avatar upload or removal) into the
  * cached profile, so every consumer picks them up without a refetch.
  *

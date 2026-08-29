@@ -48,7 +48,7 @@ export default function Home() {
                   highlighted
                   key={meeting.id}
                   meeting={meeting}
-                  onUploaded={countUploadedRecording}
+                  onUploaded={() => countUploadedRecording(meeting.id)}
                 />
               ))}
             </ul>
@@ -82,7 +82,7 @@ export default function Home() {
                 <MeetingRow
                   key={meeting.id}
                   meeting={meeting}
-                  onUploaded={countUploadedRecording}
+                  onUploaded={() => countUploadedRecording(meeting.id)}
                 />
               ))}
             </ul>

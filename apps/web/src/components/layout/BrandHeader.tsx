@@ -1,3 +1,5 @@
+'use client';
+
 import type { ReactNode } from 'react';
 import { Link } from '@heroui/react';
 import { VideoCameraIcon } from '@/components/icons';

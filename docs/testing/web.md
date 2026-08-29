@@ -57,9 +57,14 @@ Recording tile flows worth walking explicitly on any change to `RecordingCard.ts
   shows no toggle at all.
 - **`FAILED` messaging** — a `FAILED` recording shows the existing failure notice on its
   own row instead of a transcript toggle.
-- **Delete** — the red icon-only button on a tile's right edge opens the existing
-  confirmation modal before removing the tile on success, unchanged from before the
-  redesign.
+- **Delete** — the red icon-only button on a tile's right edge opens the shared
+  `ConfirmModal` before removing the tile on success. Walk both answers (confirm and
+  cancel) and all three ways out of the dialog — the backdrop, Escape and the close
+  control — and confirm focus returns to the button that opened it. A failed delete keeps
+  the dialog open with the message **inside** it, not behind it in the tile.
+
+Any change to `ConfirmModal` is exercised on both of its call sites, since they are the whole
+population: a recording delete here and the avatar removal on `/profile/edit`.
 
 Summary catch-up flow worth walking on any change to `MeetingSummarySection.tsx` or
 `useMeetingSummaryStatus`/`isMeetingSettled`: a `MeetingSummary` whose `status` is already

@@ -2,18 +2,18 @@
 
 import { Modal } from '@heroui/react';
 import type { Recording } from '@/lib/api';
-import { RecordingUploader } from './RecordingUploader';
+import { RecordingUploader } from '@/components/meetings/RecordingUploader';
 
 interface UploadRecordingModalProps {
-  meetingId: string;
   isOpen: boolean;
+  meetingId: string;
   onOpenChange: (isOpen: boolean) => void;
   onUploaded: (recording: Recording) => void;
 }
 
 export function UploadRecordingModal({
-  meetingId,
   isOpen,
+  meetingId,
   onOpenChange,
   onUploaded,
 }: UploadRecordingModalProps) {

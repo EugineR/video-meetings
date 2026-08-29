@@ -1,29 +1,30 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Link, Modal, Spinner } from '@heroui/react';
+import { Button, Link, Spinner } from '@heroui/react';
 import { ApiError, deleteMeetingRecording, type Recording } from '@/lib/api';
 import { formatDateTime, formatFileSize } from '@/lib/format';
 import { ChevronDownIcon, PlayCircleIcon, TrashIcon } from '@/components/icons';
+import { RecordingPlayerModal } from '@/components/meetings/RecordingPlayerModal';
+import { RecordingStatusChip } from '@/components/meetings/RecordingStatusChip';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { ErrorText } from '@/components/ui/ErrorText';
-import { RecordingStatusChip } from './RecordingStatusChip';
-import { RecordingPlayerModal } from './RecordingPlayerModal';
 
 interface RecordingCardProps {
   meetingId: string;
-  recording: Recording;
   onDeleted: (recordingId: string) => void;
+  recording: Recording;
 }
 
 export function RecordingCard({
   meetingId,
-  recording,
   onDeleted,
+  recording,
 }: RecordingCardProps) {
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
 
   const hasTranscript =
@@ -31,15 +32,20 @@ export function RecordingCard({
   const isTranscribing =
     recording.status === 'UPLOADED' || recording.status === 'PROCESSING';
 
+  const handleDeleteOpenChange = (isOpen: boolean) => {
+    setDeleteError(null);
+    setIsDeleteOpen(isOpen);
+  };
+
   const handleConfirmDelete = async () => {
     setIsDeleting(true);
-    setError(null);
+    setDeleteError(null);
     try {
       await deleteMeetingRecording(meetingId, recording.id);
       setIsDeleteOpen(false);
       onDeleted(recording.id);
     } catch (err) {
-      setError(
+      setDeleteError(
         err instanceof ApiError
           ? err.message
           : 'Could not delete the recording. Please try again.',
@@ -130,8 +136,6 @@ export function RecordingCard({
         </div>
       ) : null}
 
-      {error ? <ErrorText>{error}</ErrorText> : null}
-
       <RecordingPlayerModal
         isOpen={isPlayerOpen}
         meetingId={meetingId}
@@ -139,34 +143,20 @@ export function RecordingCard({
         recording={recording}
       />
 
-      <Modal.Backdrop isOpen={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
-        <Modal.Container>
-          <Modal.Dialog className="sm:max-w-[400px]">
-            <Modal.CloseTrigger />
-            <Modal.Header>
-              <Modal.Heading>Delete recording?</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
-              <p>
-                This will permanently delete “{recording.originalFilename}”.
-                This can&apos;t be undone.
-              </p>
-            </Modal.Body>
-            <Modal.Footer>
-              <Button slot="close" variant="secondary">
-                Cancel
-              </Button>
-              <Button
-                isPending={isDeleting}
-                onPress={() => void handleConfirmDelete()}
-                variant="danger"
-              >
-                Delete
-              </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+      <ConfirmModal
+        confirmLabel="Delete"
+        error={deleteError}
+        heading="Delete recording?"
+        isOpen={isDeleteOpen}
+        isPending={isDeleting}
+        onConfirm={() => void handleConfirmDelete()}
+        onOpenChange={handleDeleteOpenChange}
+      >
+        <p>
+          This will permanently delete “{recording.originalFilename}”. This
+          can&apos;t be undone.
+        </p>
+      </ConfirmModal>
     </div>
   );
 }

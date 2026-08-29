@@ -1,3 +1,5 @@
+'use client';
+
 export function EyeIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
