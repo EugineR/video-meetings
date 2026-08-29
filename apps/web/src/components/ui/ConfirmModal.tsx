@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { Modal } from '@heroui/react';
+import { touchTarget } from '@/lib/touchTarget';
 import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 
@@ -50,7 +51,7 @@ export function ConfirmModal({
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
       <Modal.Container>
         <Modal.Dialog className="sm:max-w-[400px]">
-          <Modal.CloseTrigger />
+          <Modal.CloseTrigger className={touchTarget({ fit: 'square' })} />
           <Modal.Header>
             <Modal.Heading>{heading}</Modal.Heading>
           </Modal.Header>

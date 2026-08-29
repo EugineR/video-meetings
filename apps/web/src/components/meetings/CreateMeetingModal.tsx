@@ -5,6 +5,7 @@ import { Form, Modal } from '@heroui/react';
 import { createMeeting, type Meeting } from '@/lib/api';
 import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
 import { parseParticipants } from '@/lib/meetings';
+import { touchTarget } from '@/lib/touchTarget';
 import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { TextInputField } from '@/components/ui/TextInputField';
@@ -71,7 +72,7 @@ export function CreateMeetingModal({
     <Modal.Backdrop isOpen={isOpen} onOpenChange={handleOpenChange}>
       <Modal.Container>
         <Modal.Dialog className="sm:max-w-[440px]">
-          <Modal.CloseTrigger />
+          <Modal.CloseTrigger className={touchTarget({ fit: 'square' })} />
           <Modal.Header>
             <Modal.Heading>Create meeting</Modal.Heading>
           </Modal.Header>

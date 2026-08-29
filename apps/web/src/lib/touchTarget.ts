@@ -8,10 +8,13 @@ import { tv, type VariantProps } from 'tailwind-variants';
  * heights), and `min-h-[44px] md:min-h-10` — so meeting the minimum is no longer a
  * convention an author can silently forget. `@/components/ui/Button` applies it to every
  * button on its own; the field primitives, the one non-control slot that has to line up
- * with a button, and a link that stands on its own as a control (the header's `/profile`
- * link) call this recipe directly. A link that is inline text inside a sentence — the
- * "Create one"/"Sign in" footers on the auth pages — is the deliberate exception: padding
- * it to 44px would break the line it sits in, and the sentence around it is the target.
+ * with a button, a link that stands on its own as a control (the header's `/profile`
+ * link), and every `Modal.CloseTrigger` (HeroUI ships it at a fixed 24px, in the same
+ * `components` layer `Button` overrides — its icon has its own fixed size, so growing the
+ * trigger only enlarges the hit area) call this recipe directly. A link that is inline
+ * text inside a sentence — the "Create one"/"Sign in" footers on the auth pages — is the
+ * deliberate exception: padding it to 44px would break the line it sits in, and the
+ * sentence around it is the target.
  *
  * The classes are Tailwind utilities on purpose: HeroUI ships its control heights in the
  * `components` cascade layer, which the `utilities` layer overrides, so these win over

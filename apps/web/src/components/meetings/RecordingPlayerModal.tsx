@@ -1,6 +1,7 @@
 'use client';
 
 import { Modal } from '@heroui/react';
+import { touchTarget } from '@/lib/touchTarget';
 import { getRecordingContentUrl, type Recording } from '@/lib/api';
 
 interface RecordingPlayerModalProps {
@@ -20,7 +21,7 @@ export function RecordingPlayerModal({
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
       <Modal.Container size="lg">
         <Modal.Dialog>
-          <Modal.CloseTrigger />
+          <Modal.CloseTrigger className={touchTarget({ fit: 'square' })} />
           <Modal.Header>
             <Modal.Heading className="truncate">
               {recording.originalFilename}
