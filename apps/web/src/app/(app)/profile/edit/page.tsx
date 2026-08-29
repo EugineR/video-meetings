@@ -3,6 +3,7 @@
 import { Button, Card } from '@heroui/react';
 import { useRouter } from 'next/navigation';
 import { useAuthenticatedUserContext } from '@/components/layout/AuthenticatedUserProvider';
+import { useApplyProfile, useProfileQuery } from '@/lib/queries/profile';
 import { AvatarSection } from '@/components/profile/AvatarSection';
 import { DisplayNameSection } from '@/components/profile/DisplayNameSection';
 import { PasswordSection } from '@/components/profile/PasswordSection';
@@ -11,8 +12,9 @@ import { LoadingState } from '@/components/ui/LoadingState';
 
 export default function ProfileEditPage() {
   const router = useRouter();
-  const { profile, profileError, applyProfile, applyAccessToken } =
-    useAuthenticatedUserContext();
+  const { applyAccessToken } = useAuthenticatedUserContext();
+  const { profile, profileError } = useProfileQuery();
+  const applyProfile = useApplyProfile();
 
   return (
     <>

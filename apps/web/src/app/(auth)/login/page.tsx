@@ -15,12 +15,14 @@ import {
 } from '@heroui/react';
 import { ApiError, loginUser } from '@/lib/api';
 import { storeAccessToken } from '@/lib/auth';
+import { useResetQueryCache } from '@/lib/queries/session';
 import { EMAIL_PATTERN } from '@/lib/validation';
 import { EyeIcon, EyeOffIcon } from '@/components/icons';
 import { ErrorText } from '@/components/ui/ErrorText';
 
 export default function LoginPage() {
   const router = useRouter();
+  const resetQueryCache = useResetQueryCache();
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -37,6 +39,9 @@ export default function LoginPage() {
     try {
       const { accessToken } = await loginUser(email, password);
       storeAccessToken(accessToken);
+      // A new session starts here: drop anything the previous one left cached,
+      // including the "no valid token" answer that would bounce us back to /login.
+      resetQueryCache();
       router.push('/');
     } catch (err) {
       setError(

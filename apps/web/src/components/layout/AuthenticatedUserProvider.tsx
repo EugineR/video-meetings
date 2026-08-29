@@ -12,6 +12,9 @@ import { LoadingState } from '@/components/ui/LoadingState';
  * What the `(app)` route group exposes to everything it renders. Identical to
  * `UseAuthenticatedUserResult` except that `user` is non-null: the provider holds the
  * guard, so nothing below it ever renders without a signed-in user.
+ *
+ * The profile is deliberately not here: it is a query (`lib/queries/profile.ts`) that
+ * any component reads directly through `useProfileQuery()`.
  */
 export type AuthenticatedUserContextValue = Omit<
   UseAuthenticatedUserResult,
@@ -33,9 +36,8 @@ interface AuthenticatedUserProviderProps {
  * until that client-side check resolves — which is the loading state rendered here,
  * once, instead of in every page.
  *
- * It also holds the session state (profile, `applyProfile`, `applyAccessToken`) for
- * the whole group, so the header and the pages share one instance of the hook rather
- * than each fetching and mutating their own copy.
+ * It also shares that session (`user`, `signOut`, `applyAccessToken`) with the whole
+ * group, so the token check runs in one place rather than once per page.
  */
 export function AuthenticatedUserProvider({
   children,

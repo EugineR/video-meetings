@@ -18,8 +18,8 @@ port 3000) · `build` · `start` · `lint` (`eslint.config.mjs` composes `eslint
 
 ## Layout
 
-Next.js App Router on Tailwind CSS v4 and HeroUI v3; nothing of the `create-next-app` scaffold
-remains. Every page is a client component and auth is client-side only.
+Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of the
+`create-next-app` scaffold remains. Every page is a client component and auth is client-side only.
 
 - `src/app/` — two route groups plus the root `layout.tsx` and `globals.css`: `(app)` holds the
   authenticated routes `/`, `/meetings/[id]`, `/profile`, `/profile/edit` with their
@@ -29,7 +29,8 @@ remains. Every page is a client component and auth is client-side only.
   primitives (`ErrorText`, `SuccessText`, `LoadingState`, `UserAvatar`) and icons are re-exported
   through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
-  `format.ts`, `validation.ts`, `meetings.ts`, `uploads.ts`
+  `format.ts`, `validation.ts`, `meetings.ts`, `uploads.ts`, and `queries/` (`client.ts`,
+  `session.ts`, `profile.ts`) — the TanStack Query layer
 
 ## Rules
 
@@ -62,8 +63,19 @@ remains. Every page is a client component and auth is client-side only.
   A page that renders `AppHeader`, the background gradient, a content container or its own `!user`
   loading state is a bug. The gradient itself lives only in `PageShell`, which both shells wrap.
 - **A page inside `(app)` reads the session from `useAuthenticatedUserContext()`**, not by calling
-  `useAuthenticatedUser()` again — a second call would fetch `GET /users/me` a second time and give
-  the page a private copy of the profile the header would never see updated.
+  `useAuthenticatedUser()` again — that hook owns the redirect and the pathname-keyed token
+  re-check, and a second instance would run both a second time.
+- **Server state belongs to the query layer in `src/lib/queries/`, not to a `useEffect` + `useState`
+  pair in a component.** `QueryProvider` mounts the one `QueryClient` in the root layout;
+  a fetch gets a keyed hook next to the others there. The profile is the worked example:
+  `useProfileQuery()` is read by the header, `/profile` and `/profile/edit`, and because
+  `staleTime` is `Infinity` and the header keeps it observed for the whole session, `GET /users/me`
+  is fetched once — navigating between those routes hits the cache and the header's avatar never
+  drops back to initials. Nothing else writes the profile, so a save calls `useApplyProfile()`
+  (a `setQueryData` merge of the fields it just saved) instead of invalidating and refetching.
+- **Every session boundary clears the query cache** — `useResetQueryCache()` in `/login`,
+  `/register` and `signOut`. Without it the next sign-in on the tab inherits the previous user's
+  cached profile, and the cached "no valid token" answer bounces them straight back to `/login`.
 - **Auth is client-side only.** The JWT lives in `localStorage` under `accessToken`, its payload is
   decoded without signature verification, and nothing server-side reads it — there is no SSR or
   middleware gate. The API is the source of truth; the decoded payload is a hint.

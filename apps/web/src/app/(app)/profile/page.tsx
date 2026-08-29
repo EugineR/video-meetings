@@ -2,7 +2,7 @@
 
 import { Button, Card } from '@heroui/react';
 import { useRouter } from 'next/navigation';
-import { useAuthenticatedUserContext } from '@/components/layout/AuthenticatedUserProvider';
+import { useProfileQuery } from '@/lib/queries/profile';
 import { formatDateTime } from '@/lib/format';
 import { CalendarIcon } from '@/components/icons';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -11,7 +11,7 @@ import { LoadingState } from '@/components/ui/LoadingState';
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { profile, profileError } = useAuthenticatedUserContext();
+  const { profile, profileError } = useProfileQuery();
 
   if (profileError) {
     return (
