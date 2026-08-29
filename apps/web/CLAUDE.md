@@ -13,7 +13,8 @@ Rules and boundaries only. The per-file inventory is in `docs/architecture/web.m
 
 From `apps/web/`, or `pnpm --filter web <script>` from the root: `pnpm dev` (Next.js dev server,
 port 3000) · `build` · `start` · `lint` (`eslint.config.mjs` composes `eslint-config-next`'s
-`core-web-vitals` and `typescript` sets). No test suite is configured — see
+`core-web-vitals` and `typescript` sets, then adds the app's own structural rules — the
+mechanically checkable half of the [Rules](#rules) below). No test suite is configured — see
 [Testing UI changes](#testing-ui-changes).
 
 ## Layout
@@ -62,10 +63,13 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   the browser bundle) and must point at `apps/api`'s `PORT`, default `3001`. It falls back to
   `http://localhost:3001` in `src/lib/api.ts`; see `.env.example`.
 - **A cancelled upload rejects with `UploadCancelledError`, not `ApiError`**, so a user-initiated
-  cancel is never rendered as a failure. `uploadMeetingRecording` is built on `XMLHttpRequest` for
-  exactly one reason — `fetch` exposes no upload-progress events. Do not "modernise" it back.
-- **A recording URL carries its token as `?token=`, not a header**: a `<video>` element's `src`
-  cannot set headers, and the API's guard accepts that form only on routes that opt in.
+  cancel is never rendered as a failure. Every upload function — `uploadMeetingRecording` and
+  `uploadAvatar` — is built on `XMLHttpRequest` for exactly one reason: `fetch` exposes no
+  upload-progress events. Do not "modernise" either back.
+- **A media or avatar URL carries its token as `?token=`, not a header**: the `src` of a `<video>`,
+  `<audio>` or `<img>` element cannot set headers, so `getRecordingContentUrl` and `getAvatarUrl`
+  both append the token as a query param, and the API's guard accepts that form only on routes
+  that opt in.
 - **The shell, the header and the auth guard belong to the layout, not to a page.** `(app)/layout.tsx`
   mounts `AuthenticatedUserProvider` (which runs `useAuthenticatedUser()`, holds the single
   `if (!user) return <LoadingState variant="page"/>` guard and shares the session with everything
@@ -74,11 +78,27 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   `max-w-md` card slot).
   A page that renders `AppHeader`, the background gradient, a content container or its own `!user`
   loading state is a bug. The gradient itself lives only in `PageShell`, which both shells wrap.
+  Importing `AppHeader` from anywhere under `src/app/` fails the lint run.
+- **`src/components/ui/` is the only home for a shared primitive, and a feature folder is private
+  to its feature.** `meetings/` and `profile/` must not import each other, `layout/` must not
+  import either of them, and `ui/` must not import any of the three — a primitive that knows what
+  a meeting is has stopped being one, and `UserAvatar` sitting under `profile/` is what once had
+  the header importing a feature folder. What two features need moves _up_ — into `ui/` if it is a
+  component, into `src/lib/` if it is logic — never sideways. All four directions are
+  `no-restricted-imports` rules in `eslint.config.mjs`, so a sideways import fails `pnpm lint:web`
+  rather than review. `icons/` is the one other folder all four may read, and it reads none of
+  them. The seals only see the specifier a file writes, which is why the `@/`-alias rule below is
+  itself a lint rule: the relative spelling of a forbidden import has to be impossible for them to
+  hold.
 - **A page inside `(app)` reads the session from `useAuthenticatedUserContext()`**, not by calling
   `useAuthenticatedUser()` again — that hook owns the redirect and the pathname-keyed token
   re-check, and a second instance would run both a second time.
 - **Server state belongs to the query layer in `src/lib/queries/`, not to a `useEffect` + `useState`
-  pair in a component.** `QueryProvider` mounts the one `QueryClient` in the root layout;
+  pair in a component.** That holds even when the effect goes through `src/lib/api.ts`: fetching on
+  mount and holding the answer in component state is the same bug as reaching for `fetch`, and it
+  is what had `GET /users/me` running once per page and the header's avatar blinking back to
+  initials on every navigation. A mutation still calls `src/lib/api.ts` directly — it is the read
+  path that is owned. `QueryProvider` mounts the one `QueryClient` in the root layout;
   a fetch gets a keyed hook next to the others there. The profile is the worked example:
   `useProfileQuery()` is read by the header, `/profile` and `/profile/edit`, and because
   `staleTime` is `Infinity` and the header keeps it observed for the whole session, `GET /users/me`
@@ -135,6 +155,18 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   which is what leaves 400 meaning "the current password is wrong" and nothing else. The regex on
   the API's prose (`/current password is incorrect/i`) that used to do this job broke silently on
   a reworded message.
+- **Every inline failure is an `ErrorText`, and the class string `text-sm text-danger` is written
+  in `src/components/ui/ErrorText.tsx` and nowhere else** — a rejected file, a failed fetch, a
+  form-level API error and a failed transcription all read and announce (`role="alert"`)
+  identically, which is why that primitive has no `className` escape hatch. A confirmation is
+  `SuccessText` (`role="status"`, polite). The raw string anywhere else under `src/` is a
+  `no-restricted-syntax` error in `eslint.config.mjs`.
+- **Touch-target sizing comes from `src/lib/touchTarget.ts` and nothing else** — the 44px (mobile)
+  / 40px (desktop) minimum in one `tailwind-variants` recipe with four `fit` shapes.
+  `@/components/ui/Button` applies it to every button; the field primitives and any standalone
+  non-button control call the recipe. Hand-writing `h-11 md:h-10` (or `size="lg"`, or
+  `min-h-[44px]`) at a call site is a bug: it was a convention an author had to remember, and the
+  five call sites that forgot it rendered below the minimum.
 - **A component that saves something calls it `onSaved`, and one that stores a file calls it
   `onUploaded`** — the same name always carries the same payload. The three `/profile/edit`
   sections share `onSaved(saved: ProfileSaved)` (`src/lib/queries/profile.ts`): a `profile`
@@ -157,7 +189,10 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
 - **Props are alphabetical** — in the props interface, in the destructuring, and in the JSX
   attributes at the call site, so a component's declaration and its usage read in the same order.
 - **Module paths use the `@/` alias; there are no relative imports in `src/`**, not even between
-  siblings in the same folder. `grep -rn "from '\./" apps/web/src` must stay empty.
+  siblings in the same folder, and not for the stylesheet either — the root layout imports
+  `@/app/globals.css`. `./` and `../` at any depth are a `no-restricted-imports` error in
+  `eslint.config.mjs`, so this fails `pnpm lint:web` rather than a grep — and it is what lets the
+  folder seals above match on the specifier alone.
 - **A component used by exactly one page still lives in `src/components/<feature>/`**, not beside
   the route: `src/app/` holds routes, and `AvatarSection`, `DisplayNameSection` and
   `PasswordSection` sit in `components/profile/` for the same reason every other component does.
@@ -185,10 +220,9 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   **not** `prefers-color-scheme`. No switcher is wired up; the default light theme renders.
 - **`src/app/globals.css` imports `tailwindcss` before `@heroui/styles` — the order matters.** It
   also darkens HeroUI's default `--accent`/`--muted`, whose originals fail WCAG AA (4.5:1) for
-  button text on `--accent` and placeholder text on `--muted`. Keep contrast at AA, and controls at
-  the 44px (mobile) / 40px (desktop) touch-target minimum — which is `src/lib/touchTarget.ts` and
-  nothing else: `@/components/ui/Button` applies it to every button, the field primitives and any
-  standalone non-button control call the recipe. Never hand-write the heights at a call site.
+  button text on `--accent` and placeholder text on `--muted`. Keep contrast at AA, and keep every
+  control at the 44px (mobile) / 40px (desktop) touch-target minimum — which is the
+  `src/lib/touchTarget.ts` rule above, never a height written at a call site.
 
 ## Testing UI changes
 
