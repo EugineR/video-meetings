@@ -1,98 +1,43 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Button, Label, ProgressBar } from '@heroui/react';
-import {
-  ApiError,
-  type Recording,
-  UploadCancelledError,
-  uploadMeetingRecording,
-} from '@/lib/api';
+import { type Recording, uploadMeetingRecording } from '@/lib/api';
 import { RECORDING_UPLOAD } from '@/lib/uploads';
+import { useFileSelection } from '@/lib/useFileSelection';
 import { UploadIcon, XMarkIcon } from '@/components/icons';
 import { ErrorText } from '@/components/ui/ErrorText';
-
-function validateFile(file: File): string | null {
-  if (!RECORDING_UPLOAD.allowedMimeTypes.includes(file.type)) {
-    return `Unsupported file type. Allowed types: ${RECORDING_UPLOAD.allowedExtensionsLabel}.`;
-  }
-  if (file.size > RECORDING_UPLOAD.maxSizeBytes) {
-    return `File is too large. Maximum size is ${RECORDING_UPLOAD.maxSizeLabel}.`;
-  }
-  return null;
-}
 
 interface RecordingUploaderProps {
   meetingId: string;
   onUploaded: (recording: Recording) => void;
 }
 
+/**
+ * The drop zone: drag-and-drop or "Choose file", then an immediate upload with
+ * a progress bar and a "Cancel" control. Everything below the drag handling —
+ * the hidden input, the client-side check, progress, the mid-upload guard and
+ * cancellation — comes from `useFileSelection`.
+ */
 export function RecordingUploader({
   meetingId,
   onUploaded,
 }: RecordingUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const startUpload = (file: File) => {
-    const validationError = validateFile(file);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
-    setError(null);
-    setProgress(0);
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    uploadMeetingRecording(meetingId, file, {
-      onProgress: setProgress,
-      signal: controller.signal,
-    })
-      .then((recording) => {
-        setProgress(null);
-        onUploaded(recording);
-      })
-      .catch((err: unknown) => {
-        setProgress(null);
-        if (err instanceof UploadCancelledError) {
-          return;
-        }
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Upload failed. Please try again.',
-        );
-      });
-  };
-
-  const isUploading = progress !== null;
-
-  const handleFileInputChange = (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    // Guards against a second file slipping in (e.g. a fast repeat pick)
-    // while the first upload's request is still in flight.
-    if (file && !isUploading) {
-      startUpload(file);
-    }
-  };
+  const selection = useFileSelection({
+    constraints: RECORDING_UPLOAD,
+    mode: 'immediate',
+    upload: (file, options) => uploadMeetingRecording(meetingId, file, options),
+    onUploaded,
+  });
+  const { isUploading, progress } = selection;
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    if (isUploading) {
-      return;
-    }
     const file = event.dataTransfer.files?.[0];
     if (file) {
-      startUpload(file);
+      selection.selectFile(file);
     }
   };
 
@@ -115,7 +60,7 @@ export function RecordingUploader({
       >
         <UploadIcon aria-hidden="true" className="size-8 text-muted" />
 
-        {isUploading ? (
+        {progress !== null ? (
           <div className="flex w-full max-w-xs flex-col gap-2">
             <ProgressBar aria-label="Upload progress" value={progress}>
               <Label>Uploading…</Label>
@@ -126,7 +71,7 @@ export function RecordingUploader({
             </ProgressBar>
             <Button
               className="h-11 self-center md:h-10"
-              onPress={() => abortControllerRef.current?.abort()}
+              onPress={selection.cancelUpload}
               size="sm"
               variant="secondary"
             >
@@ -141,7 +86,7 @@ export function RecordingUploader({
             </p>
             <Button
               className="h-11 md:h-10"
-              onPress={() => inputRef.current?.click()}
+              onPress={selection.openFilePicker}
               variant="secondary"
             >
               Choose file
@@ -153,17 +98,10 @@ export function RecordingUploader({
           </>
         )}
 
-        <input
-          accept={RECORDING_UPLOAD.allowedMimeTypes.join(',')}
-          className="hidden"
-          disabled={isUploading}
-          onChange={handleFileInputChange}
-          ref={inputRef}
-          type="file"
-        />
+        <input {...selection.inputProps} />
       </div>
 
-      {error ? <ErrorText>{error}</ErrorText> : null}
+      {selection.error ? <ErrorText>{selection.error}</ErrorText> : null}
     </div>
   );
 }

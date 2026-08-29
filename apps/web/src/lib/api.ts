@@ -218,7 +218,8 @@ export function getRecordingContentUrl(
   return url.toString();
 }
 
-export interface UploadRecordingOptions {
+/** What every upload function here accepts; supplied by `useFileSelection`. */
+export interface UploadOptions {
   onProgress?: (percent: number) => void;
   signal?: AbortSignal;
 }
@@ -230,7 +231,7 @@ export interface UploadRecordingOptions {
 export function uploadMeetingRecording(
   meetingId: string,
   file: File,
-  { onProgress, signal }: UploadRecordingOptions = {},
+  { onProgress, signal }: UploadOptions = {},
 ): Promise<Recording> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -339,18 +340,13 @@ export function getAvatarUrl(avatarUpdatedAt: string | null): string {
   return url.toString();
 }
 
-export interface UploadAvatarOptions {
-  onProgress?: (percent: number) => void;
-  signal?: AbortSignal;
-}
-
 /**
  * XHR-based (not `fetch`) because it's the only way to get upload progress events
  * in the browser; everything else in this file uses `fetch`.
  */
 export function uploadAvatar(
   file: File,
-  { onProgress, signal }: UploadAvatarOptions = {},
+  { onProgress, signal }: UploadOptions = {},
 ): Promise<Avatar> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();

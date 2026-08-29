@@ -1,15 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useState } from 'react';
 import { Avatar, Button, Card, Label, Modal, ProgressBar } from '@heroui/react';
-import {
-  ApiError,
-  UploadCancelledError,
-  deleteAvatar,
-  uploadAvatar,
-  type Profile,
-} from '@/lib/api';
+import { ApiError, deleteAvatar, uploadAvatar, type Profile } from '@/lib/api';
 import { AVATAR_UPLOAD } from '@/lib/uploads';
+import { useFileSelection } from '@/lib/useFileSelection';
 import { TrashIcon, UploadIcon } from '@/components/icons';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { ErrorText } from '@/components/ui/ErrorText';
@@ -28,67 +23,49 @@ interface AvatarSectionProps {
   onProfileChange: (profile: Partial<Profile>) => void;
 }
 
-function validateFile(file: File): string | null {
-  if (!AVATAR_UPLOAD.allowedMimeTypes.includes(file.type)) {
-    return `Unsupported file type. Allowed types: ${AVATAR_UPLOAD.allowedExtensionsLabel}.`;
-  }
-  if (file.size > AVATAR_UPLOAD.maxSizeBytes) {
-    return `File is too large. Maximum size is ${AVATAR_UPLOAD.maxSizeLabel}.`;
-  }
-  return null;
-}
-
 /**
- * Selecting a file only stages a local preview (via `URL.createObjectURL`) and a
- * pending `File` — it does not upload. The upload only starts once the user presses
- * "Save"; "Cancel" discards the pending selection (revoking the object URL) and
- * restores the current avatar/initials placeholder without touching the server. On
- * a successful upload, `onProfileChange` is called with just the avatar fields
- * (derived from the upload/delete response, not a refetch, and not merged with the
- * `profile` prop here — see `AvatarSectionProps`) so the header and /profile pick up
- * the change immediately.
+ * Selecting a file only stages it — `useFileSelection` in `'staged'` mode keeps
+ * the `File` and a local `URL.createObjectURL` preview, and nothing is sent.
+ * The upload starts only when the user presses "Save"; "Cancel" discards the
+ * pending selection (revoking the object URL) and restores the current
+ * avatar/initials placeholder without touching the server. On a successful
+ * upload, `onProfileChange` is called with just the avatar fields (derived from
+ * the upload/delete response, not a refetch, and not merged with the `profile`
+ * prop here — see `AvatarSectionProps`) so the header and /profile pick up the
+ * change immediately.
  */
 export function AvatarSection({
   profile,
   onProfileChange,
 }: AvatarSectionProps) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [isRemoved, setIsRemoved] = useState(false);
   const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const objectUrlRef = useRef<string | null>(null);
+  const selection = useFileSelection({
+    constraints: AVATAR_UPLOAD,
+    mode: 'staged',
+    upload: uploadAvatar,
+    onUploaded: (avatar) => {
+      setIsRemoved(false);
+      onProfileChange({ hasAvatar: true, avatarUpdatedAt: avatar.updatedAt });
+    },
+  });
 
-  useEffect(() => {
-    return () => {
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-      }
-    };
-  }, []);
-
-  const isUploading = progress !== null;
+  const { isUploading, progress } = selection;
   const hasStoredAvatar = profile.hasAvatar && !isRemoved;
   const canRemove = hasStoredAvatar;
 
   const handleConfirmRemove = async () => {
     setIsRemoving(true);
-    setError(null);
+    selection.setError(null);
     try {
       await deleteAvatar();
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
-      setPreviewUrl(null);
+      selection.clearSelection();
       setIsRemoved(true);
       setIsRemoveModalOpen(false);
       onProfileChange({ hasAvatar: false, avatarUpdatedAt: null });
     } catch (err) {
-      setError(
+      selection.setError(
         err instanceof ApiError
           ? err.message
           : 'Could not remove the avatar. Please try again.',
@@ -96,78 +73,6 @@ export function AvatarSection({
     } finally {
       setIsRemoving(false);
     }
-  };
-
-  const stageFile = (file: File) => {
-    const validationError = validateFile(file);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-    }
-    const url = URL.createObjectURL(file);
-    objectUrlRef.current = url;
-    setPreviewUrl(url);
-    setPendingFile(file);
-    setError(null);
-  };
-
-  const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    // Guards against a second file slipping in while an upload is still in flight.
-    if (file && !isUploading) {
-      stageFile(file);
-    }
-  };
-
-  const handleCancelSelection = () => {
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
-    setPreviewUrl(null);
-    setPendingFile(null);
-    setError(null);
-  };
-
-  const handleUpload = () => {
-    if (!pendingFile) {
-      return;
-    }
-    setError(null);
-    setProgress(0);
-
-    uploadAvatar(pendingFile, { onProgress: setProgress })
-      .then((avatar) => {
-        setProgress(null);
-        setPendingFile(null);
-        setIsRemoved(false);
-        onProfileChange({
-          hasAvatar: true,
-          avatarUpdatedAt: avatar.updatedAt,
-        });
-      })
-      .catch((err: unknown) => {
-        setProgress(null);
-        if (err instanceof UploadCancelledError) {
-          return;
-        }
-        if (objectUrlRef.current) {
-          URL.revokeObjectURL(objectUrlRef.current);
-          objectUrlRef.current = null;
-        }
-        setPreviewUrl(null);
-        setPendingFile(null);
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Upload failed. Please try again.',
-        );
-      });
   };
 
   return (
@@ -182,9 +87,12 @@ export function AvatarSection({
       <Card.Content>
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-4">
-            {previewUrl ? (
+            {selection.previewUrl ? (
               <Avatar color="accent" size="lg" variant="soft">
-                <Avatar.Image alt="Selected avatar preview" src={previewUrl} />
+                <Avatar.Image
+                  alt="Selected avatar preview"
+                  src={selection.previewUrl}
+                />
               </Avatar>
             ) : (
               <UserAvatar
@@ -198,13 +106,13 @@ export function AvatarSection({
 
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap gap-2">
-                {pendingFile ? (
+                {selection.selectedFile ? (
                   <>
                     <Button
                       className="h-11 self-start md:h-10"
                       isDisabled={isUploading}
                       isPending={isUploading}
-                      onPress={handleUpload}
+                      onPress={selection.uploadSelectedFile}
                     >
                       Save
                     </Button>
@@ -212,7 +120,7 @@ export function AvatarSection({
                     <Button
                       className="h-11 self-start md:h-10"
                       isDisabled={isUploading}
-                      onPress={handleCancelSelection}
+                      onPress={selection.clearSelection}
                       variant="secondary"
                     >
                       Cancel
@@ -223,7 +131,7 @@ export function AvatarSection({
                     <Button
                       className="h-11 self-start md:h-10"
                       isDisabled={isRemoving}
-                      onPress={() => inputRef.current?.click()}
+                      onPress={selection.openFilePicker}
                       variant="secondary"
                     >
                       <UploadIcon aria-hidden="true" className="size-4" />
@@ -250,7 +158,7 @@ export function AvatarSection({
                 {AVATAR_UPLOAD.maxSizeLabel}
               </p>
 
-              {isUploading ? (
+              {progress !== null ? (
                 <ProgressBar
                   aria-label="Avatar upload progress"
                   className="w-48"
@@ -266,16 +174,11 @@ export function AvatarSection({
             </div>
           </div>
 
-          {error && !isRemoveModalOpen ? <ErrorText>{error}</ErrorText> : null}
+          {selection.error && !isRemoveModalOpen ? (
+            <ErrorText>{selection.error}</ErrorText>
+          ) : null}
 
-          <input
-            accept={AVATAR_UPLOAD.allowedMimeTypes.join(',')}
-            className="hidden"
-            disabled={isUploading}
-            onChange={handleFileInputChange}
-            ref={inputRef}
-            type="file"
-          />
+          <input {...selection.inputProps} />
         </div>
       </Card.Content>
 
@@ -294,7 +197,9 @@ export function AvatarSection({
                 This will remove your profile photo. You can upload a new one at
                 any time.
               </p>
-              {error ? <ErrorText>{error}</ErrorText> : null}
+              {selection.error ? (
+                <ErrorText>{selection.error}</ErrorText>
+              ) : null}
             </Modal.Body>
             <Modal.Footer>
               <Button slot="close" variant="secondary">

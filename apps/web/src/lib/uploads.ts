@@ -36,3 +36,22 @@ export const AVATAR_UPLOAD: UploadConstraints = {
   maxSizeBytes: 5 * 1024 * 1024,
   maxSizeLabel: '5 MB',
 };
+
+/**
+ * The one client-side file check, shared by every uploader through
+ * `useFileSelection`. Returns the message to show, or `null` when the file
+ * passes. The wording is deliberately identical for recordings and avatars —
+ * only the constraints differ.
+ */
+export function validateFile(
+  file: File,
+  constraints: UploadConstraints,
+): string | null {
+  if (!constraints.allowedMimeTypes.includes(file.type)) {
+    return `Unsupported file type. Allowed types: ${constraints.allowedExtensionsLabel}.`;
+  }
+  if (file.size > constraints.maxSizeBytes) {
+    return `File is too large. Maximum size is ${constraints.maxSizeLabel}.`;
+  }
+  return null;
+}

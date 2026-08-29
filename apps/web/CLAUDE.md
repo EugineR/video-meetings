@@ -29,8 +29,8 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   primitives (`ErrorText`, `SuccessText`, `LoadingState`, `TextInputField`, `PasswordField`,
   `UserAvatar`) and icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
-  `useMeetingSummaryStatus.ts`, `format.ts`, `validation.ts`, `formErrors.ts`, `meetings.ts`,
-  `uploads.ts`, and
+  `useMeetingSummaryStatus.ts`, `useFileSelection.ts`, `format.ts`, `validation.ts`,
+  `formErrors.ts`, `meetings.ts`, `uploads.ts`, and
   `queries/` (`client.ts`, `session.ts`, `profile.ts`, `meetings.ts`) — the TanStack Query layer
 
 ## Rules
@@ -44,6 +44,17 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   `ALLOWED_AVATAR_MIME_TYPES` and `MAX_AVATAR_SIZE_BYTES`. Change one, change the other, or the
   browser accepts a file the API then rejects. A component declaring such a constant itself is a
   bug: `RecordingUploader` and `AvatarSection` import theirs.
+- **Every uploader is built on `useFileSelection()` in `src/lib/useFileSelection.ts`**, given the
+  constraints above: it owns the hidden `<input type="file">`, the one `validateFile()` call (also
+  in `uploads.ts`), the staged file and its object-URL lifecycle, progress, and the abort. Two
+  invariants live there and must not be re-implemented at a call site — a file arriving while an
+  upload is in flight is ignored, so a fast second pick or a mid-upload drop cannot take the
+  `AbortController` away from the running request; and `UploadCancelledError` short-circuits before
+  any error state is set. `mode` is the only difference between the two uploaders: `'immediate'`
+  uploads on selection (`RecordingUploader`), `'staged'` keeps the file and a preview until
+  `uploadSelectedFile()` (`AvatarSection` — selecting an avatar must never upload on its own).
+  A component with its own `validateFile`, hidden input, `URL.createObjectURL` bookkeeping or
+  progress state is a bug.
 - **`RecordingCard` renders an `<audio>` element when `recording.mimeType === 'audio/mpeg'` and a
   `<video>` element for the other (video) MIME types** — an mp3 upload plays back through the
   audio element, not a video player with no picture.
