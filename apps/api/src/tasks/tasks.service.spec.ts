@@ -36,12 +36,25 @@ describe('TaskService', () => {
   });
 
   describe('search', () => {
-    it('delegates to the repository', async () => {
+    it('delegates to the repository, meeting-agnostic by default', async () => {
       search.mockResolvedValue([existingTask]);
 
       const result = await service.search('roadmap doc');
 
-      expect(search).toHaveBeenCalledWith('roadmap doc');
+      expect(search).toHaveBeenCalledWith('roadmap doc', undefined, undefined);
+      expect(result).toEqual([existingTask]);
+    });
+
+    it('scopes the search to sourceMeetingId when given', async () => {
+      search.mockResolvedValue([existingTask]);
+
+      const result = await service.search('roadmap doc', 'meeting-1');
+
+      expect(search).toHaveBeenCalledWith(
+        'roadmap doc',
+        undefined,
+        'meeting-1',
+      );
       expect(result).toEqual([existingTask]);
     });
   });

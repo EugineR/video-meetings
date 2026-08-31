@@ -12,8 +12,9 @@ From `apps/api/`, or `pnpm --filter api <script>` from the root: `pnpm dev` (wat
 `test:watch` · `test:cov` · `test:e2e` (`*.e2e-spec.ts` under `test/`, needs
 `docker compose up -d postgres`) · `prisma:generate` (after editing `prisma/schema.prisma`; also
 runs on `pnpm install`) · `prisma:migrate` · `mcp:find-tasks` (runs the built standalone
-`find_tasks` MCP server, `dist/src/mcp/find-tasks-server.js`, over stdio — needs `pnpm build` and
-`DATABASE_URL` first) · `mcp:find-tasks:dev` (the same server via `ts-node`, no build step).
+`find_tasks` MCP server, `dist/src/mcp/find-tasks-server.js`, over stdio — needs `pnpm build`,
+`DATABASE_URL`/`JWT_SECRET`, and an `MCP_ACCESS_TOKEN` env var holding a valid user JWT first) ·
+`mcp:find-tasks:dev` (the same server via `ts-node`, no build step).
 
 Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "case"`,
 `pnpm test:e2e -- auth.e2e-spec.ts`. The pre-commit hook runs the full suite, so don't pre-run it.
@@ -55,8 +56,12 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
 - `src/mcp/` — `find-tasks-server.ts`, a standalone MCP server (`@modelcontextprotocol/sdk`,
   not the Claude Agent SDK) exposing only `find_tasks` over stdio, for an external MCP client
   rather than an in-process agent run. Its own narrow `NestFactory.createApplicationContext`
-  (`ConfigModule` + `PrismaModule` + `TasksModule`) resolves the same `TaskService` `find_tasks`
-  in `meeting-tools.ts` calls, so both tools share one search implementation.
+  (`ConfigModule` + `JwtModule` + `PrismaModule` + `TasksModule`, plus `MeetingsRepository`
+  registered directly) resolves the same `TaskService.search` `meeting-tools.ts`'s `find_tasks`
+  calls, so both tools share one lookup implementation — but unlike that in-process tool (which
+  stays deliberately meeting-agnostic, see Invariants), this one takes a required `meetingId` tool
+  argument and is scoped to it (`TaskService.search(query, meetingId)`), and is gated on the
+  `MCP_ACCESS_TOKEN` env var it's launched with actually owning that meeting — see Invariants.
 - `src/hooks.ts` — `createMeetingHooks`, the Claude Agent SDK `HookCallback`s guarding every
   `ClaudeAgentService.ask` run (wired into `options.hooks` by `runClaudeAgent`, not by callers —
   see `src/claude-agent/` above): `preToolUseGuard` denies `upsert_task` calls with a too-short
@@ -91,6 +96,16 @@ established; new modules follow it rather than inventing one.
 
 Rules no amount of reading the code makes obvious, each of which a change can break silently.
 The reasoning behind them is in `docs/architecture/api.md`.
+
+- **`find-tasks-server.ts`'s `find_tasks` must never call `TaskService.search` without a
+  `meetingId`, and never skip the `MeetingsRepository.findByIdAndOwner` check in front of it.**
+  `TaskService.search`'s meeting-agnostic default exists for `meeting-tools.ts`'s in-process tool,
+  which only a trusted backend job ever calls; `find-tasks-server.ts` is a subprocess any MCP
+  client can spawn, so without both the argument and the ownership check it would let anyone with
+  a token read every user's task titles across every meeting in the database, not just their own.
+  `findByIdAndOwner` returns `null` for both "doesn't exist" and "exists but isn't yours" — surface
+  that as the same generic error message in both cases, never a distinct "not authorized" one, or
+  a caller can use the difference to enumerate meeting ids that exist.
 
 - **Any id that becomes a path must be a plain UUID** (`StorageService.assertValidId`) — the id
   arrives from a URL param or a JWT payload before any ownership check, and `..\..\Temp` would

@@ -21,9 +21,17 @@ export class TaskService {
 
   constructor(private readonly tasksRepository: TaskRepository) {}
 
-  /** Tasks whose title is textually similar to `query`, most similar first. */
-  search(query: string): Promise<Task[]> {
-    return this.tasksRepository.search(query);
+  /**
+   * Tasks whose title is textually similar to `query`, most similar first.
+   *
+   * `sourceMeetingId`, when given, restricts matches to that one meeting's own tasks — used by
+   * `find-tasks-server.ts`'s standalone `find_tasks` tool, which (unlike `meeting-tools.ts`'s
+   * in-process one) is reachable by an external MCP client and must never search across every
+   * user's tasks. Left unset, `search` stays meeting-agnostic, which is what `meeting-tools.ts`'s
+   * `find_tasks` deliberately relies on (see its own doc comment for why).
+   */
+  search(query: string, sourceMeetingId?: string): Promise<Task[]> {
+    return this.tasksRepository.search(query, undefined, sourceMeetingId);
   }
 
   /**
