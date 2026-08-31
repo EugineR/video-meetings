@@ -54,18 +54,24 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
   (via structural interfaces, not the concrete classes, to avoid a circular import with
   `meeting-summary/`) as a `meeting` SDK MCP server (`find_tasks`/`upsert_task`/`update_meeting`).
   Wired into `MeetingSummaryService.summarize`'s `options.mcpServers`.
-- `src/mcp/` — `find-tasks-server.ts`, a standalone task-manager MCP server
-  (`@modelcontextprotocol/sdk`, not the Claude Agent SDK) exposing `find_tasks`
-  (`readOnlyHint: true`) and `upsert_task` (`readOnlyHint: false`) tools plus a
-  `gather_meeting_info` prompt over stdio, for an external MCP client rather than an in-process
-  agent run. Its own narrow `NestFactory.createApplicationContext` (`ConfigModule` + `JwtModule` +
-  `PrismaModule` + `TasksModule`, plus `MeetingsRepository` registered directly) resolves the same
-  `TaskService.search`/`upsert` `meeting-tools.ts`'s `find_tasks`/`upsert_task` call, so both tool
-  sets share one implementation — but unlike that in-process tool set (which stays deliberately
-  meeting-agnostic for search, and closes over `meetingId` rather than taking it as input for
-  writes, see Invariants), both tools here take a required `meetingId` argument and are scoped to
-  it. All three (both tools and the prompt) are gated on the `MCP_ACCESS_TOKEN` env var it's
-  launched with actually owning that meeting — see Invariants.
+- `src/mcp/` — two independent MCP surfaces, both on the official `@modelcontextprotocol/sdk`
+  (not the Claude Agent SDK):
+  - `find-tasks-server.ts`, a standalone task-manager MCP server exposing `find_tasks`
+    (`readOnlyHint: true`) and `upsert_task` (`readOnlyHint: false`) tools plus a
+    `gather_meeting_info` prompt over stdio, for an external MCP client rather than an in-process
+    agent run. Its own narrow `NestFactory.createApplicationContext` (`ConfigModule` + `JwtModule` +
+    `PrismaModule` + `TasksModule`, plus `MeetingsRepository` registered directly) resolves the same
+    `TaskService.search`/`upsert` `meeting-tools.ts`'s `find_tasks`/`upsert_task` call, so both tool
+    sets share one implementation — but unlike that in-process tool set (which stays deliberately
+    meeting-agnostic for search, and closes over `meetingId` rather than taking it as input for
+    writes, see Invariants), both tools here take a required `meetingId` argument and are scoped to
+    it. All three (both tools and the prompt) are gated on the `MCP_ACCESS_TOKEN` env var it's
+    launched with actually owning that meeting — see Invariants.
+  - `mcp.module.ts`/`mcp.service.ts`/`mcp.controller.ts` — `McpModule`, wired into `AppModule`,
+    exposing an in-process `McpServer` over HTTP at `/mcp` (`McpController`'s single `@All()`
+    route forwards `(req, res, req.body)` straight into the `StreamableHTTPServerTransport`
+    `McpService` builds and connects once in `onModuleInit`). Registers no tools/prompts yet and
+    has no auth — see Invariants.
 - `src/hooks.ts` — `createMeetingHooks`, the Claude Agent SDK `HookCallback`s guarding every
   `ClaudeAgentService.ask` run (wired into `options.hooks` by `runClaudeAgent`, not by callers —
   see `src/claude-agent/` above): `preToolUseGuard` denies `upsert_task` calls with a too-short
@@ -116,6 +122,12 @@ The reasoning behind them is in `docs/architecture/api.md`.
   `GetPromptResult` (unlike `CallToolResult`) has no error field of its own, so a failed ownership
   check there has no other way to reach the client except as a thrown JSON-RPC error.
 
+- **`McpModule`'s `/mcp` HTTP endpoint has no authorization check yet** — `McpController`'s
+  `@All()` route is reachable by any caller that can reach the app, and the `McpServer`
+  `McpService` connects has no tools/prompts registered on it yet either. This is a known,
+  temporary gap (unlike `find-tasks-server.ts`'s `MCP_ACCESS_TOKEN` gate, which is enforced), left
+  for a follow-up change — don't register a tool/prompt here that reads or writes another user's
+  data without adding that check first.
 - **Any id that becomes a path must be a plain UUID** (`StorageService.assertValidId`) — the id
   arrives from a URL param or a JWT payload before any ownership check, and `..\..\Temp` would
   otherwise `path.join` outside `UPLOADS_DIR`.
