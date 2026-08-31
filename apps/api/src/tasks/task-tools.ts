@@ -5,7 +5,8 @@ import {
 } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { TaskStatus } from '@prisma/client';
 import { z } from 'zod';
-import { TaskService } from '../tasks/tasks.service';
+import { McpToolRegistrar } from '../mcp/mcp-tool-registrar';
+import { TaskService } from './tasks.service';
 
 const OPEN_TASKS_RESOURCE_URI = 'tasks://open';
 const TASK_RESOURCE_TEMPLATE = 'task://{id}';
@@ -32,28 +33,29 @@ function firstValue(value: string | string[]): string {
 }
 
 /**
- * The `find_tasks`/`upsert_task` MCP tools plus the `tasks://open`/`task://{id}` resources, as a
- * real NestJS provider injecting the app's own `TaskService` via DI — unlike `meeting-tools.ts`
- * (a plain module building Claude Agent SDK tools, no `@Injectable`) and `find-tasks-server.ts`
- * (a standalone process resolving `TaskService` from its own narrow
- * `NestFactory.createApplicationContext`), this one runs inside the main app's DI container and
- * is registered on `McpService`'s in-process `McpServer` by `McpModule` at startup. Every
- * handler below delegates straight to a `TaskService` method — no dedup/search/write logic is
- * reimplemented here, only translated into the MCP tool/resource call shape.
+ * The `tasks` domain's `McpToolRegistrar` (see `../mcp/mcp-tool-registrar.ts`): the
+ * `find_tasks`/`upsert_task` MCP tools plus the `tasks://open`/`task://{id}` resources, as a real
+ * NestJS provider injecting the app's own `TaskService` via DI — unlike `meeting-tools.ts` (a
+ * plain module building Claude Agent SDK tools, no `@Injectable`) and the now-removed standalone
+ * `find-tasks-server.ts` (which resolved `TaskService` from its own narrow
+ * `NestFactory.createApplicationContext`), this one lives in `TasksModule` and runs inside the main
+ * app's DI container. `TasksModule` exports it; `McpModule` imports `TasksModule` and folds it
+ * into the `MCP_TOOL_REGISTRARS` token (see `mcp.module.ts`) rather than depending on this class
+ * directly. Every handler below delegates straight to a `TaskService` method — no dedup/search/
+ * write logic is reimplemented here, only translated into the MCP tool/resource call shape.
  *
  * `find_tasks`'s `meetingId` is optional, mirroring `TaskService.search`'s own optional
  * `sourceMeetingId` — omitted, it searches across every meeting's tasks, same as
  * `meeting-tools.ts`'s in-process `find_tasks`. `upsert_task`'s `meetingId` is required, mirroring
  * `TaskService.upsert`'s `UpsertTaskInput.sourceMeetingId`, which has no optional form: there is no
  * per-run meeting id to close over here the way `meeting-tools.ts` does (a Claude Agent SDK run
- * scoped to one meeting), so the caller supplies it explicitly instead, the same shape
- * `find-tasks-server.ts`'s standalone `upsert_task` uses.
+ * scoped to one meeting), so the caller supplies it explicitly instead.
  *
  * Like the rest of `McpModule`, none of this is authorization-gated yet (`apps/api/CLAUDE.md`'s
  * Invariants) — any caller reaching `/mcp` can search or write any meeting's tasks.
  */
 @Injectable()
-export class TaskTools {
+export class TaskTools implements McpToolRegistrar {
   constructor(private readonly taskService: TaskService) {}
 
   registerOn(server: McpServer): void {

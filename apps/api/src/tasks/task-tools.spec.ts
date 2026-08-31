@@ -4,8 +4,8 @@ import type {
   ReadResourceResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import { Task, TaskStatus } from '@prisma/client';
-import { TaskService } from '../tasks/tasks.service';
 import { TaskTools } from './task-tools';
+import { TaskService } from './tasks.service';
 
 interface ToolConfig {
   annotations?: { readOnlyHint?: boolean };
