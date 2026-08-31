@@ -1,19 +1,20 @@
 'use client';
 
 import { Modal } from '@heroui/react';
+import { touchTarget } from '@/lib/touchTarget';
 import type { Recording } from '@/lib/api';
-import { RecordingUploader } from './RecordingUploader';
+import { RecordingUploader } from '@/components/meetings/RecordingUploader';
 
 interface UploadRecordingModalProps {
-  meetingId: string;
   isOpen: boolean;
+  meetingId: string;
   onOpenChange: (isOpen: boolean) => void;
   onUploaded: (recording: Recording) => void;
 }
 
 export function UploadRecordingModal({
-  meetingId,
   isOpen,
+  meetingId,
   onOpenChange,
   onUploaded,
 }: UploadRecordingModalProps) {
@@ -21,7 +22,7 @@ export function UploadRecordingModal({
     <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
       <Modal.Container>
         <Modal.Dialog className="sm:max-w-[440px]">
-          <Modal.CloseTrigger />
+          <Modal.CloseTrigger className={touchTarget({ fit: 'square' })} />
           <Modal.Header>
             <Modal.Heading>Upload recording</Modal.Heading>
           </Modal.Header>

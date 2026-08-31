@@ -1,3 +1,5 @@
+'use client';
+
 export function EyeOffIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

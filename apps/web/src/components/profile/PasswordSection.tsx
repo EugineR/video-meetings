@@ -1,48 +1,54 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { Card, Form } from '@heroui/react';
+import { changePassword } from '@/lib/api';
+import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
+import type { ProfileSaved } from '@/lib/queries/profile';
 import {
-  Button,
-  Card,
-  Description,
-  FieldError,
-  Form,
-  InputGroup,
-  Label,
-  TextField,
-} from '@heroui/react';
-import { ApiError, changePassword } from '@/lib/api';
-import { EyeIcon, EyeOffIcon } from '@/components/icons';
-
-const MIN_PASSWORD_LENGTH = 8;
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_LENGTH_HINT,
+  validatePasswordLength,
+} from '@/lib/validation';
+import { Button } from '@/components/ui/Button';
+import { ErrorText } from '@/components/ui/ErrorText';
+import { PasswordField } from '@/components/ui/PasswordField';
+import { SuccessText } from '@/components/ui/SuccessText';
 
 interface PasswordSectionProps {
-  /** Called with the freshly issued token right after a successful change, so the caller can keep the session alive without a re-login. */
-  onChanged: (accessToken: string) => void;
+  /**
+   * The shared "saved, here is the result" callback (see `ProfileSaved`): the token the
+   * API reissued, for the caller to keep the session alive without a re-login. This
+   * section changes no profile field, so it never fills the `profile` half.
+   */
+  onSaved: (saved: ProfileSaved) => void;
 }
 
 /**
- * Submitted independently of the display-name section on /profile/edit. Client-side
- * match and minimum-length checks block the request before it's sent; a wrong current
- * password comes back from the API as a field error rather than a form-level one.
+ * Submitted independently of the display-name section on /profile/edit. Every rule the API
+ * enforces is checked client-side first — the minimum length, the confirmation match, and
+ * "the new password must differ from the current one" (`isDifferentFromCurrent` in
+ * `apps/api/src/auth/password-rules.ts`) — which is what lets the one remaining case be
+ * attributed by status alone: with those ruled out, `PUT /users/me/password` answers 400 only
+ * for a current password that does not match, so 400 maps to the `currentPassword` field
+ * without anyone reading the message text.
+ *
+ * "Must differ" is checked against the two values the user typed, which the client cannot tell
+ * apart from the stored one: type the same wrong string into both fields and it blames the new
+ * password where the API would have said the current one is incorrect. That is deliberate —
+ * letting the case through would put the API's "New password must be different…" on the
+ * `currentPassword` field, since both answers share the 400 the map above pins to it.
  */
-export function PasswordSection({ onChanged }: PasswordSectionProps) {
+export function PasswordSection({ onSaved }: PasswordSectionProps) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [isCurrentVisible, setIsCurrentVisible] = useState(false);
-  const [isNewVisible, setIsNewVisible] = useState(false);
-  const [isConfirmVisible, setIsConfirmVisible] = useState(false);
   const [isPending, setIsPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [currentPasswordError, setCurrentPasswordError] = useState<
-    string | null
-  >(null);
+  const [errors, setErrors] = useState(NO_FORM_ERRORS);
   const [isSaved, setIsSaved] = useState(false);
 
   const clearFeedback = () => {
-    setError(null);
-    setCurrentPasswordError(null);
+    setErrors(NO_FORM_ERRORS);
     setIsSaved(false);
   };
 
@@ -59,21 +65,13 @@ export function PasswordSection({ onChanged }: PasswordSectionProps) {
       setNewPassword('');
       setConfirmPassword('');
       setIsSaved(true);
-      onChanged(accessToken);
+      onSaved({ accessToken });
     } catch (err) {
-      if (
-        err instanceof ApiError &&
-        err.status === 400 &&
-        /current password is incorrect/i.test(err.message)
-      ) {
-        setCurrentPasswordError(err.message);
-      } else {
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Something went wrong. Please try again.',
-        );
-      }
+      setErrors(
+        toFormErrorState(err, 'Something went wrong. Please try again.', {
+          400: 'currentPassword',
+        }),
+      );
     } finally {
       setIsPending(false);
     }
@@ -90,156 +88,65 @@ export function PasswordSection({ onChanged }: PasswordSectionProps) {
 
       <Form
         onSubmit={(event) => void onSubmit(event)}
-        validationErrors={
-          currentPasswordError ? { currentPassword: currentPasswordError } : {}
-        }
+        validationErrors={errors.fieldErrors}
       >
         <Card.Content>
           <div className="flex flex-col gap-4">
-            <TextField
+            <PasswordField
+              autoComplete="current-password"
               isRequired
+              label="Current password"
               name="currentPassword"
               onChange={(value) => {
                 setCurrentPassword(value);
                 clearFeedback();
               }}
-              type="password"
               validate={(value) =>
                 value ? null : 'Current password is required'
               }
               value={currentPassword}
-            >
-              <Label>Current password</Label>
-              <InputGroup className="h-11 md:h-10" variant="secondary">
-                <InputGroup.Input
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  type={isCurrentVisible ? 'text' : 'password'}
-                />
-                <InputGroup.Suffix className="px-1">
-                  <Button
-                    aria-label={
-                      isCurrentVisible
-                        ? 'Hide current password'
-                        : 'Show current password'
-                    }
-                    isIconOnly
-                    onPress={() => setIsCurrentVisible((v) => !v)}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    {isCurrentVisible ? (
-                      <EyeOffIcon className="size-5" />
-                    ) : (
-                      <EyeIcon className="size-5" />
-                    )}
-                  </Button>
-                </InputGroup.Suffix>
-              </InputGroup>
-              <FieldError />
-            </TextField>
+            />
 
-            <TextField
+            <PasswordField
+              autoComplete="new-password"
+              description={PASSWORD_LENGTH_HINT}
               isRequired
+              label="New password"
               minLength={MIN_PASSWORD_LENGTH}
               name="newPassword"
               onChange={(value) => {
                 setNewPassword(value);
                 clearFeedback();
               }}
-              type="password"
-              validate={(value) =>
-                value.length >= MIN_PASSWORD_LENGTH
-                  ? null
-                  : `Password must be at least ${MIN_PASSWORD_LENGTH} characters`
-              }
+              validate={(value) => {
+                const lengthError = validatePasswordLength(value);
+                if (lengthError) return lengthError;
+                return value === currentPassword
+                  ? 'New password must be different from the current password'
+                  : null;
+              }}
               value={newPassword}
-            >
-              <Label>New password</Label>
-              <InputGroup className="h-11 md:h-10" variant="secondary">
-                <InputGroup.Input
-                  autoComplete="new-password"
-                  placeholder="••••••••"
-                  type={isNewVisible ? 'text' : 'password'}
-                />
-                <InputGroup.Suffix className="px-1">
-                  <Button
-                    aria-label={
-                      isNewVisible ? 'Hide new password' : 'Show new password'
-                    }
-                    isIconOnly
-                    onPress={() => setIsNewVisible((v) => !v)}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    {isNewVisible ? (
-                      <EyeOffIcon className="size-5" />
-                    ) : (
-                      <EyeIcon className="size-5" />
-                    )}
-                  </Button>
-                </InputGroup.Suffix>
-              </InputGroup>
-              <Description>
-                Must be at least {MIN_PASSWORD_LENGTH} characters.
-              </Description>
-              <FieldError />
-            </TextField>
+            />
 
-            <TextField
+            <PasswordField
+              autoComplete="new-password"
               isRequired
+              label="Confirm new password"
               name="confirmPassword"
               onChange={(value) => {
                 setConfirmPassword(value);
                 clearFeedback();
               }}
-              type="password"
               validate={(value) =>
                 value === newPassword ? null : 'Passwords do not match'
               }
               value={confirmPassword}
-            >
-              <Label>Confirm new password</Label>
-              <InputGroup className="h-11 md:h-10" variant="secondary">
-                <InputGroup.Input
-                  autoComplete="new-password"
-                  placeholder="••••••••"
-                  type={isConfirmVisible ? 'text' : 'password'}
-                />
-                <InputGroup.Suffix className="px-1">
-                  <Button
-                    aria-label={
-                      isConfirmVisible
-                        ? 'Hide confirmed password'
-                        : 'Show confirmed password'
-                    }
-                    isIconOnly
-                    onPress={() => setIsConfirmVisible((v) => !v)}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    {isConfirmVisible ? (
-                      <EyeOffIcon className="size-5" />
-                    ) : (
-                      <EyeIcon className="size-5" />
-                    )}
-                  </Button>
-                </InputGroup.Suffix>
-              </InputGroup>
-              <FieldError />
-            </TextField>
+            />
 
-            {error ? (
-              <p className="text-sm text-danger" role="alert">
-                {error}
-              </p>
+            {errors.formError ? (
+              <ErrorText>{errors.formError}</ErrorText>
             ) : isSaved ? (
-              <p className="text-sm text-success" role="status">
-                Password changed.
-              </p>
+              <SuccessText>Password changed.</SuccessText>
             ) : null}
           </div>
         </Card.Content>

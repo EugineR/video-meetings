@@ -27,6 +27,8 @@ for what each page renders):
 | `/register`      | validation messages, password show/hide, duplicate email (409) inline error                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `/login`         | wrong credentials (401) inline error, redirect to `/` on success                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `/`              | spinner until the auth check resolves, redirect to `/login` with no session, "Recent"/"All meetings" lists, upload from a row's modal, the "+ Create meeting" modal (validation, success prepending the new meeting to both lists, cancel/close without creating)                                                                                                                                                                                                                                                                                                               |
+| `/profile`       | the header's avatar and name arriving from any authenticated route without a refetch (the profile is one cached query), identity + "Joined" date, "Edit profile"                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `/profile/edit`  | display name save (Save re-disables itself on success), password change (wrong current password as a field-level 400, the session surviving the reissued token), avatar stage → Save → remove, each section saving independently and the header updating without a reload                                                                                                                                                                                                                                                                                                       |
 | `/meetings/{id}` | detail render, the back button (`router.back()`, including a direct-URL visit with no prior history), the always-present `RecordingUploader` pinned above the recordings list (renders first whether the list is empty or populated, height capped to 200–300px in its idle/drag-over/uploading states), the multi-file recordings list (each entry its own compact tile — status chip, delete, inline transcript toggle — independent of its siblings), filename hover/click opening `RecordingPlayerModal`, delete confirmation, 404 for an unknown or another user's meeting |
 
 Two things are easy to miss because they are not visible in a happy path: an upload's
@@ -57,12 +59,17 @@ Recording tile flows worth walking explicitly on any change to `RecordingCard.ts
   shows no toggle at all.
 - **`FAILED` messaging** — a `FAILED` recording shows the existing failure notice on its
   own row instead of a transcript toggle.
-- **Delete** — the red icon-only button on a tile's right edge opens the existing
-  confirmation modal before removing the tile on success, unchanged from before the
-  redesign.
+- **Delete** — the red icon-only button on a tile's right edge opens the shared
+  `ConfirmModal` before removing the tile on success. Walk both answers (confirm and
+  cancel) and all three ways out of the dialog — the backdrop, Escape and the close
+  control — and confirm focus returns to the button that opened it. A failed delete keeps
+  the dialog open with the message **inside** it, not behind it in the tile.
+
+Any change to `ConfirmModal` is exercised on both of its call sites, since they are the whole
+population: a recording delete here and the avatar removal on `/profile/edit`.
 
 Summary catch-up flow worth walking on any change to `MeetingSummarySection.tsx` or
-`MeetingDetailPage`'s reconciliation logic: a `MeetingSummary` whose `status` is already
+`useMeetingSummaryStatus`/`isMeetingSettled`: a `MeetingSummary` whose `status` is already
 `READY` but whose `foldedRecordingIds` doesn't yet cover every currently-`READY` recording
 (the API's `update_meeting` agent tool can leave the row in exactly this state mid-fold —
 see `docs/architecture/api.md`) must render the existing summary/action items/decisions

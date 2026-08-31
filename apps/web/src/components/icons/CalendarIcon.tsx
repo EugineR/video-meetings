@@ -1,3 +1,5 @@
+'use client';
+
 export function CalendarIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

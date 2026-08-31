@@ -13,33 +13,49 @@ Rules and boundaries only. The per-file inventory is in `docs/architecture/web.m
 
 From `apps/web/`, or `pnpm --filter web <script>` from the root: `pnpm dev` (Next.js dev server,
 port 3000) · `build` · `start` · `lint` (`eslint.config.mjs` composes `eslint-config-next`'s
-`core-web-vitals` and `typescript` sets). No test suite is configured — see
+`core-web-vitals` and `typescript` sets, then adds the app's own structural rules — the
+mechanically checkable half of the [Rules](#rules) below). No test suite is configured — see
 [Testing UI changes](#testing-ui-changes).
 
 ## Layout
 
-Next.js App Router on Tailwind CSS v4 and HeroUI v3; nothing of the `create-next-app` scaffold
-remains. Every page is a client component and auth is client-side only.
+Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of the
+`create-next-app` scaffold remains. Every page is a client component and auth is client-side only.
 
-- `src/app/` — routes `/`, `/login`, `/register`, `/meetings/[id]`, `/profile`, `/profile/edit`,
-  plus `layout.tsx` and `globals.css`
-- `src/components/` — one component per file, in subfolders **by kind** (`layout/`, `meetings/`,
-  `profile/`, `icons/`), not flat; icons are re-exported through `icons/index.ts`
+- `src/app/` — two route groups plus the root `layout.tsx` and `globals.css`: `(app)` holds the
+  authenticated routes `/`, `/meetings/[id]`, `/profile`, `/profile/edit` with their
+  `layout.tsx` and `error.tsx`; `(auth)` holds `/login` and `/register` with their `layout.tsx`
+- `src/components/` — one component per file, in subfolders **by kind** (`ui/`, `layout/`,
+  `meetings/`, `profile/`, `icons/`), not flat; `ui/` holds the shared, feature-agnostic
+  primitives (`ErrorText`, `SuccessText`, `LoadingState`, `TextInputField`, `PasswordField`,
+  `ConfirmModal`, `UserAvatar`) and icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
-  `format.ts`
+  `useMeetingSummaryStatus.ts`, `useFileSelection.ts`, `useConfirmAction.ts`, `format.ts`,
+  `validation.ts`, `formErrors.ts`, `meetings.ts`, `uploads.ts`, and
+  `queries/` (`client.ts`, `session.ts`, `profile.ts`, `meetings.ts`) — the TanStack Query layer
 
 ## Rules
 
 - **`src/lib/api.ts` is the only module that talks to `apps/api`.** It attaches
   `Authorization: Bearer <token>` and throws `ApiError` (status + the API's `message`) on any
   non-2xx. A component reaching for `fetch` itself is a bug.
-- **`ALLOWED_MIME_TYPES` and `MAX_SIZE_BYTES` in
-  `src/components/meetings/RecordingUploader.tsx` must stay in sync with
-  `ALLOWED_RECORDING_MIME_TYPES` (which includes `audio/mpeg` alongside the video types) and
-  `MAX_UPLOAD_SIZE_BYTES` in `apps/api/.env`, and the same
-  constants in `src/components/profile/AvatarSection.tsx` with `ALLOWED_AVATAR_MIME_TYPES` and
-  `MAX_AVATAR_SIZE_BYTES`** — they are the client-side mirror of the server's allowlist and size
-  cap. Change one, change the other, or the browser accepts a file the API then rejects.
+- **Every upload MIME allowlist, size cap and display label lives in `src/lib/uploads.ts`** —
+  `RECORDING_UPLOAD` mirrors `ALLOWED_RECORDING_MIME_TYPES` (which includes `audio/mpeg` alongside
+  the video types) and `MAX_UPLOAD_SIZE_BYTES` in `apps/api/.env`; `AVATAR_UPLOAD` mirrors
+  `ALLOWED_AVATAR_MIME_TYPES` and `MAX_AVATAR_SIZE_BYTES`. Change one, change the other, or the
+  browser accepts a file the API then rejects. A component declaring such a constant itself is a
+  bug: `RecordingUploader` and `AvatarSection` import theirs.
+- **Every uploader is built on `useFileSelection()` in `src/lib/useFileSelection.ts`**, given the
+  constraints above: it owns the hidden `<input type="file">`, the one `validateFile()` call (also
+  in `uploads.ts`), the staged file and its object-URL lifecycle, progress, and the abort. Two
+  invariants live there and must not be re-implemented at a call site — a file arriving while an
+  upload is in flight is ignored, so a fast second pick or a mid-upload drop cannot take the
+  `AbortController` away from the running request; and `UploadCancelledError` short-circuits before
+  any error state is set. `mode` is the only difference between the two uploaders: `'immediate'`
+  uploads on selection (`RecordingUploader`), `'staged'` keeps the file and a preview until
+  `uploadSelectedFile()` (`AvatarSection` — selecting an avatar must never upload on its own).
+  A component with its own `validateFile`, hidden input, `URL.createObjectURL` bookkeeping or
+  progress state is a bug.
 - **`RecordingCard` renders an `<audio>` element when `recording.mimeType === 'audio/mpeg'` and a
   `<video>` element for the other (video) MIME types** — an mp3 upload plays back through the
   audio element, not a video player with no picture.
@@ -47,36 +63,172 @@ remains. Every page is a client component and auth is client-side only.
   the browser bundle) and must point at `apps/api`'s `PORT`, default `3001`. It falls back to
   `http://localhost:3001` in `src/lib/api.ts`; see `.env.example`.
 - **A cancelled upload rejects with `UploadCancelledError`, not `ApiError`**, so a user-initiated
-  cancel is never rendered as a failure. `uploadMeetingRecording` is built on `XMLHttpRequest` for
-  exactly one reason — `fetch` exposes no upload-progress events. Do not "modernise" it back.
-- **A recording URL carries its token as `?token=`, not a header**: a `<video>` element's `src`
-  cannot set headers, and the API's guard accepts that form only on routes that opt in.
-- **`useAuthenticatedUser()` is the shared auth guard.** Every page needing a signed-in user uses
-  it rather than copying the redirect-then-spinner pattern; `user` stays `null` until the check
-  resolves, and that is the page's loading state.
+  cancel is never rendered as a failure. Every upload function — `uploadMeetingRecording` and
+  `uploadAvatar` — is built on `XMLHttpRequest` for exactly one reason: `fetch` exposes no
+  upload-progress events. Do not "modernise" either back.
+- **A media or avatar URL carries its token as `?token=`, not a header**: the `src` of a `<video>`,
+  `<audio>` or `<img>` element cannot set headers, so `getRecordingContentUrl` and `getAvatarUrl`
+  both append the token as a query param, and the API's guard accepts that form only on routes
+  that opt in.
+- **The shell, the header and the auth guard belong to the layout, not to a page.** `(app)/layout.tsx`
+  mounts `AuthenticatedUserProvider` (which runs `useAuthenticatedUser()`, holds the single
+  `if (!user) return <LoadingState variant="page"/>` guard and shares the session with everything
+  below it) around `AppShell` (background, `AppHeader`, the `max-w-2xl` content container);
+  `(auth)/layout.tsx` mounts `AuthShell` (the same background, the brand-only `BrandHeader`, the
+  `max-w-md` card slot).
+  A page that renders `AppHeader`, the background gradient, a content container or its own `!user`
+  loading state is a bug. The gradient itself lives only in `PageShell`, which both shells wrap.
+  Importing `AppHeader` from anywhere under `src/app/` fails the lint run.
+- **`src/components/ui/` is the only home for a shared primitive, and a feature folder is private
+  to its feature.** `meetings/` and `profile/` must not import each other, `layout/` must not
+  import either of them, and `ui/` must not import any of the three — a primitive that knows what
+  a meeting is has stopped being one, and `UserAvatar` sitting under `profile/` is what once had
+  the header importing a feature folder. What two features need moves _up_ — into `ui/` if it is a
+  component, into `src/lib/` if it is logic — never sideways. All four directions are
+  `no-restricted-imports` rules in `eslint.config.mjs`, so a sideways import fails `pnpm lint:web`
+  rather than review. `icons/` is the one other folder all four may read, and it reads none of
+  them. The seals only see the specifier a file writes, which is why the `@/`-alias rule below is
+  itself a lint rule: the relative spelling of a forbidden import has to be impossible for them to
+  hold.
+- **A page inside `(app)` reads the session from `useAuthenticatedUserContext()`**, not by calling
+  `useAuthenticatedUser()` again — that hook owns the redirect and the pathname-keyed token
+  re-check, and a second instance would run both a second time.
+- **Server state belongs to the query layer in `src/lib/queries/`, not to a `useEffect` + `useState`
+  pair in a component.** That holds even when the effect goes through `src/lib/api.ts`: fetching on
+  mount and holding the answer in component state is the same bug as reaching for `fetch`, and it
+  is what had `GET /users/me` running once per page and the header's avatar blinking back to
+  initials on every navigation. A mutation still calls `src/lib/api.ts` directly — it is the read
+  path that is owned. `QueryProvider` mounts the one `QueryClient` in the root layout;
+  a fetch gets a keyed hook next to the others there. The profile is the worked example:
+  `useProfileQuery()` is read by the header, `/profile` and `/profile/edit`, and because
+  `staleTime` is `Infinity` and the header keeps it observed for the whole session, `GET /users/me`
+  is fetched once — navigating between those routes hits the cache and the header's avatar never
+  drops back to initials. Nothing else writes the profile, so a save calls `useApplyProfile()`
+  (a `setQueryData` merge of the fields it just saved) instead of invalidating and refetching.
+  The meetings list and the meeting detail follow the same shape in `queries/meetings.ts`: a
+  creation or a row upload writes the one field it knows (`useAddCreatedMeeting`,
+  `useCountUploadedRecording`), while an upload or a deletion on the detail page writes the one
+  row it knows (the recording added or removed) _and_ invalidates that meeting, because the rest
+  of what changed — transcript, summary, `foldedRecordingIds` — only the API can produce. The
+  write is not just cosmetic: `invalidateQueries` does not clear `data`, so without it the page
+  would keep rendering the deleted tile and would re-trust the pre-deletion summary until the
+  refetch landed.
+- **Every session boundary clears the query cache** — `useResetQueryCache()` in `/login`,
+  `/register` and `signOut`. Without it the next sign-in on the tab inherits the previous user's
+  cached profile, and the cached "no valid token" answer bounces them straight back to `/login`.
 - **Auth is client-side only.** The JWT lives in `localStorage` under `accessToken`, its payload is
   decoded without signature verification, and nothing server-side reads it — there is no SSR or
   middleware gate. The API is the source of truth; the decoded payload is a hint.
 - **`formatDateTime()` in `src/lib/format.ts` is the only date formatter.**
+- **Pure domain logic and shared constants live in `src/lib/`, not at the top of a JSX file.**
+  `formatFileSize` and `getInitials` sit next to `formatDateTime` in `format.ts`, the field rules
+  (`validateEmail`, `validatePasswordLength`, `PASSWORD_LENGTH_HINT`, `MIN_PASSWORD_LENGTH`,
+  `MAX_DISPLAY_NAME_LENGTH`) in `validation.ts`, `parseParticipants` in `meetings.ts`, the upload
+  constraints in `uploads.ts`. A rule the API also enforces is stated once there, message
+  included — a field writing out its own "at least N characters" is how the two password forms
+  came to disagree. Re-declaring one of them in a component is how the login/register
+  email pattern came to be written twice.
+- **Every form is a HeroUI `Form` over the controlled field primitives in `src/components/ui/`** —
+  `TextInputField` and `PasswordField`, each a `TextField` owning its own `Label`, `Description`
+  and `FieldError`. Field validation is that field's `validate` prop, pending state is `isPending`
+  on the submit `Button`, a form-level failure is one `ErrorText` under the fields, and a
+  field-level failure arrives through the `Form`'s `validationErrors`. Controlled rather than
+  uncontrolled `FormData` because three of the five forms need a field's value during render: the
+  confirmation field validates against the new password, Save disables itself once the display
+  name matches what was saved, and the create-meeting modal resets on close. **Editing a field
+  clears the form's API errors** — every `onChange` resets the state back to `NO_FORM_ERRORS`.
+  On a field-level error that is not cosmetic: HeroUI's `Form` validates natively, so a message
+  routed onto a field also sets that input's `customError`, and leaving it there blocks the
+  resubmit that would have cleared it. The two approaches
+  this replaced — manual `useState` error flags with raw `Label htmlFor` + `Input id` wiring in
+  `CreateMeetingModal`, and uncontrolled `FormData` on `/login` and `/register` — were removed on
+  purpose. A form that hand-rolls a password input with an eye toggle, writes a touch-target
+  height on a field by hand instead of taking it from `src/lib/touchTarget.ts`, or keeps its own
+  per-field error state is a bug.
+- **An API error is identified by its HTTP status, never by matching its message text.**
+  `toFormErrorState(error, fallbackMessage, fieldByStatus)` in `src/lib/formErrors.ts` is the only
+  mechanism: the status→field map is declared at the call site, and every status it does not name
+  — like every non-`ApiError` failure — becomes the form-level message. `apps/api` returns no
+  machine-readable error code, so a status may only be pinned to a field once the client has ruled
+  out the endpoint's other answers with the same status: `PasswordSection` checks the minimum
+  length, the confirmation match and "must differ from the current password" before it sends,
+  which is what leaves 400 meaning "the current password is wrong" and nothing else. The regex on
+  the API's prose (`/current password is incorrect/i`) that used to do this job broke silently on
+  a reworded message.
+- **Every inline failure is an `ErrorText`, and the class string `text-sm text-danger` is written
+  in `src/components/ui/ErrorText.tsx` and nowhere else** — a rejected file, a failed fetch, a
+  form-level API error and a failed transcription all read and announce (`role="alert"`)
+  identically, which is why that primitive has no `className` escape hatch. A confirmation is
+  `SuccessText` (`role="status"`, polite). The raw string anywhere else under `src/` is a
+  `no-restricted-syntax` error in `eslint.config.mjs`.
+- **Touch-target sizing comes from `src/lib/touchTarget.ts` and nothing else** — the 44px (mobile)
+  / 40px (desktop) minimum in one `tailwind-variants` recipe with four `fit` shapes.
+  `@/components/ui/Button` applies it to every button; the field primitives and any standalone
+  non-button control call the recipe. Hand-writing `h-11 md:h-10` (or `size="lg"`, or
+  `min-h-[44px]`) at a call site is a bug: it was a convention an author had to remember, and the
+  five call sites that forgot it rendered below the minimum.
+- **A component that saves something calls it `onSaved`, and one that stores a file calls it
+  `onUploaded`** — the same name always carries the same payload. The three `/profile/edit`
+  sections share `onSaved(saved: ProfileSaved)` (`src/lib/queries/profile.ts`): a `profile`
+  delta, an `accessToken`, or whichever half that section produced, applied in one place by the
+  page. `onUploaded` is always `(recording: Recording)` — `MeetingRow` used to hand up a
+  `meetingId` instead, so the same prop name meant two things one component apart. The three
+  names this replaced (`onSaved(Profile)`, `onProfileChange(Partial<Profile>)`,
+  `onChanged(accessToken)`) were one convention per component.
+- **Every modal is controlled by `isOpen` + `onOpenChange(isOpen)`** and never wraps a HeroUI
+  `<Modal>` trigger; the caller owns the open state. A **destructive confirmation is
+  `ConfirmModal`** (`src/components/ui/ConfirmModal.tsx`) driven by **`useConfirmAction()`**
+  (`src/lib/useConfirmAction.ts`) — Cancel is HeroUI's `slot="close"`, so Escape, the backdrop,
+  the close control and Cancel all leave the same way, and a failure raised by the confirmed
+  action goes in its `error` prop, which renders **inside** the still-open dialog. Rendering that
+  failure in the page behind the modal (as `RecordingCard` used to) hides it until the dialog is
+  dismissed. The hook owns the open/pending/error mechanics — `open()`, and the `isOpen`,
+  `onOpenChange`, `isPending`, `error` and `onConfirm` props handed straight to `ConfirmModal`;
+  the caller supplies only `action`, the request plus whatever local state its success earns
+  (`RecordingCard`'s `onDeleted`, `AvatarSection`'s `selection.clearSelection()` and `onSaved`). A
+  second hand-written `Modal.Backdrop` confirmation, or a confirmation with its own `isOpen`/
+  `isPending`/error `useState` trio instead of the hook, is a bug.
+- **Every `.tsx` under `src/components/` starts with `'use client'`** — icons and purely
+  presentational components included. The app has no server components below the root layout, so
+  "only where a hook needs it" would be a rule with no observable effect and four files that
+  silently drifted out of it.
+- **Props are alphabetical** — in the props interface, in the destructuring, and in the JSX
+  attributes at the call site, so a component's declaration and its usage read in the same order.
+- **Module paths use the `@/` alias; there are no relative imports in `src/`**, not even between
+  siblings in the same folder, and not for the stylesheet either — the root layout imports
+  `@/app/globals.css`. `./` and `../` at any depth are a `no-restricted-imports` error in
+  `eslint.config.mjs`, so this fails `pnpm lint:web` rather than a grep — and it is what lets the
+  folder seals above match on the specifier alone.
+- **A component used by exactly one page still lives in `src/components/<feature>/`**, not beside
+  the route: `src/app/` holds routes, and `AvatarSection`, `DisplayNameSection` and
+  `PasswordSection` sit in `components/profile/` for the same reason every other component does.
 - **An unknown or another user's meeting is a 404 `ApiError` rendered inline**, never a blank page
   or a redirect.
-- **The meeting page polls while any of the meeting's recordings has `status` `UPLOADED` or
-  `PROCESSING`**, refetching until each one settles to `READY` (transcript shown) or `FAILED`
-  (failure notice, no transcript) — transcription runs per-file on the API in the background after
-  upload, so the page must catch up to it without a manual reload.
+- **The meeting detail query polls until the meeting is settled**, and the page never sets up an
+  interval of its own: `useMeetingDetailQuery()`'s `refetchInterval` refetches while any recording
+  has `status` `UPLOADED`/`PROCESSING` or the summary has not caught up with them
+  (`isMeetingSettled()` in `src/lib/meetings.ts`), because transcription and summarization run on
+  the API in the background after an upload and the page must catch up without a manual reload.
+  A `READY` summary counts as caught up only when its `foldedRecordingIds` covers exactly the
+  currently-`READY` recordings — the API's `update_meeting` agent tool can settle `status` to
+  `READY` mid-fold, and trusting that stops the polling one write too early.
 
 ## HeroUI v3
 
 - Packages `@heroui/react`, `@heroui/styles`, `tailwind-variants` on the Tailwind v4 base
   (`tailwindcss`, `@tailwindcss/postcss`, `postcss`; `postcss.config.mjs` registers the plugin).
 - **No provider component** — unlike HeroUI v2 there is no `HeroUIProvider`.
-- **Compound composition (`Card.Header`) and `onPress`, not `onClick`**; import from `@heroui/react`.
+- **Compound composition (`Card.Header`) and `onPress`, not `onClick`.** Import from
+  `@heroui/react` — except buttons, which come from `@/components/ui/Button`, HeroUI's `Button`
+  with the shared touch target already applied. A `Button` imported from `@heroui/react` renders
+  below the minimum and is a bug.
 - Theming is CSS-variable/`oklch`-based and switches on `[data-theme='dark']`/`[data-theme='light']`,
   **not** `prefers-color-scheme`. No switcher is wired up; the default light theme renders.
 - **`src/app/globals.css` imports `tailwindcss` before `@heroui/styles` — the order matters.** It
   also darkens HeroUI's default `--accent`/`--muted`, whose originals fail WCAG AA (4.5:1) for
-  button text on `--accent` and placeholder text on `--muted`. Keep contrast at AA, and controls at
-  the 44px (mobile) / 40px (desktop) touch-target minimum.
+  button text on `--accent` and placeholder text on `--muted`. Keep contrast at AA, and keep every
+  control at the 44px (mobile) / 40px (desktop) touch-target minimum — which is the
+  `src/lib/touchTarget.ts` rule above, never a height written at a call site.
 
 ## Testing UI changes
 

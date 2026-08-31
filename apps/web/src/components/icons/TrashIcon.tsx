@@ -1,3 +1,5 @@
+'use client';
+
 export function TrashIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

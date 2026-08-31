@@ -1,87 +1,71 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Link, Modal, Spinner } from '@heroui/react';
-import { ApiError, deleteMeetingRecording, type Recording } from '@/lib/api';
-import { formatDateTime } from '@/lib/format';
+import { Spinner } from '@heroui/react';
+import { deleteMeetingRecording, type Recording } from '@/lib/api';
+import { formatDateTime, formatFileSize } from '@/lib/format';
+import { touchTarget } from '@/lib/touchTarget';
+import { useConfirmAction } from '@/lib/useConfirmAction';
 import { ChevronDownIcon, PlayCircleIcon, TrashIcon } from '@/components/icons';
-import { RecordingStatusChip } from './RecordingStatusChip';
-import { RecordingPlayerModal } from './RecordingPlayerModal';
-
-function formatFileSize(sizeBytes: string): string {
-  const bytes = Number(sizeBytes);
-  if (!Number.isFinite(bytes)) return 'Unknown size';
-
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-}
+import { RecordingPlayerModal } from '@/components/meetings/RecordingPlayerModal';
+import { RecordingStatusChip } from '@/components/meetings/RecordingStatusChip';
+import { Button } from '@/components/ui/Button';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { ErrorText } from '@/components/ui/ErrorText';
 
 interface RecordingCardProps {
   meetingId: string;
-  recording: Recording;
   onDeleted: (recordingId: string) => void;
+  recording: Recording;
 }
 
 export function RecordingCard({
   meetingId,
-  recording,
   onDeleted,
+  recording,
 }: RecordingCardProps) {
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
+  const deleteAction = useConfirmAction({
+    action: async () => {
+      await deleteMeetingRecording(meetingId, recording.id);
+      onDeleted(recording.id);
+    },
+    fallbackMessage: 'Could not delete the recording. Please try again.',
+  });
 
   const hasTranscript =
     recording.status === 'READY' && Boolean(recording.transcriptText);
   const isTranscribing =
     recording.status === 'UPLOADED' || recording.status === 'PROCESSING';
 
-  const handleConfirmDelete = async () => {
-    setIsDeleting(true);
-    setError(null);
-    try {
-      await deleteMeetingRecording(meetingId, recording.id);
-      setIsDeleteOpen(false);
-      onDeleted(recording.id);
-    } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not delete the recording. Please try again.',
-      );
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-default-200 bg-default-50 p-4">
       <div className="flex flex-wrap items-center gap-3">
-        <PlayCircleIcon
-          aria-hidden="true"
-          className="size-5 shrink-0 text-muted"
-        />
-
-        <div className="min-w-0 flex-1">
-          <Link
-            className="block max-w-full truncate font-medium text-foreground hover:text-accent"
-            onPress={() => setIsPlayerOpen(true)}
-          >
-            {recording.originalFilename}
-          </Link>
-          <p className="text-sm text-muted">
-            {formatFileSize(recording.sizeBytes)} · Added{' '}
-            {formatDateTime(recording.createdAt)}
-          </p>
-        </div>
+        {/* The whole title block is the button that opens the player. It used to be an
+            `href`-less `<Link onPress>`, which announced itself as a link that went
+            nowhere; a button is what it always was. Its label carries the filename and
+            the meta line, so the two lines below are spans rather than a sibling <p>. */}
+        <Button
+          className="min-w-0 flex-1 justify-start gap-3 rounded-lg px-2 py-1 font-normal"
+          onPress={() => setIsPlayerOpen(true)}
+          touchTarget="block"
+          variant="ghost"
+        >
+          <PlayCircleIcon
+            aria-hidden="true"
+            className="size-5 shrink-0 text-muted"
+          />
+          <span className="flex min-w-0 flex-1 flex-col text-left">
+            <span className="truncate text-base font-medium">
+              {recording.originalFilename}
+            </span>
+            <span className="truncate text-sm text-muted">
+              {formatFileSize(recording.sizeBytes)} · Added{' '}
+              {formatDateTime(recording.createdAt)}
+            </span>
+          </span>
+        </Button>
 
         <RecordingStatusChip status={recording.status} />
 
@@ -89,8 +73,7 @@ export function RecordingCard({
           aria-label={`Delete ${recording.originalFilename}`}
           className="text-danger hover:text-danger"
           isIconOnly
-          onPress={() => setIsDeleteOpen(true)}
-          size="lg"
+          onPress={deleteAction.open}
           variant="ghost"
         >
           <TrashIcon className="size-4" />
@@ -98,14 +81,19 @@ export function RecordingCard({
       </div>
 
       {recording.status === 'FAILED' ? (
-        <p className="text-sm text-danger" role="alert">
+        <ErrorText>
           Transcription failed. No transcript is available for this recording.
-        </p>
+        </ErrorText>
       ) : isTranscribing ? (
-        // Occupies the same slot the "Show transcript" toggle takes once ready (same
-        // min-height as that button), so transcription finishing doesn't shift the rest
-        // of the tile's layout.
-        <div className="flex min-h-[44px] items-center gap-2 text-sm text-muted md:min-h-10">
+        // Occupies the same slot the "Show transcript" toggle takes once ready — hence
+        // the same `touchTarget` height the toggle gets from `ui/Button` — so
+        // transcription finishing doesn't shift the rest of the tile's layout.
+        <div
+          className={touchTarget({
+            className: 'flex items-center gap-2 text-sm text-muted',
+            fit: 'block',
+          })}
+        >
           <Spinner aria-label="Transcribing" size="sm" />
           Transcribing…
         </div>
@@ -113,7 +101,7 @@ export function RecordingCard({
         <div className="flex flex-col gap-2">
           <Button
             aria-expanded={isTranscriptOpen}
-            className="w-fit min-h-[44px] gap-1 text-accent hover:text-accent md:min-h-10"
+            className="w-fit gap-1 text-accent hover:text-accent"
             onPress={() => setIsTranscriptOpen((open) => !open)}
             size="sm"
             variant="ghost"
@@ -143,12 +131,6 @@ export function RecordingCard({
         </div>
       ) : null}
 
-      {error ? (
-        <p className="text-sm text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
-
       <RecordingPlayerModal
         isOpen={isPlayerOpen}
         meetingId={meetingId}
@@ -156,34 +138,20 @@ export function RecordingCard({
         recording={recording}
       />
 
-      <Modal.Backdrop isOpen={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
-        <Modal.Container>
-          <Modal.Dialog className="sm:max-w-[400px]">
-            <Modal.CloseTrigger />
-            <Modal.Header>
-              <Modal.Heading>Delete recording?</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
-              <p>
-                This will permanently delete “{recording.originalFilename}”.
-                This can&apos;t be undone.
-              </p>
-            </Modal.Body>
-            <Modal.Footer>
-              <Button slot="close" variant="secondary">
-                Cancel
-              </Button>
-              <Button
-                isPending={isDeleting}
-                onPress={() => void handleConfirmDelete()}
-                variant="danger"
-              >
-                Delete
-              </Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+      <ConfirmModal
+        confirmLabel="Delete"
+        error={deleteAction.error}
+        heading="Delete recording?"
+        isOpen={deleteAction.isOpen}
+        isPending={deleteAction.isPending}
+        onConfirm={deleteAction.onConfirm}
+        onOpenChange={deleteAction.onOpenChange}
+      >
+        <p>
+          This will permanently delete “{recording.originalFilename}”. This
+          can&apos;t be undone.
+        </p>
+      </ConfirmModal>
     </div>
   );
 }

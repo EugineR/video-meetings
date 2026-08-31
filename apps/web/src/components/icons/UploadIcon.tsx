@@ -1,3 +1,5 @@
+'use client';
+
 export function UploadIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

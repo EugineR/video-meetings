@@ -1,3 +1,5 @@
+'use client';
+
 import { Chip, Spinner } from '@heroui/react';
 import type { RecordingStatus } from '@/lib/api';
 

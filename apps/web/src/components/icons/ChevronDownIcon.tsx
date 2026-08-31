@@ -1,3 +1,5 @@
+'use client';
+
 export function ChevronDownIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
