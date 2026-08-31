@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { TaskStatus } from '@prisma/client';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
@@ -49,12 +50,13 @@ async function createMeeting(
 }
 
 /**
- * Connects a real `@modelcontextprotocol/sdk` client to the standalone `find_tasks` server over
- * stdio, spawning `find-tasks-server.ts` directly via `ts-node` (transpile-only, purely so each
- * test's spawn is fast — the server itself is still exercised as real compiled behavior, not a
- * mock) rather than requiring a prior `pnpm build`; same underlying mechanism as the
- * `mcp:find-tasks:dev` script. `accessToken` becomes the subprocess's `MCP_ACCESS_TOKEN` env var —
- * the identity every `find_tasks` call in that session is checked against.
+ * Connects a real `@modelcontextprotocol/sdk` client to the standalone task-manager MCP server
+ * (`find_tasks` + `upsert_task`) over stdio, spawning `find-tasks-server.ts` directly via
+ * `ts-node` (transpile-only, purely so each test's spawn is fast — the server itself is still
+ * exercised as real compiled behavior, not a mock) rather than requiring a prior `pnpm build`;
+ * same underlying mechanism as the `mcp:find-tasks:dev` script. `accessToken` becomes the
+ * subprocess's `MCP_ACCESS_TOKEN` env var — the identity every tool call in that session is
+ * checked against.
  */
 async function connectFindTasksClient(accessToken: string): Promise<Client> {
   const transport = new StdioClientTransport({
@@ -77,7 +79,23 @@ function parseTasks(result: CallToolResult): { title: string }[] {
   return JSON.parse(first.text) as { title: string }[];
 }
 
-describe('find_tasks MCP server (e2e)', () => {
+function parseTask(result: CallToolResult): {
+  id: string;
+  title: string;
+  status: TaskStatus;
+} {
+  const [first] = result.content;
+  if (first?.type !== 'text') {
+    throw new Error('Expected a text content block');
+  }
+  return JSON.parse(first.text) as {
+    id: string;
+    title: string;
+    status: TaskStatus;
+  };
+}
+
+describe('task-manager MCP server (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
 
@@ -160,5 +178,75 @@ describe('find_tasks MCP server (e2e)', () => {
         }
       })(),
     ).rejects.toThrow();
+  });
+
+  it('creates a new task via upsert_task, persisted through TaskService', async () => {
+    const token = await registerAndLogin(app, 'owner@example.com');
+    const meetingId = await createMeeting(app, token, 'Sprint planning');
+
+    const client = await connectFindTasksClient(token);
+    try {
+      const result = await client.callTool({
+        name: 'upsert_task',
+        arguments: { meetingId, title: 'Draft the roadmap doc' },
+      });
+
+      expect(result.isError).toBeFalsy();
+      const task = parseTask(result as CallToolResult);
+      expect(task.title).toBe('Draft the roadmap doc');
+      expect(task.status).toBe(TaskStatus.OPEN);
+
+      const stored = await prisma.task.findUnique({ where: { id: task.id } });
+      expect(stored?.sourceMeetingId).toBe(meetingId);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('updates the matching existing task instead of duplicating it', async () => {
+    const token = await registerAndLogin(app, 'owner@example.com');
+    const meetingId = await createMeeting(app, token, 'Sprint planning');
+    const existing = await prisma.task.create({
+      data: { title: 'Draft the roadmap doc', sourceMeetingId: meetingId },
+    });
+
+    const client = await connectFindTasksClient(token);
+    try {
+      const result = await client.callTool({
+        name: 'upsert_task',
+        arguments: {
+          meetingId,
+          title: 'Draft the roadmap doc',
+          status: TaskStatus.DONE,
+        },
+      });
+
+      expect(result.isError).toBeFalsy();
+      const task = parseTask(result as CallToolResult);
+      expect(task.id).toBe(existing.id);
+      expect(task.status).toBe(TaskStatus.DONE);
+      expect(await prisma.task.count()).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('refuses to write a task into a meeting owned by someone else', async () => {
+    const ownerToken = await registerAndLogin(app, 'owner@example.com');
+    const otherToken = await registerAndLogin(app, 'other@example.com');
+    const meetingId = await createMeeting(app, ownerToken, 'Private planning');
+
+    const client = await connectFindTasksClient(otherToken);
+    try {
+      const result = await client.callTool({
+        name: 'upsert_task',
+        arguments: { meetingId, title: 'Sneak in a task' },
+      });
+
+      expect(result.isError).toBe(true);
+      expect(await prisma.task.count()).toBe(0);
+    } finally {
+      await client.close();
+    }
   });
 });

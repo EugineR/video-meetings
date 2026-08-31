@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { TaskStatus } from '@prisma/client';
 import { z } from 'zod';
 import { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { MeetingsRepository } from '../meetings/meetings.repository';
@@ -16,12 +17,13 @@ const SERVER_NAME = 'find-tasks';
 const SERVER_VERSION = '1.0.0';
 
 /**
- * DI context for this standalone process, scoped to exactly what `find_tasks` needs rather than
- * the full `AppModule` — this process has no HTTP surface and never touches transcription or the
- * Claude Agent SDK. `JwtModule` (verify-only here — nothing in this process signs a token) and
- * `MeetingsRepository` (imported directly rather than the whole `MeetingsModule`, which would
- * drag in Whisper/Claude Agent SDK dependencies this process has no use for) back the ownership
- * check `main()` runs on every `find_tasks` call — see its own doc comment for why that's needed.
+ * DI context for this standalone process, scoped to exactly what `find_tasks`/`upsert_task` need
+ * rather than the full `AppModule` — this process has no HTTP surface and never touches
+ * transcription or the Claude Agent SDK. `JwtModule` (verify-only here — nothing in this process
+ * signs a token) and `MeetingsRepository` (imported directly rather than the whole
+ * `MeetingsModule`, which would drag in Whisper/Claude Agent SDK dependencies this process has no
+ * use for) back the ownership check both tools run before touching `TaskService` — see
+ * `registerFindTasks`/`registerUpsertTask`'s own doc comments for why that's needed.
  */
 @Module({
   imports: [
@@ -99,6 +101,60 @@ function registerFindTasks(
 }
 
 /**
+ * Registers the `upsert_task` tool against the real `TaskService.upsert` (the same dedup-aware
+ * create-or-update `meeting-tools.ts`'s in-process `upsert_task` calls), gated on the same
+ * `meetingId` + ownership check as `registerFindTasks` above — `TaskService.upsert`'s dedup lookup
+ * is itself scoped to `sourceMeetingId` (see its own doc comment), so skipping this check here would
+ * let any caller create or silently rewrite a task in a meeting they don't own.
+ */
+function registerUpsertTask(
+  server: McpServer,
+  taskService: TaskService,
+  meetingsRepository: MeetingsRepository,
+  userId: string,
+) {
+  server.registerTool(
+    'upsert_task',
+    {
+      description:
+        "Creates a task with the given title for the given meeting, or updates the closest existing similar task's title/status instead of creating a duplicate — only ever matching among that same meeting's own tasks.",
+      inputSchema: {
+        meetingId: z
+          .string()
+          .uuid()
+          .describe('The meeting to create or update the task in'),
+        title: z.string().min(1),
+        status: z
+          .nativeEnum(TaskStatus)
+          .optional()
+          .describe(
+            'Left unchanged on an update, defaults to OPEN on a new task',
+          ),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async ({ meetingId, title, status }) => {
+      const meeting = await meetingsRepository.findByIdAndOwner(
+        meetingId,
+        userId,
+      );
+      if (!meeting) {
+        return errorResult(`Meeting ${meetingId} not found.`);
+      }
+
+      const task = await taskService.upsert({
+        title,
+        status,
+        sourceMeetingId: meetingId,
+      });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(task) }],
+      };
+    },
+  );
+}
+
+/**
  * Verifies the `MCP_ACCESS_TOKEN` env var this process was spawned with (the same JWT
  * `/auth/login` issues, checked with the same `JwtService`/`JWT_SECRET` `JwtAuthGuard` uses) and
  * returns the signed-in user's id. Runs once at startup, before `server.connect` ever attaches the
@@ -117,10 +173,10 @@ async function resolveUserId(
 }
 
 /**
- * Entry point for the standalone `find_tasks` MCP server: an MCP client spawns this file as a
- * subprocess and talks to it over stdio (`StdioServerTransport`), so `logger: false` here keeps
- * Nest's own bootstrap logging off stdout — that stream carries nothing but the MCP protocol once
- * `server.connect` attaches the transport.
+ * Entry point for the standalone task-manager MCP server (`find_tasks` + `upsert_task`): an MCP
+ * client spawns this file as a subprocess and talks to it over stdio (`StdioServerTransport`), so
+ * `logger: false` here keeps Nest's own bootstrap logging off stdout — that stream carries nothing
+ * but the MCP protocol once `server.connect` attaches the transport.
  */
 async function main() {
   const context = await NestFactory.createApplicationContext(
@@ -134,12 +190,10 @@ async function main() {
   );
 
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-  registerFindTasks(
-    server,
-    context.get(TaskService),
-    context.get(MeetingsRepository),
-    userId,
-  );
+  const taskService = context.get(TaskService);
+  const meetingsRepository = context.get(MeetingsRepository);
+  registerFindTasks(server, taskService, meetingsRepository, userId);
+  registerUpsertTask(server, taskService, meetingsRepository, userId);
 
   await server.connect(new StdioServerTransport());
 
