@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { Spinner } from '@heroui/react';
 import { deleteMeetingRecording, type Recording } from '@/lib/api';
 import { formatDateTime, formatFileSize } from '@/lib/format';
-import { apiErrorMessage } from '@/lib/formErrors';
 import { touchTarget } from '@/lib/touchTarget';
+import { useConfirmAction } from '@/lib/useConfirmAction';
 import { ChevronDownIcon, PlayCircleIcon, TrashIcon } from '@/components/icons';
 import { RecordingPlayerModal } from '@/components/meetings/RecordingPlayerModal';
 import { RecordingStatusChip } from '@/components/meetings/RecordingStatusChip';
@@ -25,39 +25,19 @@ export function RecordingCard({
   recording,
 }: RecordingCardProps) {
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
+  const deleteAction = useConfirmAction({
+    action: async () => {
+      await deleteMeetingRecording(meetingId, recording.id);
+      onDeleted(recording.id);
+    },
+    fallbackMessage: 'Could not delete the recording. Please try again.',
+  });
 
   const hasTranscript =
     recording.status === 'READY' && Boolean(recording.transcriptText);
   const isTranscribing =
     recording.status === 'UPLOADED' || recording.status === 'PROCESSING';
-
-  const handleDeleteOpenChange = (isOpen: boolean) => {
-    setDeleteError(null);
-    setIsDeleteOpen(isOpen);
-  };
-
-  const handleConfirmDelete = async () => {
-    setIsDeleting(true);
-    setDeleteError(null);
-    try {
-      await deleteMeetingRecording(meetingId, recording.id);
-      setIsDeleteOpen(false);
-      onDeleted(recording.id);
-    } catch (err) {
-      setDeleteError(
-        apiErrorMessage(
-          err,
-          'Could not delete the recording. Please try again.',
-        ),
-      );
-    } finally {
-      setIsDeleting(false);
-    }
-  };
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-default-200 bg-default-50 p-4">
@@ -93,7 +73,7 @@ export function RecordingCard({
           aria-label={`Delete ${recording.originalFilename}`}
           className="text-danger hover:text-danger"
           isIconOnly
-          onPress={() => setIsDeleteOpen(true)}
+          onPress={deleteAction.open}
           variant="ghost"
         >
           <TrashIcon className="size-4" />
@@ -160,12 +140,12 @@ export function RecordingCard({
 
       <ConfirmModal
         confirmLabel="Delete"
-        error={deleteError}
+        error={deleteAction.error}
         heading="Delete recording?"
-        isOpen={isDeleteOpen}
-        isPending={isDeleting}
-        onConfirm={() => void handleConfirmDelete()}
-        onOpenChange={handleDeleteOpenChange}
+        isOpen={deleteAction.isOpen}
+        isPending={deleteAction.isPending}
+        onConfirm={deleteAction.onConfirm}
+        onOpenChange={deleteAction.onOpenChange}
       >
         <p>
           This will permanently delete “{recording.originalFilename}”. This

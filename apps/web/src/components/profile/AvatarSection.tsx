@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import { Avatar, Card, Label, ProgressBar } from '@heroui/react';
 import { deleteAvatar, uploadAvatar, type Profile } from '@/lib/api';
-import { apiErrorMessage } from '@/lib/formErrors';
 import type { ProfileSaved } from '@/lib/queries/profile';
 import { AVATAR_UPLOAD } from '@/lib/uploads';
+import { useConfirmAction } from '@/lib/useConfirmAction';
 import { useFileSelection } from '@/lib/useFileSelection';
 import { TrashIcon, UploadIcon } from '@/components/icons';
 import { Button } from '@/components/ui/Button';
@@ -34,14 +34,12 @@ interface AvatarSectionProps {
  * here — see `ProfileSaved`) so the header and /profile pick up the change
  * immediately.
  *
- * Removal keeps its own `removeError`, separate from the selection's upload error:
- * one belongs inside the confirmation dialog, the other under the buttons.
+ * Removal is `useConfirmAction`, whose `error` is deliberately separate from the
+ * selection's own upload error: one belongs inside the confirmation dialog, the
+ * other under the buttons.
  */
 export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
   const [isRemoved, setIsRemoved] = useState(false);
-  const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
-  const [isRemoving, setIsRemoving] = useState(false);
-  const [removeError, setRemoveError] = useState<string | null>(null);
   const selection = useFileSelection({
     constraints: AVATAR_UPLOAD,
     mode: 'staged',
@@ -53,33 +51,19 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
       });
     },
   });
+  const removeAction = useConfirmAction({
+    action: async () => {
+      await deleteAvatar();
+      selection.clearSelection();
+      setIsRemoved(true);
+      onSaved({ profile: { hasAvatar: false, avatarUpdatedAt: null } });
+    },
+    fallbackMessage: 'Could not remove the avatar. Please try again.',
+  });
 
   const { isUploading, progress } = selection;
   const hasStoredAvatar = profile.hasAvatar && !isRemoved;
   const canRemove = hasStoredAvatar;
-
-  const handleRemoveOpenChange = (isOpen: boolean) => {
-    setRemoveError(null);
-    setIsRemoveModalOpen(isOpen);
-  };
-
-  const handleConfirmRemove = async () => {
-    setIsRemoving(true);
-    setRemoveError(null);
-    try {
-      await deleteAvatar();
-      selection.clearSelection();
-      setIsRemoved(true);
-      setIsRemoveModalOpen(false);
-      onSaved({ profile: { hasAvatar: false, avatarUpdatedAt: null } });
-    } catch (err) {
-      setRemoveError(
-        apiErrorMessage(err, 'Could not remove the avatar. Please try again.'),
-      );
-    } finally {
-      setIsRemoving(false);
-    }
-  };
 
   return (
     <Card>
@@ -136,7 +120,7 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
                   <>
                     <Button
                       className="self-start"
-                      isDisabled={isRemoving}
+                      isDisabled={removeAction.isPending}
                       onPress={selection.openFilePicker}
                       variant="secondary"
                     >
@@ -147,8 +131,8 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
                     {canRemove ? (
                       <Button
                         className="self-start"
-                        isDisabled={isRemoving}
-                        onPress={() => setIsRemoveModalOpen(true)}
+                        isDisabled={removeAction.isPending}
+                        onPress={removeAction.open}
                         variant="danger"
                       >
                         <TrashIcon aria-hidden="true" className="size-4" />
@@ -188,12 +172,12 @@ export function AvatarSection({ onSaved, profile }: AvatarSectionProps) {
 
       <ConfirmModal
         confirmLabel="Remove"
-        error={removeError}
+        error={removeAction.error}
         heading="Remove avatar?"
-        isOpen={isRemoveModalOpen}
-        isPending={isRemoving}
-        onConfirm={() => void handleConfirmRemove()}
-        onOpenChange={handleRemoveOpenChange}
+        isOpen={removeAction.isOpen}
+        isPending={removeAction.isPending}
+        onConfirm={removeAction.onConfirm}
+        onOpenChange={removeAction.onOpenChange}
       >
         <p>
           This will remove your profile photo. You can upload a new one at any

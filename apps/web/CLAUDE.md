@@ -30,8 +30,8 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   primitives (`ErrorText`, `SuccessText`, `LoadingState`, `TextInputField`, `PasswordField`,
   `ConfirmModal`, `UserAvatar`) and icons are re-exported through `icons/index.ts`
 - `src/lib/` — `api.ts` (the only caller of `apps/api`), `auth.ts`, `useAuthenticatedUser.ts`,
-  `useMeetingSummaryStatus.ts`, `useFileSelection.ts`, `format.ts`, `validation.ts`,
-  `formErrors.ts`, `meetings.ts`, `uploads.ts`, and
+  `useMeetingSummaryStatus.ts`, `useFileSelection.ts`, `useConfirmAction.ts`, `format.ts`,
+  `validation.ts`, `formErrors.ts`, `meetings.ts`, `uploads.ts`, and
   `queries/` (`client.ts`, `session.ts`, `profile.ts`, `meetings.ts`) — the TanStack Query layer
 
 ## Rules
@@ -177,11 +177,17 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   `onChanged(accessToken)`) were one convention per component.
 - **Every modal is controlled by `isOpen` + `onOpenChange(isOpen)`** and never wraps a HeroUI
   `<Modal>` trigger; the caller owns the open state. A **destructive confirmation is
-  `ConfirmModal`** (`src/components/ui/ConfirmModal.tsx`) — Cancel is HeroUI's `slot="close"`, so
-  Escape, the backdrop, the close control and Cancel all leave the same way, and a failure raised
-  by the confirmed action goes in its `error` prop, which renders **inside** the still-open
-  dialog. Rendering that failure in the page behind the modal (as `RecordingCard` did) hides it
-  until the dialog is dismissed. A second hand-written `Modal.Backdrop` confirmation is a bug.
+  `ConfirmModal`** (`src/components/ui/ConfirmModal.tsx`) driven by **`useConfirmAction()`**
+  (`src/lib/useConfirmAction.ts`) — Cancel is HeroUI's `slot="close"`, so Escape, the backdrop,
+  the close control and Cancel all leave the same way, and a failure raised by the confirmed
+  action goes in its `error` prop, which renders **inside** the still-open dialog. Rendering that
+  failure in the page behind the modal (as `RecordingCard` used to) hides it until the dialog is
+  dismissed. The hook owns the open/pending/error mechanics — `open()`, and the `isOpen`,
+  `onOpenChange`, `isPending`, `error` and `onConfirm` props handed straight to `ConfirmModal`;
+  the caller supplies only `action`, the request plus whatever local state its success earns
+  (`RecordingCard`'s `onDeleted`, `AvatarSection`'s `selection.clearSelection()` and `onSaved`). A
+  second hand-written `Modal.Backdrop` confirmation, or a confirmation with its own `isOpen`/
+  `isPending`/error `useState` trio instead of the hook, is a bug.
 - **Every `.tsx` under `src/components/` starts with `'use client'`** — icons and purely
   presentational components included. The app has no server components below the root layout, so
   "only where a hook needs it" would be a rule with no observable effect and four files that
