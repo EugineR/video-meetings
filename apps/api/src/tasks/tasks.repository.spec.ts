@@ -14,16 +14,20 @@ describe('TaskRepository', () => {
   let queryRaw: jest.Mock<Promise<Task[]>, [Prisma.Sql]>;
   let create: jest.Mock;
   let update: jest.Mock;
+  let findMany: jest.Mock;
+  let findUnique: jest.Mock;
   let repository: TaskRepository;
 
   beforeEach(() => {
     queryRaw = jest.fn<Promise<Task[]>, [Prisma.Sql]>();
     create = jest.fn();
     update = jest.fn();
+    findMany = jest.fn();
+    findUnique = jest.fn();
 
     const prisma = {
       $queryRaw: queryRaw,
-      task: { create, update },
+      task: { create, update, findMany, findUnique },
     } as unknown as PrismaService;
 
     repository = new TaskRepository(prisma);
@@ -107,6 +111,39 @@ describe('TaskRepository', () => {
         data: { status: TaskStatus.DONE },
       });
       expect(result).toBe(updated);
+    });
+  });
+
+  describe('findByStatus', () => {
+    it('lists tasks with the given status, most recently created first', async () => {
+      findMany.mockResolvedValue([task]);
+
+      const result = await repository.findByStatus(TaskStatus.OPEN);
+
+      expect(findMany).toHaveBeenCalledWith({
+        where: { status: TaskStatus.OPEN },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(result).toEqual([task]);
+    });
+  });
+
+  describe('findById', () => {
+    it('returns the task with the given id', async () => {
+      findUnique.mockResolvedValue(task);
+
+      const result = await repository.findById(task.id);
+
+      expect(findUnique).toHaveBeenCalledWith({ where: { id: task.id } });
+      expect(result).toBe(task);
+    });
+
+    it('returns null when no task has that id', async () => {
+      findUnique.mockResolvedValue(null);
+
+      const result = await repository.findById('missing');
+
+      expect(result).toBeNull();
     });
   });
 });

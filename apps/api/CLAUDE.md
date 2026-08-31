@@ -38,7 +38,9 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
   as it works, on top of the JSON reply `updateStatusIfCurrent` still persists — see Invariants.
 - `src/tasks/` — `TaskService`, a standalone `Task` model tracking action items independently of
   `MeetingSummary.actionItems`'s JSON blob; `search`/`upsert` de-duplicate by title similarity
-  (Postgres `pg_trgm`). Reached from `summarize`'s agent run via the `meeting` MCP tools.
+  (Postgres `pg_trgm`). Reached from `summarize`'s agent run via the `meeting` MCP tools, and from
+  `McpModule`'s `/mcp` HTTP endpoint via `task-tools.ts`'s `TaskTools` (see `src/mcp/` below) —
+  `TasksModule` provides and exports both `TaskService` and `TaskTools`.
 - `src/claude-agent/` — `ClaudeAgentService`, a thin wrapper around the Claude Agent SDK for a
   single-turn prompt/response call; `ask` resolves a `ClaudeAgentReply` (`text` plus, when the
   caller set `options.outputFormat`, the schema-validated `structuredOutput`). `ClaudeAgentModule`'s
@@ -50,6 +52,38 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
   (via structural interfaces, not the concrete classes, to avoid a circular import with
   `meeting-summary/`) as a `meeting` SDK MCP server (`find_tasks`/`upsert_task`/`update_meeting`).
   Wired into `MeetingSummaryService.summarize`'s `options.mcpServers`.
+- `src/mcp/` — `McpModule`, an in-process MCP server over HTTP at `/mcp`, on the official
+  `@modelcontextprotocol/sdk` (not the Claude Agent SDK). No more standalone stdio process here —
+  the earlier `find-tasks-server.ts`/`mcp:find-tasks*` scripts were removed once this HTTP surface
+  covered the same `find_tasks`/`upsert_task` tools; the `gather_meeting_info` prompt and its
+  meeting-ownership gate went with it and have no replacement yet (see Invariants — this endpoint
+  has no auth at all).
+  - `mcp-tool-registrar.ts` — the `McpToolRegistrar` interface (`registerOn(server): void`) every
+    domain's tool/resource registrar implements, plus the `MCP_TOOL_REGISTRARS` DI token
+    `McpModule` aggregates them under. A new domain exports its own registrar class from its own
+    module; nothing in `src/mcp/` needs to change.
+  - `mcp.module.ts` — imports every domain module contributing a registrar (currently just
+    `TasksModule`, for `TaskTools`) so Nest instantiates each registrar before `McpService`'s own
+    providers, and provides `MCP_TOOL_REGISTRARS` via a `useFactory` that folds each injected
+    registrar into one array (e.g. `useFactory: (taskTools) => [taskTools], inject: [TaskTools]`).
+    Adding a domain means: export its registrar from its own module, import that module here, add
+    it to this factory — `McpService` itself never changes.
+  - `mcp.service.ts` — `McpService.onModuleInit` walks `MCP_TOOL_REGISTRARS` once against a
+    throwaway `McpServer`, purely to fail fast at boot if a registrar's wiring is broken (e.g. two
+    domains registering the same tool name, which the SDK's `registerTool` throws on synchronously)
+    rather than on the first `/mcp` request; that server is never connected to a transport.
+    `createTransport()` builds a **second, real** `McpServer` + `StreamableHTTPServerTransport`
+    **per request** — not one shared instance — since the SDK's stateless transport
+    (`sessionIdGenerator: undefined`) refuses a second `handleRequest` call. `McpController`'s
+    single `@All()` route calls it every time, forwards `(req, res, req.body)` into the returned
+    transport, and closes it on `res`'s `close` event.
+  - `../tasks/task-tools.ts` — `TaskTools` (`@Injectable`, lives in `TasksModule` — see `src/tasks/`
+    above), the `tasks` domain's `McpToolRegistrar`: `find_tasks`/`upsert_task` tools plus the
+    `tasks://open`/`task://{id}` resources, injecting the app's own `TaskService` via DI. Every
+    handler delegates straight to a `TaskService` method (`search`, `upsert`, `findOpenTasks`,
+    `findById`) — no dedup/search/write logic duplicated here. `find_tasks`'s `meetingId` is
+    optional (mirrors `TaskService.search`'s own optional `sourceMeetingId`); `upsert_task`'s is
+    required (mirrors `UpsertTaskInput.sourceMeetingId`, which has no optional form).
 - `src/hooks.ts` — `createMeetingHooks`, the Claude Agent SDK `HookCallback`s guarding every
   `ClaudeAgentService.ask` run (wired into `options.hooks` by `runClaudeAgent`, not by callers —
   see `src/claude-agent/` above): `preToolUseGuard` denies `upsert_task` calls with a too-short
@@ -85,6 +119,31 @@ established; new modules follow it rather than inventing one.
 Rules no amount of reading the code makes obvious, each of which a change can break silently.
 The reasoning behind them is in `docs/architecture/api.md`.
 
+- **`McpModule`'s `/mcp` HTTP endpoint has no authorization check yet** — `McpController`'s
+  `@All()` route is reachable by any caller that can reach the app, and `TaskTools`'s `find_tasks`/
+  `upsert_task`/`tasks://open`/`task://{id}` can search or write any meeting's tasks (`find_tasks`
+  meeting-agnostic by default, same as `meeting-tools.ts`'s in-process one) or read/write a single
+  task by id with no ownership check at all. This is a known, temporary gap — the earlier
+  standalone `find-tasks-server.ts` enforced one (an `MCP_ACCESS_TOKEN` env var checked against
+  `MeetingsRepository.findByIdAndOwner`), but it's gone; nothing here replaces it yet — left for a
+  follow-up change. Don't register a tool/resource on any domain's `McpToolRegistrar` that reads or
+  writes another user's data without adding that check first.
+- **A domain's `McpToolRegistrar` (e.g. `TaskTools`) must be exported from its own module, and
+  `McpModule` must import that module** — `MCP_TOOL_REGISTRARS`'s `useFactory` (`mcp.module.ts`)
+  can only inject a registrar Nest already knows how to build, and Nest only resolves an injected
+  class from a module that either provides it directly or imports a module that exports it. Adding
+  a new domain without doing both silently breaks DI resolution for `McpModule` at boot (a clear
+  "cannot resolve dependency" error, not a silent no-op) — see `mcp.module.ts`'s own doc comment
+  for the three-step checklist.
+- **`McpService.createTransport()` must build a fresh `McpServer` + `StreamableHTTPServerTransport`
+  on every call, never a shared instance reused across requests** — the SDK's stateless transport
+  (`sessionIdGenerator: undefined`) throws `Stateless transport cannot be reused across requests`
+  on a second `handleRequest` call, and `McpServer.connect` itself refuses a second `connect()` on
+  the same instance without an intervening `close()`. An earlier version of this service built the
+  pair once in `onModuleInit`; the first `/mcp` request succeeded and every one after 500'd — this
+  was caught by hand (`tools/list` after `initialize`), not by any test. Registration
+  (`TaskTools.registerOn`) is cheap enough to redo per request; don't try to "optimize" this back
+  into a shared server/transport.
 - **Any id that becomes a path must be a plain UUID** (`StorageService.assertValidId`) — the id
   arrives from a URL param or a JWT payload before any ownership check, and `..\..\Temp` would
   otherwise `path.join` outside `UPLOADS_DIR`.

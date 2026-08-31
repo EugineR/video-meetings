@@ -57,4 +57,16 @@ export class TaskRepository {
   update(id: string, data: UpdateTaskInput): Promise<Task> {
     return this.prisma.task.update({ where: { id }, data });
   }
+
+  /** All tasks with the given `status`, most recently created first. */
+  findByStatus(status: TaskStatus): Promise<Task[]> {
+    return this.prisma.task.findMany({
+      where: { status },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  findById(id: string): Promise<Task | null> {
+    return this.prisma.task.findUnique({ where: { id } });
+  }
 }
