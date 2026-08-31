@@ -19,17 +19,23 @@ describe('TaskService', () => {
   let search: jest.Mock;
   let create: jest.Mock;
   let update: jest.Mock;
+  let findByStatus: jest.Mock;
+  let findById: jest.Mock;
   let service: TaskService;
 
   beforeEach(() => {
     search = jest.fn();
     create = jest.fn();
     update = jest.fn();
+    findByStatus = jest.fn();
+    findById = jest.fn();
 
     const repository = {
       search,
       create,
       update,
+      findByStatus,
+      findById,
     } as unknown as TaskRepository;
 
     service = new TaskService(repository);
@@ -210,6 +216,36 @@ describe('TaskService', () => {
       resolveFirstSearch([]);
       await firstUpsert;
       await secondUpsert;
+    });
+  });
+
+  describe('findOpenTasks', () => {
+    it('delegates to the repository, scoped to OPEN status', async () => {
+      findByStatus.mockResolvedValue([existingTask]);
+
+      const result = await service.findOpenTasks();
+
+      expect(findByStatus).toHaveBeenCalledWith(TaskStatus.OPEN);
+      expect(result).toEqual([existingTask]);
+    });
+  });
+
+  describe('findById', () => {
+    it('delegates to the repository', async () => {
+      findById.mockResolvedValue(existingTask);
+
+      const result = await service.findById(existingTask.id);
+
+      expect(findById).toHaveBeenCalledWith(existingTask.id);
+      expect(result).toBe(existingTask);
+    });
+
+    it('returns null when the repository finds nothing', async () => {
+      findById.mockResolvedValue(null);
+
+      const result = await service.findById('missing');
+
+      expect(result).toBeNull();
     });
   });
 });

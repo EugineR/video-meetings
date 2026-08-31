@@ -68,10 +68,20 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
     it. All three (both tools and the prompt) are gated on the `MCP_ACCESS_TOKEN` env var it's
     launched with actually owning that meeting — see Invariants.
   - `mcp.module.ts`/`mcp.service.ts`/`mcp.controller.ts` — `McpModule`, wired into `AppModule`,
-    exposing an in-process `McpServer` over HTTP at `/mcp` (`McpController`'s single `@All()`
-    route forwards `(req, res, req.body)` straight into the `StreamableHTTPServerTransport`
-    `McpService` builds and connects once in `onModuleInit`). Registers no tools/prompts yet and
-    has no auth — see Invariants.
+    exposing an in-process `McpServer` over HTTP at `/mcp`. `McpService.createTransport()` builds a
+    fresh `McpServer` + `StreamableHTTPServerTransport` **per request** — not one shared instance —
+    since the SDK's stateless transport (`sessionIdGenerator: undefined`) refuses a second
+    `handleRequest` call; `McpController`'s single `@All()` route calls it every time, then forwards
+    `(req, res, req.body)` into the returned transport and closes it on `res`'s `close` event. Has
+    no auth — see Invariants.
+  - `task-tools.ts` — `TaskTools` (`@Injectable`), the `find_tasks`/`upsert_task` tools plus the
+    `tasks://open`/`task://{id}` resources, injecting the app's own `TaskService` via DI rather
+    than a standalone context or a Claude Agent SDK tool set. `registerOn(server)` registers all
+    four on the `McpServer` `McpService.createTransport()` passes it, every request; every handler
+    delegates straight to a `TaskService` method (`search`, `upsert`, `findOpenTasks`, `findById`)
+    — no dedup/search/write logic duplicated here. `find_tasks`'s `meetingId` is optional
+    (mirrors `TaskService.search`'s own optional `sourceMeetingId`); `upsert_task`'s is required
+    (mirrors `UpsertTaskInput.sourceMeetingId`, which has no optional form) — see Invariants.
 - `src/hooks.ts` — `createMeetingHooks`, the Claude Agent SDK `HookCallback`s guarding every
   `ClaudeAgentService.ask` run (wired into `options.hooks` by `runClaudeAgent`, not by callers —
   see `src/claude-agent/` above): `preToolUseGuard` denies `upsert_task` calls with a too-short
@@ -123,11 +133,22 @@ The reasoning behind them is in `docs/architecture/api.md`.
   check there has no other way to reach the client except as a thrown JSON-RPC error.
 
 - **`McpModule`'s `/mcp` HTTP endpoint has no authorization check yet** — `McpController`'s
-  `@All()` route is reachable by any caller that can reach the app, and the `McpServer`
-  `McpService` connects has no tools/prompts registered on it yet either. This is a known,
-  temporary gap (unlike `find-tasks-server.ts`'s `MCP_ACCESS_TOKEN` gate, which is enforced), left
-  for a follow-up change — don't register a tool/prompt here that reads or writes another user's
-  data without adding that check first.
+  `@All()` route is reachable by any caller that can reach the app, and `TaskTools`'s `find_tasks`/
+  `upsert_task`/`tasks://open`/`task://{id}` can search or write any meeting's tasks (`find_tasks`
+  meeting-agnostic by default, same as `meeting-tools.ts`'s in-process one) or read/write a single
+  task by id with no ownership check at all. This is a known, temporary gap (unlike
+  `find-tasks-server.ts`'s `MCP_ACCESS_TOKEN` gate, which is enforced), left for a follow-up
+  change — don't register a tool/resource/prompt here that reads or writes another user's data
+  without adding that check first.
+- **`McpService.createTransport()` must build a fresh `McpServer` + `StreamableHTTPServerTransport`
+  on every call, never a shared instance reused across requests** — the SDK's stateless transport
+  (`sessionIdGenerator: undefined`) throws `Stateless transport cannot be reused across requests`
+  on a second `handleRequest` call, and `McpServer.connect` itself refuses a second `connect()` on
+  the same instance without an intervening `close()`. An earlier version of this service built the
+  pair once in `onModuleInit`; the first `/mcp` request succeeded and every one after 500'd — this
+  was caught by hand (`tools/list` after `initialize`), not by any test. Registration
+  (`TaskTools.registerOn`) is cheap enough to redo per request; don't try to "optimize" this back
+  into a shared server/transport.
 - **Any id that becomes a path must be a plain UUID** (`StorageService.assertValidId`) — the id
   arrives from a URL param or a JWT payload before any ownership check, and `..\..\Temp` would
   otherwise `path.join` outside `UPLOADS_DIR`.

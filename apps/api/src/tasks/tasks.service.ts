@@ -75,6 +75,16 @@ export class TaskService {
     return thisUpsert;
   }
 
+  /** Every `OPEN` task, most recently created first — backs the `tasks://open` MCP resource. */
+  findOpenTasks(): Promise<Task[]> {
+    return this.tasksRepository.findByStatus(TaskStatus.OPEN);
+  }
+
+  /** A single task by id, or `null` if it doesn't exist — backs the `task://{id}` MCP resource. */
+  findById(id: string): Promise<Task | null> {
+    return this.tasksRepository.findById(id);
+  }
+
   private async doUpsert(input: UpsertTaskInput): Promise<Task> {
     const [bestMatch] = await this.tasksRepository.search(
       input.title,

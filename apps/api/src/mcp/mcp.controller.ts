@@ -15,6 +15,10 @@ export class McpController {
     @Req() req: Request,
     @Res({ passthrough: false }) res: Response,
   ): Promise<void> {
-    await this.mcpService.getTransport().handleRequest(req, res, req.body);
+    const transport = await this.mcpService.createTransport();
+    res.on('close', () => {
+      transport.close().catch(() => undefined);
+    });
+    await transport.handleRequest(req, res, req.body);
   }
 }
