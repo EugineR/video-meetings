@@ -11,7 +11,9 @@ From `apps/api/`, or `pnpm --filter api <script>` from the root: `pnpm dev` (wat
 `start:debug` · `start:prod` · `build` · `lint` · `test` (Jest units, `*.spec.ts` under `src`) ·
 `test:watch` · `test:cov` · `test:e2e` (`*.e2e-spec.ts` under `test/`, needs
 `docker compose up -d postgres`) · `prisma:generate` (after editing `prisma/schema.prisma`; also
-runs on `pnpm install`) · `prisma:migrate`.
+runs on `pnpm install`) · `prisma:migrate` · `mcp:find-tasks` (runs the built standalone
+`find_tasks` MCP server, `dist/src/mcp/find-tasks-server.js`, over stdio — needs `pnpm build` and
+`DATABASE_URL` first) · `mcp:find-tasks:dev` (the same server via `ts-node`, no build step).
 
 Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "case"`,
 `pnpm test:e2e -- auth.e2e-spec.ts`. The pre-commit hook runs the full suite, so don't pre-run it.
@@ -50,6 +52,11 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
   (via structural interfaces, not the concrete classes, to avoid a circular import with
   `meeting-summary/`) as a `meeting` SDK MCP server (`find_tasks`/`upsert_task`/`update_meeting`).
   Wired into `MeetingSummaryService.summarize`'s `options.mcpServers`.
+- `src/mcp/` — `find-tasks-server.ts`, a standalone MCP server (`@modelcontextprotocol/sdk`,
+  not the Claude Agent SDK) exposing only `find_tasks` over stdio, for an external MCP client
+  rather than an in-process agent run. Its own narrow `NestFactory.createApplicationContext`
+  (`ConfigModule` + `PrismaModule` + `TasksModule`) resolves the same `TaskService` `find_tasks`
+  in `meeting-tools.ts` calls, so both tools share one search implementation.
 - `src/hooks.ts` — `createMeetingHooks`, the Claude Agent SDK `HookCallback`s guarding every
   `ClaudeAgentService.ask` run (wired into `options.hooks` by `runClaudeAgent`, not by callers —
   see `src/claude-agent/` above): `preToolUseGuard` denies `upsert_task` calls with a too-short
