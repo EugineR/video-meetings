@@ -39,11 +39,12 @@ async function createMeeting(
   app: INestApplication<App>,
   token: string,
   title: string,
+  participants: string[] = [],
 ): Promise<string> {
   const response = await request(app.getHttpServer())
     .post('/meetings')
     .set('Authorization', `Bearer ${token}`)
-    .send({ title, date: '2026-09-01T10:00:00.000Z', participants: [] })
+    .send({ title, date: '2026-09-01T10:00:00.000Z', participants })
     .expect(201);
 
   return (response.body as MeetingResponseBody).id;
@@ -51,8 +52,9 @@ async function createMeeting(
 
 /**
  * Connects a real `@modelcontextprotocol/sdk` client to the standalone task-manager MCP server
- * (`find_tasks` + `upsert_task`) over stdio, spawning `find-tasks-server.ts` directly via
- * `ts-node` (transpile-only, purely so each test's spawn is fast — the server itself is still
+ * (`find_tasks` + `upsert_task` tools, plus a `gather_meeting_info` prompt) over stdio, spawning
+ * `find-tasks-server.ts` directly via `ts-node` (transpile-only, purely so each test's spawn is
+ * fast — the server itself is still
  * exercised as real compiled behavior, not a mock) rather than requiring a prior `pnpm build`;
  * same underlying mechanism as the `mcp:find-tasks:dev` script. `accessToken` becomes the
  * subprocess's `MCP_ACCESS_TOKEN` env var — the identity every tool call in that session is
@@ -245,6 +247,65 @@ describe('task-manager MCP server (e2e)', () => {
 
       expect(result.isError).toBe(true);
       expect(await prisma.task.count()).toBe(0);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('lists gather_meeting_info among the prompts it offers', async () => {
+    const token = await registerAndLogin(app, 'owner@example.com');
+
+    const client = await connectFindTasksClient(token);
+    try {
+      const { prompts } = await client.listPrompts();
+      expect(prompts.map((prompt) => prompt.name)).toContain(
+        'gather_meeting_info',
+      );
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("seeds a conversation with the caller's own meeting details", async () => {
+    const token = await registerAndLogin(app, 'owner@example.com');
+    const meetingId = await createMeeting(app, token, 'Sprint planning', [
+      'alice@example.com',
+      'bob@example.com',
+    ]);
+
+    const client = await connectFindTasksClient(token);
+    try {
+      const result = await client.getPrompt({
+        name: 'gather_meeting_info',
+        arguments: { meetingId },
+      });
+
+      expect(result.messages).toHaveLength(1);
+      const [message] = result.messages;
+      expect(message.role).toBe('user');
+      expect(message.content.type).toBe('text');
+      const text = (message.content as { text: string }).text;
+      expect(text).toContain('Sprint planning');
+      expect(text).toContain('alice@example.com, bob@example.com');
+      expect(text).toContain(meetingId);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('refuses to gather info for a meeting owned by someone else', async () => {
+    const ownerToken = await registerAndLogin(app, 'owner@example.com');
+    const otherToken = await registerAndLogin(app, 'other@example.com');
+    const meetingId = await createMeeting(app, ownerToken, 'Private planning');
+
+    const client = await connectFindTasksClient(otherToken);
+    try {
+      await expect(
+        client.getPrompt({
+          name: 'gather_meeting_info',
+          arguments: { meetingId },
+        }),
+      ).rejects.toThrow();
     } finally {
       await client.close();
     }

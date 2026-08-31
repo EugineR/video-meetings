@@ -13,9 +13,9 @@ From `apps/api/`, or `pnpm --filter api <script>` from the root: `pnpm dev` (wat
 `docker compose up -d postgres`) · `prisma:generate` (after editing `prisma/schema.prisma`; also
 runs on `pnpm install`) · `prisma:migrate` · `mcp:find-tasks` (runs the built standalone
 task-manager MCP server, `dist/src/mcp/find-tasks-server.js`, exposing `find_tasks`/`upsert_task`
-over stdio — needs `pnpm build`, `DATABASE_URL`/`JWT_SECRET`, and an `MCP_ACCESS_TOKEN` env var
-holding a valid user JWT first) · `mcp:find-tasks:dev` (the same server via `ts-node`, no build
-step).
+tools and a `gather_meeting_info` prompt over stdio — needs `pnpm build`,
+`DATABASE_URL`/`JWT_SECRET`, and an `MCP_ACCESS_TOKEN` env var holding a valid user JWT first) ·
+`mcp:find-tasks:dev` (the same server via `ts-node`, no build step).
 
 Run the narrowest scope — `pnpm test -- <name>.spec.ts`, `pnpm test -- -t "case"`,
 `pnpm test:e2e -- auth.e2e-spec.ts`. The pre-commit hook runs the full suite, so don't pre-run it.
@@ -56,15 +56,16 @@ MEETING_ALLOWED_TOOLS`), so it can look up/record `Task` rows and write the summ
   Wired into `MeetingSummaryService.summarize`'s `options.mcpServers`.
 - `src/mcp/` — `find-tasks-server.ts`, a standalone task-manager MCP server
   (`@modelcontextprotocol/sdk`, not the Claude Agent SDK) exposing `find_tasks`
-  (`readOnlyHint: true`) and `upsert_task` (`readOnlyHint: false`) over stdio, for an external MCP
-  client rather than an in-process agent run. Its own narrow `NestFactory.createApplicationContext`
-  (`ConfigModule` + `JwtModule` + `PrismaModule` + `TasksModule`, plus `MeetingsRepository`
-  registered directly) resolves the same `TaskService.search`/`upsert` `meeting-tools.ts`'s
-  `find_tasks`/`upsert_task` call, so both tool sets share one implementation — but unlike that
-  in-process tool set (which stays deliberately meeting-agnostic for search, and closes over
-  `meetingId` rather than taking it as input for writes, see Invariants), both tools here take a
-  required `meetingId` argument and are scoped to it, and are gated on the `MCP_ACCESS_TOKEN` env
-  var it's launched with actually owning that meeting — see Invariants.
+  (`readOnlyHint: true`) and `upsert_task` (`readOnlyHint: false`) tools plus a
+  `gather_meeting_info` prompt over stdio, for an external MCP client rather than an in-process
+  agent run. Its own narrow `NestFactory.createApplicationContext` (`ConfigModule` + `JwtModule` +
+  `PrismaModule` + `TasksModule`, plus `MeetingsRepository` registered directly) resolves the same
+  `TaskService.search`/`upsert` `meeting-tools.ts`'s `find_tasks`/`upsert_task` call, so both tool
+  sets share one implementation — but unlike that in-process tool set (which stays deliberately
+  meeting-agnostic for search, and closes over `meetingId` rather than taking it as input for
+  writes, see Invariants), both tools here take a required `meetingId` argument and are scoped to
+  it. All three (both tools and the prompt) are gated on the `MCP_ACCESS_TOKEN` env var it's
+  launched with actually owning that meeting — see Invariants.
 - `src/hooks.ts` — `createMeetingHooks`, the Claude Agent SDK `HookCallback`s guarding every
   `ClaudeAgentService.ask` run (wired into `options.hooks` by `runClaudeAgent`, not by callers —
   see `src/claude-agent/` above): `preToolUseGuard` denies `upsert_task` calls with a too-short
@@ -100,16 +101,20 @@ established; new modules follow it rather than inventing one.
 Rules no amount of reading the code makes obvious, each of which a change can break silently.
 The reasoning behind them is in `docs/architecture/api.md`.
 
-- **`find-tasks-server.ts`'s `find_tasks` and `upsert_task` must never call `TaskService.search`/
-  `upsert` without a `meetingId`, and never skip the `MeetingsRepository.findByIdAndOwner` check in
-  front of it.** `TaskService.search`'s meeting-agnostic default exists for `meeting-tools.ts`'s
-  in-process tool, which only a trusted backend job ever calls; `find-tasks-server.ts` is a
-  subprocess any MCP client can spawn, so without both the argument and the ownership check on
-  every tool `find_tasks` would let anyone with a token read every user's task titles across every
-  meeting in the database, and `upsert_task` would let them create or silently rewrite a task in a
-  meeting they don't own. `findByIdAndOwner` returns `null` for both "doesn't exist" and "exists but
-  isn't yours" — surface that as the same generic error message in both cases, never a distinct
-  "not authorized" one, or a caller can use the difference to enumerate meeting ids that exist.
+- **`find-tasks-server.ts`'s `find_tasks`, `upsert_task` and `gather_meeting_info` must never touch
+  `TaskService`/`MeetingsRepository` data for a `meetingId` without first passing the same
+  `MeetingsRepository.findByIdAndOwner` check.** `TaskService.search`'s meeting-agnostic default
+  exists for `meeting-tools.ts`'s in-process tool, which only a trusted backend job ever calls;
+  `find-tasks-server.ts` is a subprocess any MCP client can spawn, so skipping this check would let
+  anyone with a token read every user's task titles across every meeting in the database
+  (`find_tasks`), create or silently rewrite a task in a meeting they don't own (`upsert_task`), or
+  read another user's meeting title/date/participants (`gather_meeting_info`). `findByIdAndOwner`
+  returns `null` for both "doesn't exist" and "exists but isn't yours" — surface that as the same
+  generic error message in every case, never a distinct "not authorized" one, or a caller can use
+  the difference to enumerate meeting ids that exist. The two tools return that message as an
+  `isError: true` `CallToolResult`; `gather_meeting_info` instead throws it as a plain `Error` —
+  `GetPromptResult` (unlike `CallToolResult`) has no error field of its own, so a failed ownership
+  check there has no other way to reach the client except as a thrown JSON-RPC error.
 
 - **Any id that becomes a path must be a plain UUID** (`StorageService.assertValidId`) — the id
   arrives from a URL param or a JWT payload before any ownership check, and `..\..\Temp` would

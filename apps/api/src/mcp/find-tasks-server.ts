@@ -17,13 +17,14 @@ const SERVER_NAME = 'find-tasks';
 const SERVER_VERSION = '1.0.0';
 
 /**
- * DI context for this standalone process, scoped to exactly what `find_tasks`/`upsert_task` need
- * rather than the full `AppModule` — this process has no HTTP surface and never touches
- * transcription or the Claude Agent SDK. `JwtModule` (verify-only here — nothing in this process
- * signs a token) and `MeetingsRepository` (imported directly rather than the whole
+ * DI context for this standalone process, scoped to exactly what `find_tasks`/`upsert_task`/
+ * `gather_meeting_info` need rather than the full `AppModule` — this process has no HTTP surface
+ * and never touches transcription or the Claude Agent SDK. `JwtModule` (verify-only here — nothing
+ * in this process signs a token) and `MeetingsRepository` (imported directly rather than the whole
  * `MeetingsModule`, which would drag in Whisper/Claude Agent SDK dependencies this process has no
- * use for) back the ownership check both tools run before touching `TaskService` — see
- * `registerFindTasks`/`registerUpsertTask`'s own doc comments for why that's needed.
+ * use for) back the ownership check every tool and the prompt run before touching `TaskService` —
+ * see `registerFindTasks`/`registerUpsertTask`/`registerGatherMeetingInfoPrompt`'s own doc comments
+ * for why that's needed.
  */
 @Module({
   imports: [
@@ -155,6 +156,68 @@ function registerUpsertTask(
 }
 
 /**
+ * Registers the `gather_meeting_info` prompt: a reusable template, gated on the same `meetingId` +
+ * ownership check as the two tools above, that seeds a conversation with one meeting's own
+ * `title`/`date`/`participants` and instructs the assistant to interview the caller about what was
+ * discussed and use `find_tasks`/`upsert_task` (scoped to that same `meetingId`) to record what it
+ * learns — a template a client offers a human to kick off gathering a meeting's action items,
+ * rather than a tool an agent calls mid-task.
+ *
+ * Unlike `registerTool`'s `errorResult` (a normal `CallToolResult` with `isError: true`), the MCP
+ * `prompts/get` response (`GetPromptResult`) has no error field of its own — a failed ownership
+ * check here throws instead, which the SDK surfaces as a JSON-RPC error to the client. The message
+ * is still the same generic "not found" text `find_tasks`/`upsert_task` use for both "doesn't
+ * exist" and "isn't yours", for the same reason: never let a caller distinguish the two.
+ */
+function registerGatherMeetingInfoPrompt(
+  server: McpServer,
+  meetingsRepository: MeetingsRepository,
+  userId: string,
+) {
+  server.registerPrompt(
+    'gather_meeting_info',
+    {
+      title: 'Gather meeting info',
+      description:
+        "Seeds a conversation with a specific meeting's own title/date/participants and asks the assistant to interview the caller about it, recording any action items via find_tasks/upsert_task scoped to that meeting.",
+      argsSchema: {
+        meetingId: z
+          .string()
+          .uuid()
+          .describe('The meeting to gather information about'),
+      },
+    },
+    async ({ meetingId }) => {
+      const meeting = await meetingsRepository.findByIdAndOwner(
+        meetingId,
+        userId,
+      );
+      if (!meeting) {
+        throw new Error(`Meeting ${meetingId} not found.`);
+      }
+
+      const participants =
+        meeting.participants.length > 0
+          ? meeting.participants.join(', ')
+          : 'none recorded';
+
+      return {
+        description: `Gather information about "${meeting.title}"`,
+        messages: [
+          {
+            role: 'user' as const,
+            content: {
+              type: 'text' as const,
+              text: `We're gathering information about the meeting "${meeting.title}", held on ${meeting.date.toISOString()}, with participants: ${participants} (meetingId: ${meetingId}). Ask me what was discussed, what decisions were made, and what action items came up. Before creating a task with upsert_task, call find_tasks first to check whether a similar one already exists for this meeting, and always scope both calls to meetingId "${meetingId}".`,
+            },
+          },
+        ],
+      };
+    },
+  );
+}
+
+/**
  * Verifies the `MCP_ACCESS_TOKEN` env var this process was spawned with (the same JWT
  * `/auth/login` issues, checked with the same `JwtService`/`JWT_SECRET` `JwtAuthGuard` uses) and
  * returns the signed-in user's id. Runs once at startup, before `server.connect` ever attaches the
@@ -173,10 +236,11 @@ async function resolveUserId(
 }
 
 /**
- * Entry point for the standalone task-manager MCP server (`find_tasks` + `upsert_task`): an MCP
- * client spawns this file as a subprocess and talks to it over stdio (`StdioServerTransport`), so
- * `logger: false` here keeps Nest's own bootstrap logging off stdout — that stream carries nothing
- * but the MCP protocol once `server.connect` attaches the transport.
+ * Entry point for the standalone task-manager MCP server (`find_tasks` + `upsert_task` tools, plus
+ * a `gather_meeting_info` prompt): an MCP client spawns this file as a subprocess and talks to it
+ * over stdio (`StdioServerTransport`), so `logger: false` here keeps Nest's own bootstrap logging
+ * off stdout — that stream carries nothing but the MCP protocol once `server.connect` attaches the
+ * transport.
  */
 async function main() {
   const context = await NestFactory.createApplicationContext(
@@ -194,6 +258,7 @@ async function main() {
   const meetingsRepository = context.get(MeetingsRepository);
   registerFindTasks(server, taskService, meetingsRepository, userId);
   registerUpsertTask(server, taskService, meetingsRepository, userId);
+  registerGatherMeetingInfoPrompt(server, meetingsRepository, userId);
 
   await server.connect(new StdioServerTransport());
 
