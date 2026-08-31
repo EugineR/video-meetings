@@ -16,7 +16,7 @@ interface BrandHeaderProps {
  */
 export function BrandHeader({ children }: BrandHeaderProps) {
   return (
-    <header className="flex items-center justify-between border-b border-default-200 bg-background px-4 py-3 sm:px-6">
+    <header className="sticky top-0 z-20 flex items-center justify-between border-b border-default-200 bg-background px-4 py-3 sm:px-6">
       <Link className="flex items-center gap-2 rounded-lg py-1" href="/">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
           <VideoCameraIcon aria-hidden="true" className="size-5" />
