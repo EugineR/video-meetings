@@ -98,13 +98,13 @@ describe('TaskRepository', () => {
       ]);
     });
 
-    it('computes the title-similarity expression only once per row', async () => {
+    it('computes the title-similarity expression only once per row, using word_similarity', async () => {
       queryRaw.mockResolvedValue([task]);
 
       await repository.search('roadmap doc');
 
       const sql = queryRaw.mock.calls[0][0];
-      expect(sql.text.match(/similarity\("title"/g)?.length).toBe(1);
+      expect(sql.text.match(/word_similarity\(/g)?.length).toBe(1);
     });
   });
 
