@@ -7,6 +7,7 @@ describe('TaskRepository', () => {
     id: 'task-1',
     title: 'Draft the roadmap doc',
     sourceMeetingId: 'meeting-1',
+    ownerId: 'owner-1',
     status: TaskStatus.OPEN,
     createdAt: new Date(),
   };
@@ -71,6 +72,32 @@ describe('TaskRepository', () => {
       expect(sql.values).toEqual(['roadmap doc', 'meeting-1', 0.3, 1]);
     });
 
+    it('filters matches to the given owner when ownerId is provided', async () => {
+      queryRaw.mockResolvedValue([task]);
+
+      await repository.search('roadmap doc', 1, undefined, 'owner-1');
+
+      const sql = queryRaw.mock.calls[0][0];
+      expect(sql.text).toContain('WHERE "ownerId"');
+      expect(sql.values).toEqual(['roadmap doc', 'owner-1', 0.3, 1]);
+    });
+
+    it('combines sourceMeetingId and ownerId with AND when both are provided', async () => {
+      queryRaw.mockResolvedValue([task]);
+
+      await repository.search('roadmap doc', 1, 'meeting-1', 'owner-1');
+
+      const sql = queryRaw.mock.calls[0][0];
+      expect(sql.text).toContain('"sourceMeetingId" = $2 AND "ownerId" = $3');
+      expect(sql.values).toEqual([
+        'roadmap doc',
+        'meeting-1',
+        'owner-1',
+        0.3,
+        1,
+      ]);
+    });
+
     it('computes the title-similarity expression only once per row', async () => {
       queryRaw.mockResolvedValue([task]);
 
@@ -125,6 +152,17 @@ describe('TaskRepository', () => {
         orderBy: { createdAt: 'desc' },
       });
       expect(result).toEqual([task]);
+    });
+
+    it('filters to the given owner when ownerId is provided', async () => {
+      findMany.mockResolvedValue([task]);
+
+      await repository.findByStatus(TaskStatus.OPEN, 'owner-1');
+
+      expect(findMany).toHaveBeenCalledWith({
+        where: { status: TaskStatus.OPEN, ownerId: 'owner-1' },
+        orderBy: { createdAt: 'desc' },
+      });
     });
   });
 

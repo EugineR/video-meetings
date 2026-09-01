@@ -24,6 +24,7 @@ describe('createMeetingTools', () => {
     id: 'task-1',
     title: 'Draft the roadmap doc',
     sourceMeetingId: meetingId,
+    ownerId: null,
     status: TaskStatus.OPEN,
     createdAt: new Date(),
   };

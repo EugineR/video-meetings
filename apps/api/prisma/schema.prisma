@@ -7,14 +7,15 @@ datasource db {
 }
 
 model User {
-  id        String      @id @default(uuid())
-  email     String      @unique
-  password  String
-  name      String?
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  meetings  Meeting[]
-  avatar    UserAvatar?
+  id         String      @id @default(uuid())
+  email      String      @unique
+  password   String
+  name       String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  meetings   Meeting[]
+  avatar     UserAvatar?
+  ownedTasks Task[]
 
   @@map("users")
 }
@@ -101,12 +102,19 @@ enum TaskStatus {
  * it. `TaskService.upsert` is the only writer: it de-duplicates by title similarity (Postgres
  * `pg_trgm`, see the `add_task` migration) instead of always inserting, so the same recurring
  * action item doesn't pile up as separate rows across meetings.
+ * `ownerId` is nullable: it's only ever set by `TaskTools` (`/mcp`'s `upsert_task`, from the
+ * caller's `McpRequester` — never from a tool argument), not by `meeting-tools.ts`'s in-process
+ * `upsert_task` (the background summarization agent has no authenticated caller to attribute a task
+ * to). A `null` owner is therefore invisible to every owner-scoped `/mcp` read (`find_tasks`,
+ * `tasks://open`, `task://{id}`) — see `apps/api/CLAUDE.md`'s Invariants.
  */
 model Task {
   id              String     @id @default(uuid())
   title           String
   sourceMeetingId String
   sourceMeeting   Meeting    @relation(fields: [sourceMeetingId], references: [id], onDelete: Cascade)
+  ownerId         String?
+  owner           User?      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   status          TaskStatus @default(OPEN)
   createdAt       DateTime   @default(now())
 

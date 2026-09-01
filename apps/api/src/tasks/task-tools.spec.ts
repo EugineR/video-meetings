@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type {
   CallToolResult,
@@ -6,6 +7,8 @@ import type {
 import { Task, TaskStatus } from '@prisma/client';
 import { TaskTools } from './task-tools';
 import { TaskService } from './tasks.service';
+
+const REQUESTER = { userId: 'requester-1' };
 
 interface ToolConfig {
   annotations?: { readOnlyHint?: boolean };
@@ -30,6 +33,7 @@ describe('TaskTools', () => {
     id: 'task-1',
     title: 'Draft the roadmap doc',
     sourceMeetingId: 'meeting-1',
+    ownerId: REQUESTER.userId,
     status: TaskStatus.OPEN,
     createdAt: new Date(),
   };
@@ -43,6 +47,7 @@ describe('TaskTools', () => {
     unknown,
     [string, unknown, ResourceConfig, ResourceHandler]
   >;
+  let debugSpy: jest.SpyInstance;
 
   beforeEach(() => {
     search = jest.fn();
@@ -54,6 +59,7 @@ describe('TaskTools', () => {
       unknown,
       [string, unknown, ResourceConfig, ResourceHandler]
     >();
+    debugSpy = jest.spyOn(Logger.prototype, 'debug').mockImplementation();
 
     const taskService = {
       search,
@@ -65,7 +71,11 @@ describe('TaskTools', () => {
     const server = { registerTool, registerResource } as unknown as McpServer;
 
     const taskTools = new TaskTools(taskService);
-    taskTools.registerOn(server);
+    taskTools.registerOn(server, REQUESTER);
+  });
+
+  afterEach(() => {
+    debugSpy.mockRestore();
   });
 
   function toolCall(name: string): {
@@ -103,7 +113,7 @@ describe('TaskTools', () => {
       });
     });
 
-    it('delegates to TaskService.search, meeting-agnostic when meetingId is omitted', async () => {
+    it('delegates to TaskService.search, meeting-agnostic when meetingId is omitted, always scoped to the requester', async () => {
       search.mockResolvedValue([task]);
 
       const result = await toolCall('find_tasks').handler(
@@ -111,13 +121,17 @@ describe('TaskTools', () => {
         undefined,
       );
 
-      expect(search).toHaveBeenCalledWith('roadmap doc', undefined);
+      expect(search).toHaveBeenCalledWith(
+        'roadmap doc',
+        undefined,
+        REQUESTER.userId,
+      );
       expect(result).toEqual({
         content: [{ type: 'text', text: JSON.stringify([task]) }],
       });
     });
 
-    it('scopes the search to meetingId when given', async () => {
+    it('scopes the search to meetingId when given, in addition to the requester', async () => {
       search.mockResolvedValue([task]);
 
       await toolCall('find_tasks').handler(
@@ -125,7 +139,21 @@ describe('TaskTools', () => {
         undefined,
       );
 
-      expect(search).toHaveBeenCalledWith('roadmap doc', 'meeting-1');
+      expect(search).toHaveBeenCalledWith(
+        'roadmap doc',
+        'meeting-1',
+        REQUESTER.userId,
+      );
+    });
+
+    it('reaches the requester passed to registerOn', async () => {
+      search.mockResolvedValue([]);
+
+      await toolCall('find_tasks').handler({ query: 'roadmap doc' }, undefined);
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining(REQUESTER.userId),
+      );
     });
   });
 
@@ -136,7 +164,7 @@ describe('TaskTools', () => {
       });
     });
 
-    it('delegates to TaskService.upsert with the given meetingId as sourceMeetingId', async () => {
+    it('delegates to TaskService.upsert with the given meetingId as sourceMeetingId and ownerId from the requester', async () => {
       upsert.mockResolvedValue(task);
 
       const result = await toolCall('upsert_task').handler(
@@ -148,10 +176,44 @@ describe('TaskTools', () => {
         title: 'Draft the roadmap doc',
         status: undefined,
         sourceMeetingId: 'meeting-1',
+        ownerId: REQUESTER.userId,
       });
       expect(result).toEqual({
         content: [{ type: 'text', text: JSON.stringify(task) }],
       });
+    });
+
+    it('ignores any ownerId-shaped argument and always uses the requester', async () => {
+      upsert.mockResolvedValue(task);
+
+      await toolCall('upsert_task').handler(
+        {
+          meetingId: 'meeting-1',
+          title: 'Draft the roadmap doc',
+          ownerId: 'someone-else',
+        },
+        undefined,
+      );
+
+      expect(upsert).toHaveBeenCalledWith({
+        title: 'Draft the roadmap doc',
+        status: undefined,
+        sourceMeetingId: 'meeting-1',
+        ownerId: REQUESTER.userId,
+      });
+    });
+
+    it('reaches the requester passed to registerOn', async () => {
+      upsert.mockResolvedValue(task);
+
+      await toolCall('upsert_task').handler(
+        { meetingId: 'meeting-1', title: 'Draft the roadmap doc' },
+        undefined,
+      );
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining(REQUESTER.userId),
+      );
     });
   });
 
@@ -168,7 +230,7 @@ describe('TaskTools', () => {
         undefined,
       );
 
-      expect(findOpenTasks).toHaveBeenCalledWith();
+      expect(findOpenTasks).toHaveBeenCalledWith(REQUESTER.userId);
       expect(result).toEqual({
         contents: [
           {
@@ -178,6 +240,19 @@ describe('TaskTools', () => {
           },
         ],
       });
+    });
+
+    it('reaches the requester passed to registerOn', async () => {
+      findOpenTasks.mockResolvedValue([]);
+
+      await resourceCall('tasks-open').handler(
+        new URL('tasks://open'),
+        undefined,
+      );
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining(REQUESTER.userId),
+      );
     });
   });
 
@@ -220,6 +295,32 @@ describe('TaskTools', () => {
           undefined,
         ),
       ).rejects.toThrow('Task missing not found.');
+    });
+
+    it('throws Forbidden when the task belongs to a different owner', async () => {
+      findById.mockResolvedValue({ ...task, ownerId: 'someone-else' });
+
+      await expect(
+        resourceCall('task').handler(
+          new URL('task://task-1'),
+          { id: 'task-1' },
+          undefined,
+        ),
+      ).rejects.toThrow(/Forbidden/);
+    });
+
+    it('reaches the requester passed to registerOn', async () => {
+      findById.mockResolvedValue(task);
+
+      await resourceCall('task').handler(
+        new URL('task://task-1'),
+        { id: 'task-1' },
+        undefined,
+      );
+
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining(REQUESTER.userId),
+      );
     });
   });
 });
