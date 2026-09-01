@@ -6,6 +6,7 @@ export interface UpsertTaskInput {
   title: string;
   sourceMeetingId: string;
   status?: TaskStatus;
+  ownerId?: string;
 }
 
 @Injectable()
@@ -24,14 +25,26 @@ export class TaskService {
   /**
    * Tasks whose title is textually similar to `query`, most similar first.
    *
-   * `sourceMeetingId`, when given, restricts matches to that one meeting's own tasks — used by
-   * `find-tasks-server.ts`'s standalone `find_tasks` tool, which (unlike `meeting-tools.ts`'s
-   * in-process one) is reachable by an external MCP client and must never search across every
-   * user's tasks. Left unset, `search` stays meeting-agnostic, which is what `meeting-tools.ts`'s
-   * `find_tasks` deliberately relies on (see its own doc comment for why).
+   * `sourceMeetingId`, when given, restricts matches to that one meeting's own tasks. `ownerId`,
+   * when given, additionally restricts matches to that owner's own tasks — `task-tools.ts`'s
+   * `find_tasks` (the `/mcp` HTTP endpoint) always passes the caller's `McpRequester.userId` here,
+   * so a caller can only ever find their own tasks; the meeting id in its arguments narrows *what*
+   * to search, never *permission to see* — that's `ownerId`'s job. Left unset, `search` stays both
+   * meeting- and owner-agnostic, which is what `meeting-tools.ts`'s in-process `find_tasks`
+   * deliberately relies on (see its own doc comment for why) — that tool has no authenticated caller
+   * to scope by.
    */
-  search(query: string, sourceMeetingId?: string): Promise<Task[]> {
-    return this.tasksRepository.search(query, undefined, sourceMeetingId);
+  search(
+    query: string,
+    sourceMeetingId?: string,
+    ownerId?: string,
+  ): Promise<Task[]> {
+    return this.tasksRepository.search(
+      query,
+      undefined,
+      sourceMeetingId,
+      ownerId,
+    );
   }
 
   /**
@@ -48,7 +61,14 @@ export class TaskService {
    * meeting's transcript). Matching across meetings here would let a crafted/coincidental title in
    * one meeting silently rewrite another meeting's task, with no meeting id involved at all — a
    * caller only ever needs `search` (read-only) to notice a similar task exists elsewhere; `upsert`
-   * must never mutate a row it doesn't own.
+   * must never mutate a row it doesn't own. `input.ownerId`, when given, additionally scopes the
+   * dedup lookup — `task-tools.ts`'s `upsert_task` (`/mcp`) always sets it from the caller's
+   * `McpRequester.userId`, never from a tool argument, so a title collision alone can never let one
+   * caller's write match and silently overwrite a different caller's task, same reasoning as the
+   * meeting scoping above. Also written onto a freshly created row (`create`, below) — never onto an
+   * update, since an update only ever matches a row the dedup lookup already confirmed has the same
+   * `ownerId`. `meeting-tools.ts`'s in-process `upsert_task` never sets it (no authenticated caller
+   * to attribute a task to), leaving those tasks' `ownerId` `null`.
    *
    * Chained per `sourceMeetingId` via `upsertQueues` rather than run directly: the Claude Agent SDK
    * can dispatch several tool calls from one model turn concurrently (its own docs: "PostToolUse
@@ -75,12 +95,21 @@ export class TaskService {
     return thisUpsert;
   }
 
-  /** Every `OPEN` task, most recently created first — backs the `tasks://open` MCP resource. */
-  findOpenTasks(): Promise<Task[]> {
-    return this.tasksRepository.findByStatus(TaskStatus.OPEN);
+  /**
+   * Every `OPEN` task, most recently created first — backs the `tasks://open` MCP resource.
+   * `ownerId`, when given, restricts this to that owner's own tasks — `task-tools.ts` always passes
+   * the caller's `McpRequester.userId` here.
+   */
+  findOpenTasks(ownerId?: string): Promise<Task[]> {
+    return this.tasksRepository.findByStatus(TaskStatus.OPEN, ownerId);
   }
 
-  /** A single task by id, or `null` if it doesn't exist — backs the `task://{id}` MCP resource. */
+  /**
+   * A single task by id, or `null` if it doesn't exist — backs the `task://{id}` MCP resource.
+   * Unscoped by owner: `task-tools.ts` checks the returned task's `ownerId` against the caller
+   * itself rather than folding that into this query, so a foreign task and a missing one stay
+   * distinguishable at the call site (see its own doc comment).
+   */
   findById(id: string): Promise<Task | null> {
     return this.tasksRepository.findById(id);
   }
@@ -90,6 +119,7 @@ export class TaskService {
       input.title,
       1,
       input.sourceMeetingId,
+      input.ownerId,
     );
     if (bestMatch) {
       return this.tasksRepository.update(bestMatch.id, {

@@ -1,7 +1,18 @@
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { MCP_TOOL_REGISTRARS, McpToolRegistrar } from './mcp-tool-registrar';
+import {
+  MCP_TOOL_REGISTRARS,
+  McpRequester,
+  McpToolRegistrar,
+} from './mcp-tool-registrar';
+
+/**
+ * Stands in for `onModuleInit`'s fail-fast registrar walk, which happens at boot rather than for
+ * any real request — that throwaway server is never connected to a transport, so this identity is
+ * never actually seen by a handler.
+ */
+const BOOT_CHECK_REQUESTER: McpRequester = { userId: '(boot check)' };
 
 const SERVER_NAME = 'video-meetings';
 const SERVER_VERSION = '1.0.0';
@@ -14,8 +25,13 @@ const SERVER_VERSION = '1.0.0';
  * synchronously) at boot rather than on the first `/mcp` request — that throwaway server is never
  * connected to a transport or used to serve traffic.
  *
- * `createTransport` builds a **second, real** `McpServer`/`StreamableHTTPServerTransport` pair on
- * **every call** — not a single instance reused across requests. In stateless mode
+ * `createTransport` takes the `McpRequester` `McpController` read off `req.requester`
+ * (`McpAuthGuard`) and passes it straight into `buildServer`, which passes it to every registrar's
+ * `registerOn` — this is what lets each request's tool/resource handlers see who is calling. Safe
+ * to close over per-call like this only because `createTransport` builds a **second, real**
+ * `McpServer`/`StreamableHTTPServerTransport` pair on **every call** — not a single instance reused
+ * across requests, so one request's requester can never leak into another's handlers. In stateless
+ * mode
  * (`sessionIdGenerator: undefined`), the SDK's own transport refuses a second `handleRequest` call:
  * "Stateless transport cannot be reused across requests. Create a new transport per request." —
  * confirmed by hitting that error directly against an earlier, single-shared-transport version of
@@ -36,11 +52,13 @@ export class McpService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    this.buildServer();
+    this.buildServer(BOOT_CHECK_REQUESTER);
   }
 
-  async createTransport(): Promise<StreamableHTTPServerTransport> {
-    const server = this.buildServer();
+  async createTransport(
+    requester: McpRequester,
+  ): Promise<StreamableHTTPServerTransport> {
+    const server = this.buildServer(requester);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
@@ -49,13 +67,13 @@ export class McpService implements OnModuleInit {
     return transport;
   }
 
-  private buildServer(): McpServer {
+  private buildServer(requester: McpRequester): McpServer {
     const server = new McpServer({
       name: SERVER_NAME,
       version: SERVER_VERSION,
     });
     for (const registrar of this.registrars) {
-      registrar.registerOn(server);
+      registrar.registerOn(server, requester);
     }
     return server;
   }

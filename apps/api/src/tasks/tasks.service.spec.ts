@@ -12,6 +12,7 @@ describe('TaskService', () => {
     id: 'task-1',
     title: 'Draft the roadmap doc',
     sourceMeetingId: 'meeting-1',
+    ownerId: 'owner-1',
     status: TaskStatus.OPEN,
     createdAt: new Date(),
   };
@@ -42,12 +43,17 @@ describe('TaskService', () => {
   });
 
   describe('search', () => {
-    it('delegates to the repository, meeting-agnostic by default', async () => {
+    it('delegates to the repository, meeting- and owner-agnostic by default', async () => {
       search.mockResolvedValue([existingTask]);
 
       const result = await service.search('roadmap doc');
 
-      expect(search).toHaveBeenCalledWith('roadmap doc', undefined, undefined);
+      expect(search).toHaveBeenCalledWith(
+        'roadmap doc',
+        undefined,
+        undefined,
+        undefined,
+      );
       expect(result).toEqual([existingTask]);
     });
 
@@ -60,6 +66,21 @@ describe('TaskService', () => {
         'roadmap doc',
         undefined,
         'meeting-1',
+        undefined,
+      );
+      expect(result).toEqual([existingTask]);
+    });
+
+    it('scopes the search to ownerId when given', async () => {
+      search.mockResolvedValue([existingTask]);
+
+      const result = await service.search('roadmap doc', undefined, 'owner-1');
+
+      expect(search).toHaveBeenCalledWith(
+        'roadmap doc',
+        undefined,
+        undefined,
+        'owner-1',
       );
       expect(result).toEqual([existingTask]);
     });
@@ -79,6 +100,7 @@ describe('TaskService', () => {
         'Draft the roadmap doc',
         1,
         'meeting-1',
+        undefined,
       );
       expect(create).toHaveBeenCalledWith({
         title: 'Draft the roadmap doc',
@@ -86,6 +108,29 @@ describe('TaskService', () => {
       });
       expect(update).not.toHaveBeenCalled();
       expect(result).toBe(existingTask);
+    });
+
+    it('writes ownerId from input.ownerId onto a freshly created task', async () => {
+      search.mockResolvedValue([]);
+      create.mockResolvedValue({ ...existingTask, ownerId: 'owner-1' });
+
+      await service.upsert({
+        title: 'Draft the roadmap doc',
+        sourceMeetingId: 'meeting-1',
+        ownerId: 'owner-1',
+      });
+
+      expect(search).toHaveBeenCalledWith(
+        'Draft the roadmap doc',
+        1,
+        'meeting-1',
+        'owner-1',
+      );
+      expect(create).toHaveBeenCalledWith({
+        title: 'Draft the roadmap doc',
+        sourceMeetingId: 'meeting-1',
+        ownerId: 'owner-1',
+      });
     });
 
     it('updates the best-matching existing task for the same meeting instead of creating a duplicate', async () => {
@@ -103,6 +148,7 @@ describe('TaskService', () => {
         'Draft the roadmap document',
         1,
         existingTask.sourceMeetingId,
+        undefined,
       );
       expect(update).toHaveBeenCalledWith(existingTask.id, {
         title: 'Draft the roadmap document',
@@ -145,11 +191,33 @@ describe('TaskService', () => {
         'Draft the roadmap doc',
         1,
         'meeting-2',
+        undefined,
       );
       expect(create).toHaveBeenCalledWith({
         title: 'Draft the roadmap doc',
         sourceMeetingId: 'meeting-2',
       });
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it('scopes the dedup search to ownerId, so a similarly-titled task owned by someone else never gets matched/mutated', async () => {
+      // The repository itself enforces this filter (see tasks.repository.spec.ts); this test
+      // asserts TaskService actually passes the owner id through rather than dropping it.
+      search.mockResolvedValue([]);
+      create.mockResolvedValue({ ...existingTask, ownerId: 'owner-2' });
+
+      await service.upsert({
+        title: 'Draft the roadmap doc',
+        sourceMeetingId: 'meeting-1',
+        ownerId: 'owner-2',
+      });
+
+      expect(search).toHaveBeenCalledWith(
+        'Draft the roadmap doc',
+        1,
+        'meeting-1',
+        'owner-2',
+      );
       expect(update).not.toHaveBeenCalled();
     });
 
@@ -225,7 +293,16 @@ describe('TaskService', () => {
 
       const result = await service.findOpenTasks();
 
-      expect(findByStatus).toHaveBeenCalledWith(TaskStatus.OPEN);
+      expect(findByStatus).toHaveBeenCalledWith(TaskStatus.OPEN, undefined);
+      expect(result).toEqual([existingTask]);
+    });
+
+    it('scopes to the given owner when ownerId is provided', async () => {
+      findByStatus.mockResolvedValue([existingTask]);
+
+      const result = await service.findOpenTasks('owner-1');
+
+      expect(findByStatus).toHaveBeenCalledWith(TaskStatus.OPEN, 'owner-1');
       expect(result).toEqual([existingTask]);
     });
   });

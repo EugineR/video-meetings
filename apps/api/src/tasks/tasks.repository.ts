@@ -13,6 +13,7 @@ export interface CreateTaskInput {
   title: string;
   sourceMeetingId: string;
   status?: TaskStatus;
+  ownerId?: string;
 }
 
 export interface UpdateTaskInput {
@@ -32,16 +33,37 @@ export class TaskRepository {
    * `TaskService.upsert`'s dedup lookup, so it only ever updates a task that already belongs to the
    * meeting it's writing for (see `TaskService.upsert`'s own doc comment for why). Omitted for the
    * general-purpose lookup `TaskService.search` exposes, which is intentionally meeting-agnostic.
+   *
+   * `ownerId`, when given, additionally restricts matches to that owner's own tasks — used by
+   * `/mcp`'s `find_tasks`/`upsert_task` (via `TaskService`), never by `meeting-tools.ts`'s in-process
+   * `find_tasks` (see `TaskService.search`'s own doc comment for why it stays unscoped there).
    */
-  search(query: string, limit = 10, sourceMeetingId?: string): Promise<Task[]> {
+  search(
+    query: string,
+    limit = 10,
+    sourceMeetingId?: string,
+    ownerId?: string,
+  ): Promise<Task[]> {
+    const conditions: Prisma.Sql[] = [];
+    if (sourceMeetingId) {
+      conditions.push(Prisma.sql`"sourceMeetingId" = ${sourceMeetingId}`);
+    }
+    if (ownerId) {
+      conditions.push(Prisma.sql`"ownerId" = ${ownerId}`);
+    }
+    const whereClause =
+      conditions.length > 0
+        ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
+        : Prisma.empty;
+
     return this.prisma.$queryRaw<Task[]>(
       Prisma.sql`
-        SELECT "id", "title", "sourceMeetingId", "status", "createdAt"
+        SELECT "id", "title", "sourceMeetingId", "ownerId", "status", "createdAt"
         FROM (
-          SELECT "id", "title", "sourceMeetingId", "status", "createdAt",
+          SELECT "id", "title", "sourceMeetingId", "ownerId", "status", "createdAt",
                  similarity("title", ${query}) AS "titleSimilarity"
           FROM "tasks"
-          ${sourceMeetingId ? Prisma.sql`WHERE "sourceMeetingId" = ${sourceMeetingId}` : Prisma.empty}
+          ${whereClause}
         ) "scored"
         WHERE "titleSimilarity" > ${MIN_TITLE_SIMILARITY}
         ORDER BY "titleSimilarity" DESC
@@ -58,10 +80,13 @@ export class TaskRepository {
     return this.prisma.task.update({ where: { id }, data });
   }
 
-  /** All tasks with the given `status`, most recently created first. */
-  findByStatus(status: TaskStatus): Promise<Task[]> {
+  /**
+   * All tasks with the given `status`, most recently created first. `ownerId`, when given,
+   * restricts this to that owner's own tasks — used by `/mcp`'s `tasks://open` resource.
+   */
+  findByStatus(status: TaskStatus, ownerId?: string): Promise<Task[]> {
     return this.prisma.task.findMany({
-      where: { status },
+      where: { status, ...(ownerId ? { ownerId } : {}) },
       orderBy: { createdAt: 'desc' },
     });
   }
