@@ -20,6 +20,7 @@ interface AnyMeetingTool {
 
 describe('createMeetingTools', () => {
   const meetingId = 'meeting-1';
+  const ownerId = 'owner-1';
   const task: Task = {
     id: 'task-1',
     title: 'Draft the roadmap doc',
@@ -44,6 +45,7 @@ describe('createMeetingTools', () => {
 
     tools = await createMeetingTools(
       meetingId,
+      ownerId,
       taskService,
       meetingSummaryService,
     );
@@ -80,7 +82,7 @@ describe('createMeetingTools', () => {
   });
 
   describe('upsert_task', () => {
-    it('does not accept a sourceMeetingId in its input schema — always uses the meetingId this tool set was created for', async () => {
+    it('does not accept a sourceMeetingId or ownerId in its input schema — always uses the meetingId/ownerId this tool set was created for', async () => {
       upsert.mockResolvedValue(task);
 
       const result = await toolByName('upsert_task').handler(
@@ -88,6 +90,7 @@ describe('createMeetingTools', () => {
           title: 'Draft the roadmap doc',
           status: TaskStatus.DONE,
           sourceMeetingId: 'a-different-meeting',
+          ownerId: 'a-different-owner',
         },
         undefined,
       );
@@ -96,6 +99,7 @@ describe('createMeetingTools', () => {
         title: 'Draft the roadmap doc',
         status: TaskStatus.DONE,
         sourceMeetingId: meetingId,
+        ownerId,
       });
       expect(result).toEqual({
         content: [{ type: 'text', text: JSON.stringify(task) }],

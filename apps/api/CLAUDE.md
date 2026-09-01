@@ -136,8 +136,10 @@ Rules no amount of reading the code makes obvious, each of which a change can br
 The reasoning behind them is in `docs/architecture/api.md`.
 
 - **`McpModule`'s `/mcp` HTTP endpoint is authenticated (`McpAuthGuard`) and `TaskTools` enforces
-  real ownership on top of it — but only for `Task`, and only via a nullable `ownerId` column
-  that most existing rows don't have.** `McpAuthGuard` rejects a missing/invalid Bearer JWT with
+  real ownership on top of it — but only for `Task`, and only via a nullable `ownerId` column.**
+  `ownerId` stays nullable in the schema purely for pre-existing rows written before every write
+  path attributed one (see below) — no current code path creates a new `null`-`ownerId` row.
+  `McpAuthGuard` rejects a missing/invalid Bearer JWT with
   401 and sets `req.requester = { userId }` from the token's `sub` claim; `McpController` passes it
   into `McpService.createTransport(requester)`, which passes it to every registrar's
   `registerOn(server, requester)` (`mcp-tool-registrar.ts`). `TaskTools` (`task-tools.ts`) uses it as
@@ -152,10 +154,18 @@ The reasoning behind them is in `docs/architecture/api.md`.
   `requester.userId`. `meetingId` (`find_tasks`/`upsert_task`'s own argument) narrows _what_ to
   search for; `requester.userId` is what decides _permission to see it_ — the two are deliberately
   never the same check (`task-tools.ts`'s own doc comment states this explicitly). A task created by
-  `meeting-tools.ts`'s in-process `upsert_task` (the background summarization agent, no
-  authenticated caller to attribute it to) gets `ownerId: null` and is therefore invisible to every
-  owner-scoped `/mcp` read until some future change adopts it — a known, deliberate consequence, not
-  a bug. The earlier standalone `find-tasks-server.ts` enforced ownership differently (an
+  `meeting-tools.ts`'s in-process `upsert_task` (the background summarization agent, which has no
+  authenticated caller of its own) is still attributed to a real owner: `SummaryReconciliationService`
+  (`meetings/summary-reconciliation.service.ts`) resolves the target meeting's `ownerId` via
+  `MeetingsRepository.findById` — an unscoped lookup, since there's no caller identity to check it
+  against — and passes it into `MeetingSummaryService.generateForMeeting`, which threads it down
+  through `summarize`/`createMeetingToolsServer` into `meeting-tools.ts`, closed over the same way
+  `meetingId` is (never a tool argument the model could fill in). That `ownerId` is what
+  `upsert_task` writes onto every task it creates or matches, making it visible to that owner's own
+  `/mcp` reads once they authenticate — this only resolves once the meeting still exists at
+  reconciliation time; a meeting deleted before then is skipped entirely (nothing left to summarize,
+  since its recordings cascade-deleted with it). The earlier standalone `find-tasks-server.ts`
+  enforced ownership differently (an
   `MCP_ACCESS_TOKEN` env var checked against `MeetingsRepository.findByIdAndOwner`, i.e. via the
   _meeting's_ owner) — this is a different, `Task`-level `ownerId` instead, set once at creation and
   never re-derived from the meeting. If a second domain's `McpToolRegistrar` is ever added, it needs

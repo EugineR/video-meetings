@@ -28,6 +28,7 @@ function textReply(text: string): ClaudeAgentReply {
 
 describe('MeetingSummaryService', () => {
   const meetingId = 'meeting-1';
+  const ownerId = 'owner-1';
   let runClaudeAgent: jest.Mock<
     ReturnType<ClaudeAgentRunner>,
     [string, Options]
@@ -55,6 +56,7 @@ describe('MeetingSummaryService', () => {
 
       const result = await service.summarize(
         meetingId,
+        ownerId,
         'Priya: I will draft the roadmap doc.',
       );
 
@@ -85,7 +87,7 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      const result = await service.summarize(meetingId, 'transcript');
+      const result = await service.summarize(meetingId, ownerId, 'transcript');
 
       expect(result).toEqual(validReplyPayload);
     });
@@ -100,7 +102,7 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      const result = await service.summarize(meetingId, 'transcript');
+      const result = await service.summarize(meetingId, ownerId, 'transcript');
 
       expect(result.summaryText).toBe('The team agreed on the Q3 roadmap.');
     });
@@ -120,6 +122,7 @@ describe('MeetingSummaryService', () => {
 
       await service.summarize(
         meetingId,
+        ownerId,
         'the second segment transcript',
         previous,
       );
@@ -139,7 +142,7 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      await service.summarize(meetingId, 'transcript');
+      await service.summarize(meetingId, ownerId, 'transcript');
 
       const [prompt] = runClaudeAgent.mock.calls[0];
       expect(prompt).not.toContain('already generated');
@@ -156,9 +159,9 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      await expect(service.summarize(meetingId, 'transcript')).rejects.toThrow(
-        'Failed to parse meeting summary response',
-      );
+      await expect(
+        service.summarize(meetingId, ownerId, 'transcript'),
+      ).rejects.toThrow('Failed to parse meeting summary response');
     });
 
     it('throws a descriptive error when a required field is missing', async () => {
@@ -173,9 +176,9 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      await expect(service.summarize(meetingId, 'transcript')).rejects.toThrow(
-        '"actionItems" is missing or not an array',
-      );
+      await expect(
+        service.summarize(meetingId, ownerId, 'transcript'),
+      ).rejects.toThrow('"actionItems" is missing or not an array');
     });
 
     it('retries and recovers once a later attempt returns a valid reply', async () => {
@@ -188,7 +191,7 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      const result = await service.summarize(meetingId, 'transcript');
+      const result = await service.summarize(meetingId, ownerId, 'transcript');
 
       expect(result).toEqual(validReplyPayload);
       expect(runClaudeAgent).toHaveBeenCalledTimes(2);
@@ -202,9 +205,9 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      await expect(service.summarize(meetingId, 'transcript')).rejects.toThrow(
-        'Failed to parse meeting summary response',
-      );
+      await expect(
+        service.summarize(meetingId, ownerId, 'transcript'),
+      ).rejects.toThrow('Failed to parse meeting summary response');
       expect(runClaudeAgent).toHaveBeenCalledTimes(3);
     });
   });
@@ -239,6 +242,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );
@@ -266,6 +270,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         false,
       );
@@ -297,6 +302,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [
           { id: 'rec-1', transcriptText: 'first recording transcript' },
           { id: 'rec-2', transcriptText: 'second recording transcript' },
@@ -336,6 +342,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );
@@ -355,6 +362,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );
@@ -380,6 +388,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [
           { id: 'rec-1', transcriptText: 'first recording transcript' },
           { id: 'rec-2', transcriptText: 'second recording transcript' },
@@ -403,6 +412,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );
@@ -418,7 +428,7 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      await service.generateForMeeting(meetingId, [], false);
+      await service.generateForMeeting(meetingId, ownerId, [], false);
 
       expect(startProcessing).not.toHaveBeenCalled();
       expect(runClaudeAgent).not.toHaveBeenCalled();
@@ -433,7 +443,7 @@ describe('MeetingSummaryService', () => {
         taskService,
       );
 
-      await service.generateForMeeting(meetingId, [], true);
+      await service.generateForMeeting(meetingId, ownerId, [], true);
 
       expect(startProcessing).not.toHaveBeenCalled();
       expect(runClaudeAgent).not.toHaveBeenCalled();
@@ -453,6 +463,7 @@ describe('MeetingSummaryService', () => {
       await expect(
         service.generateForMeeting(
           meetingId,
+          ownerId,
           [{ id: 'rec-1', transcriptText: 'the transcript text' }],
           true,
         ),
@@ -498,6 +509,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [
           { id: 'rec-1', transcriptText: 'first recording transcript' },
           { id: 'rec-2', transcriptText: 'second recording transcript' },
@@ -541,6 +553,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [{ id: 'rec-1', transcriptText: 'first recording transcript' }],
         true,
       );
@@ -583,6 +596,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [
           { id: 'rec-1', transcriptText: 'earlier recording, finished late' },
           { id: 'rec-2', transcriptText: 'already-folded recording' },
@@ -628,6 +642,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [{ id: 'rec-1', transcriptText: 'the only remaining recording' }],
         true,
       );
@@ -675,6 +690,7 @@ describe('MeetingSummaryService', () => {
 
       await service.generateForMeeting(
         meetingId,
+        ownerId,
         [{ id: 'rec-1', transcriptText: 'the transcript text' }],
         true,
       );

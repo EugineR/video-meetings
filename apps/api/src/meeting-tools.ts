@@ -31,6 +31,7 @@ export interface TaskLookup {
     title: string;
     status?: TaskStatus;
     sourceMeetingId: string;
+    ownerId?: string;
   }): Promise<Task>;
 }
 
@@ -72,6 +73,14 @@ function errorResult(message: string) {
  * meeting-agnostic on purpose (see its own doc comment) — it's read-only, so it can safely surface
  * a similar task from elsewhere for the model's awareness without any risk of mutating it.
  *
+ * `ownerId` — the target meeting's owner, resolved by the caller (`SummaryReconciliationService`,
+ * via `MeetingsRepository.findById`) and passed down through `MeetingSummaryService.generateForMeeting`/
+ * `summarize` — is closed over the same way `meetingId` is, for the same reason: it must never
+ * become a tool argument the model could try to fill in. `upsert_task` writes it onto every task it
+ * creates or matches, so a task the background agent creates is attributed to the meeting's real
+ * owner rather than left ownerless — which is what makes it visible at all to `/mcp`'s
+ * owner-scoped `find_tasks`/`task-tools.ts` reads (see `apps/api/CLAUDE.md`'s Invariants).
+ *
  * `@anthropic-ai/claude-agent-sdk` is ESM-only, while this app compiles to CommonJS, so `tool` is
  * loaded via a dynamic `import()` rather than a static one — the same reason
  * `claude-agent.module.ts`'s `runClaudeAgent` does.
@@ -82,6 +91,7 @@ function errorResult(message: string) {
  */
 export async function createMeetingTools(
   meetingId: string,
+  ownerId: string,
   taskService: TaskLookup,
   meetingSummaryService: MeetingSummaryWriter,
 ) {
@@ -120,6 +130,7 @@ export async function createMeetingTools(
         title,
         status,
         sourceMeetingId: meetingId,
+        ownerId,
       });
       return textResult(task);
     },
@@ -158,6 +169,7 @@ export async function createMeetingTools(
  */
 export async function createMeetingToolsServer(
   meetingId: string,
+  ownerId: string,
   taskService: TaskLookup,
   meetingSummaryService: MeetingSummaryWriter,
 ) {
@@ -166,6 +178,7 @@ export async function createMeetingToolsServer(
     name: MEETING_TOOLS_SERVER_NAME,
     tools: await createMeetingTools(
       meetingId,
+      ownerId,
       taskService,
       meetingSummaryService,
     ),

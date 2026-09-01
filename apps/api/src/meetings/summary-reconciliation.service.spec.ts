@@ -1,5 +1,6 @@
 import { MeetingRecording, RecordingStatus } from '@prisma/client';
 import { MeetingSummaryService } from '../meeting-summary/meeting-summary.service';
+import { MeetingsRepository } from './meetings.repository';
 import { RecordingsRepository } from './recordings.repository';
 import { SummaryReconciliationService } from './summary-reconciliation.service';
 
@@ -26,14 +27,20 @@ function recording(overrides: Partial<MeetingRecording>): MeetingRecording {
 
 describe('SummaryReconciliationService', () => {
   const meetingId = 'meeting-1';
+  const ownerId = 'owner-1';
+  let findById: jest.Mock;
   let findByMeetingId: jest.Mock;
   let generateForMeeting: jest.Mock;
   let service: SummaryReconciliationService;
 
   beforeEach(() => {
+    findById = jest.fn().mockResolvedValue({ ownerId });
     findByMeetingId = jest.fn().mockResolvedValue([]);
     generateForMeeting = jest.fn().mockResolvedValue(undefined);
 
+    const meetingsRepository = {
+      findById,
+    } as unknown as MeetingsRepository;
     const recordingsRepository = {
       findByMeetingId,
     } as unknown as RecordingsRepository;
@@ -42,6 +49,7 @@ describe('SummaryReconciliationService', () => {
     } as unknown as MeetingSummaryService;
 
     service = new SummaryReconciliationService(
+      meetingsRepository,
       recordingsRepository,
       meetingSummaryService,
     );
@@ -60,6 +68,7 @@ describe('SummaryReconciliationService', () => {
 
     expect(generateForMeeting).toHaveBeenCalledWith(
       meetingId,
+      ownerId,
       [{ id: 'recording-1', transcriptText: 'the transcript' }],
       true,
     );
@@ -79,6 +88,7 @@ describe('SummaryReconciliationService', () => {
 
     expect(generateForMeeting).toHaveBeenCalledWith(
       meetingId,
+      ownerId,
       [{ id: 'recording-1', transcriptText: 'the transcript' }],
       false,
     );
@@ -92,7 +102,12 @@ describe('SummaryReconciliationService', () => {
     service.reconcile(meetingId);
     await flushMicrotasks();
 
-    expect(generateForMeeting).toHaveBeenCalledWith(meetingId, [], true);
+    expect(generateForMeeting).toHaveBeenCalledWith(
+      meetingId,
+      ownerId,
+      [],
+      true,
+    );
   });
 
   it('excludes FAILED recordings but still finalizes once an earlier one already succeeded', async () => {
@@ -110,6 +125,7 @@ describe('SummaryReconciliationService', () => {
 
     expect(generateForMeeting).toHaveBeenCalledWith(
       meetingId,
+      ownerId,
       [{ id: 'recording-2', transcriptText: 'earlier transcript' }],
       true,
     );
@@ -129,6 +145,7 @@ describe('SummaryReconciliationService', () => {
 
     expect(generateForMeeting).toHaveBeenCalledWith(
       meetingId,
+      ownerId,
       [{ id: 'recording-1', transcriptText: 'the transcript' }],
       true,
     );
@@ -183,11 +200,27 @@ describe('SummaryReconciliationService', () => {
     expect(generateForMeeting).toHaveBeenNthCalledWith(
       2,
       meetingId,
+      ownerId,
       [
         { id: 'recording-1', transcriptText: 'first transcript' },
         { id: 'recording-2', transcriptText: 'second transcript' },
       ],
       true,
     );
+  });
+
+  it('skips reconciliation entirely when the meeting no longer exists', async () => {
+    findById.mockResolvedValue(null);
+    findByMeetingId.mockResolvedValue([
+      recording({
+        status: RecordingStatus.READY,
+        transcriptText: 'the transcript',
+      }),
+    ]);
+
+    service.reconcile(meetingId);
+    await flushMicrotasks();
+
+    expect(generateForMeeting).not.toHaveBeenCalled();
   });
 });

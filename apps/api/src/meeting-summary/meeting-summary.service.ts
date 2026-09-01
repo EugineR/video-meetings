@@ -138,6 +138,12 @@ export class MeetingSummaryService {
    * rather than accumulating it across calls) — `FAILED` recordings are excluded by the caller
    * before this is ever invoked.
    *
+   * `ownerId` is the meeting's owner, resolved by the caller (`SummaryReconciliationService`, via
+   * `MeetingsRepository.findById` — there's no authenticated caller here to derive it from any other
+   * way) and threaded down into `summarize`/`createMeetingToolsServer` so `../meeting-tools`'s
+   * `upsert_task` attributes every `Task` it creates or updates to this meeting's real owner rather
+   * than leaving it ownerless — see `apps/api/CLAUDE.md`'s Invariants.
+   *
    * Folding every ready recording from scratch on every call would keep the result correct
    * regardless of completion order, but costs one real agent call per recording *per run* — a
    * meeting with N recordings finishing close together triggers O(N²) agent calls in total, since
@@ -166,6 +172,7 @@ export class MeetingSummaryService {
    */
   async generateForMeeting(
     meetingId: string,
+    ownerId: string,
     readyRecordings: FoldableRecording[],
     allRecordingsTerminal: boolean,
   ): Promise<void> {
@@ -200,12 +207,14 @@ export class MeetingSummaryService {
         // so rebuilding it per recording was pure overhead on top of the real agent calls.
         const meetingToolsServer = await createMeetingToolsServer(
           meetingId,
+          ownerId,
           this.taskService,
           this,
         );
         for (const recording of toFold) {
           result = await this.summarize(
             meetingId,
+            ownerId,
             recording.transcriptText,
             result,
             meetingToolsServer,
@@ -272,10 +281,14 @@ export class MeetingSummaryService {
    * be the same final content. Only the last attempt's error is thrown, once every attempt has
    * failed.
    *
+   * `ownerId` — the meeting's owner — is passed alongside `meetingId` into `createMeetingToolsServer`
+   * for the same reason: closed over rather than model-suppliable, so `upsert_task` always attributes
+   * what it writes to the meeting's real owner (see `generateForMeeting`'s own doc comment).
+   *
    * `meetingToolsServer` lets a caller folding several recordings in one `generateForMeeting` run
    * (see above) build the `meeting` MCP tool set once and pass it into every `summarize` call
-   * instead of this method rebuilding an identical one (same `meetingId`) on every call; omitted,
-   * it builds its own — the shape a caller outside the fold loop (or a test) wants.
+   * instead of this method rebuilding an identical one (same `meetingId`/`ownerId`) on every call;
+   * omitted, it builds its own — the shape a caller outside the fold loop (or a test) wants.
    *
    * `meetingId` is also passed through to `ClaudeAgentService.ask` purely to tag that run's
    * cost/usage log line — `runClaudeAgent` (`../claude-agent/claude-agent.module.ts`) is what
@@ -287,6 +300,7 @@ export class MeetingSummaryService {
    */
   async summarize(
     meetingId: string,
+    ownerId: string,
     transcriptText: string,
     previous?: SummaryGenerationResult,
     meetingToolsServer?: Awaited<ReturnType<typeof createMeetingToolsServer>>,
@@ -298,7 +312,12 @@ export class MeetingSummaryService {
       mcpServers: {
         [MEETING_TOOLS_SERVER_NAME]:
           meetingToolsServer ??
-          (await createMeetingToolsServer(meetingId, this.taskService, this)),
+          (await createMeetingToolsServer(
+            meetingId,
+            ownerId,
+            this.taskService,
+            this,
+          )),
       },
       allowedTools: MEETING_ALLOWED_TOOLS,
       systemPrompt: MEETING_AGENT_SYSTEM_PROMPT,

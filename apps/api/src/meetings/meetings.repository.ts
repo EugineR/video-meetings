@@ -43,4 +43,14 @@ export class MeetingsRepository {
       include: { recordings: { orderBy: { createdAt: 'asc' } } },
     });
   }
+
+  /**
+   * Unscoped lookup by id alone — every other method here takes an `ownerId` because it backs a
+   * user-facing route with an authenticated caller to check against. `SummaryReconciliationService`
+   * uses this one instead, to resolve a meeting's owner for the background summarization agent,
+   * which has no authenticated caller of its own to scope by.
+   */
+  findById(id: string): Promise<Meeting | null> {
+    return this.prisma.meeting.findUnique({ where: { id } });
+  }
 }

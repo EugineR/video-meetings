@@ -22,7 +22,8 @@
     "check:links": "node scripts/check-docs-links.mjs",
     "format": "prettier --write \"apps/**/*.{ts,tsx,js,jsx,json,md}\"",
     "format:check": "prettier --check \"apps/**/*.{ts,tsx,js,jsx,json,md}\"",
-    "prepare": "husky"
+    "prepare": "husky",
+    "mcp-inspector": "npx @modelcontextprotocol/inspector@latest"
   },
   "devDependencies": {
     "husky": "^9.1.7",

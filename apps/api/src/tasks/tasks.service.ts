@@ -67,8 +67,12 @@ export class TaskService {
    * caller's write match and silently overwrite a different caller's task, same reasoning as the
    * meeting scoping above. Also written onto a freshly created row (`create`, below) — never onto an
    * update, since an update only ever matches a row the dedup lookup already confirmed has the same
-   * `ownerId`. `meeting-tools.ts`'s in-process `upsert_task` never sets it (no authenticated caller
-   * to attribute a task to), leaving those tasks' `ownerId` `null`.
+   * `ownerId`. `meeting-tools.ts`'s in-process `upsert_task` sets it too, even though it has no
+   * authenticated caller of its own to attribute a task to — its caller
+   * (`MeetingSummaryService.generateForMeeting`) resolves the meeting's actual owner
+   * (`SummaryReconciliationService`, via `MeetingsRepository.findById`) and closes over it the same
+   * way it closes over `meetingId`, so a task the background agent creates is still attributed to a
+   * real user rather than left ownerless.
    *
    * Chained per `sourceMeetingId` via `upsertQueues` rather than run directly: the Claude Agent SDK
    * can dispatch several tool calls from one model turn concurrently (its own docs: "PostToolUse
