@@ -1,15 +1,17 @@
 'use client';
 
-import { useState, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { Link } from '@heroui/react';
 import type { MeetingListItem, Recording } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { useMeetingUploadModal } from '@/lib/useMeetingUploadModal';
 import {
   CalendarIcon,
   PaperclipIcon,
   SparklesIcon,
   UploadIcon,
 } from '@/components/icons';
+import { MeetingStatusBadge } from '@/components/meetings/MeetingStatusBadge';
 import { UploadRecordingModal } from '@/components/meetings/UploadRecordingModal';
 
 interface RecentMeetingCardProps {
@@ -49,26 +51,19 @@ export function RecentMeetingCard({
   meeting,
   onUploaded,
 }: RecentMeetingCardProps) {
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const upload = useMeetingUploadModal({ meetingId: meeting.id, onUploaded });
   const hasRecording = meeting.recordingCount > 0;
 
   return (
     <div className="relative flex flex-col justify-between gap-2 rounded-[10px] border border-border bg-surface p-[13px] lg:p-[18px]">
       <div className="flex flex-col gap-2">
-        <span
-          className={`inline-flex w-fit items-center gap-1.5 rounded-[10px] px-2 py-1 text-[10px] font-semibold ${
-            hasRecording
-              ? 'bg-success-soft text-success'
-              : 'bg-warning-soft text-warning'
-          }`}
-        >
-          <span
-            className={`size-1.5 rounded-full ${
-              hasRecording ? 'bg-success' : 'bg-warning'
-            }`}
-          />
-          {hasRecording ? 'Summary ready' : 'Recording needed'}
-        </span>
+        <MeetingStatusBadge
+          className="w-fit px-2 py-1 text-[10px]"
+          hasRecording={hasRecording}
+          pendingLabel="Recording needed"
+          readyLabel="Summary ready"
+          showDot
+        />
 
         <Link
           className="font-head text-base font-semibold text-foreground after:absolute after:inset-0 after:rounded-[10px] focus-visible:outline-none lg:text-lg"
@@ -116,7 +111,7 @@ export function RecentMeetingCard({
         ) : (
           <button
             className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-[7px] bg-background px-2.5 py-1.5 text-[11px] font-semibold text-accent-strong"
-            onClick={() => setIsUploadOpen(true)}
+            onClick={upload.open}
             type="button"
           >
             <UploadIcon aria-hidden="true" className="size-3.5" />
@@ -125,15 +120,7 @@ export function RecentMeetingCard({
         )}
       </div>
 
-      <UploadRecordingModal
-        isOpen={isUploadOpen}
-        meetingId={meeting.id}
-        onOpenChange={setIsUploadOpen}
-        onUploaded={(recording) => {
-          setIsUploadOpen(false);
-          onUploaded(recording);
-        }}
-      />
+      <UploadRecordingModal {...upload} />
     </div>
   );
 }

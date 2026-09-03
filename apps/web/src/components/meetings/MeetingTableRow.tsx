@@ -1,14 +1,15 @@
 'use client';
 
-import { useState } from 'react';
 import { Dropdown, Link } from '@heroui/react';
 import type { MeetingListItem, Recording } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { useMeetingUploadModal } from '@/lib/useMeetingUploadModal';
 import {
   EllipsisIcon,
   PaperclipIcon,
   VideoCameraIcon,
 } from '@/components/icons';
+import { MeetingStatusBadge } from '@/components/meetings/MeetingStatusBadge';
 import { UploadRecordingModal } from '@/components/meetings/UploadRecordingModal';
 
 interface MeetingTableRowProps {
@@ -36,7 +37,7 @@ interface MeetingTableRowProps {
  * as `RecentMeetingCard`'s quick-action pill.
  */
 export function MeetingTableRow({ meeting, onUploaded }: MeetingTableRowProps) {
-  const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const upload = useMeetingUploadModal({ meetingId: meeting.id, onUploaded });
   const hasRecording = meeting.recordingCount > 0;
 
   return (
@@ -76,20 +77,13 @@ export function MeetingTableRow({ meeting, onUploaded }: MeetingTableRowProps) {
       </div>
 
       <div className="w-[130px] shrink-0">
-        <span
-          className={`inline-flex items-center gap-1.5 rounded-[10px] px-2 py-1 text-[10px] font-semibold ${
-            hasRecording
-              ? 'bg-success-soft text-success'
-              : 'bg-warning-soft text-warning'
-          }`}
-        >
-          <span
-            className={`size-1.5 rounded-full ${
-              hasRecording ? 'bg-success' : 'bg-warning'
-            }`}
-          />
-          {hasRecording ? 'Uploaded' : 'Needs upload'}
-        </span>
+        <MeetingStatusBadge
+          className="px-2 py-1 text-[10px]"
+          hasRecording={hasRecording}
+          pendingLabel="Needs upload"
+          readyLabel="Uploaded"
+          showDot
+        />
       </div>
 
       <div className="relative flex w-7 shrink-0 justify-center">
@@ -108,10 +102,7 @@ export function MeetingTableRow({ meeting, onUploaded }: MeetingTableRowProps) {
             </Dropdown.Trigger>
             <Dropdown.Popover placement="bottom end">
               <Dropdown.Menu>
-                <Dropdown.Item
-                  id="upload"
-                  onAction={() => setIsUploadOpen(true)}
-                >
+                <Dropdown.Item id="upload" onAction={upload.open}>
                   Upload recording
                 </Dropdown.Item>
               </Dropdown.Menu>
@@ -120,15 +111,7 @@ export function MeetingTableRow({ meeting, onUploaded }: MeetingTableRowProps) {
         )}
       </div>
 
-      <UploadRecordingModal
-        isOpen={isUploadOpen}
-        meetingId={meeting.id}
-        onOpenChange={setIsUploadOpen}
-        onUploaded={(recording) => {
-          setIsUploadOpen(false);
-          onUploaded(recording);
-        }}
-      />
+      <UploadRecordingModal {...upload} />
     </div>
   );
 }
