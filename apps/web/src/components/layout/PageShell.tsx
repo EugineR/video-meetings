@@ -7,9 +7,9 @@ interface PageShellProps {
 }
 
 /**
- * The full-height gradient background every route renders on. The gradient class
- * string lives here and nowhere else — both route-group shells (`AppShell`,
- * `AuthShell`) wrap their content in this component.
+ * The full-height gradient background `AppShell` (`(workspace)`) and `AuthShell` render
+ * on. The gradient class string lives here and nowhere else. `DashboardShell` (`/`) does
+ * not use it: the Meetwise dashboard design's background is a flat color, not this gradient.
  */
 export function PageShell({ children }: PageShellProps) {
   return (

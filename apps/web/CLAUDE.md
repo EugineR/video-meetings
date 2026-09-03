@@ -22,9 +22,17 @@ mechanically checkable half of the [Rules](#rules) below). No test suite is conf
 Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of the
 `create-next-app` scaffold remains. Every page is a client component and auth is client-side only.
 
-- `src/app/` — two route groups plus the root `layout.tsx` and `globals.css`: `(app)` holds the
-  authenticated routes `/`, `/meetings/[id]`, `/profile`, `/profile/edit` with their
-  `layout.tsx` and `error.tsx`; `(auth)` holds `/login` and `/register` with their `layout.tsx`
+- `src/app/` — two top-level route groups plus the root `layout.tsx` and `globals.css`: `(app)`
+  holds the authenticated routes, `(auth)` holds `/login` and `/register` with their
+  `layout.tsx`. `(app)/layout.tsx` is the auth guard only (`AuthenticatedUserProvider`); its
+  two child route groups each own their own visual chrome — `(dashboard)` (`/`, the Meetwise
+  sidebar/top-bar shell) and `(workspace)` (`/meetings/[id]`, `/profile`, `/profile/edit`, the
+  original `AppShell` header) — because Next.js only gives sibling routes different layouts
+  across a folder boundary, and `/` used to be a direct sibling of `meetings`/`profile` under
+  one shared `AppShell`. Each of the three route-group layouts (`(app)`, `(dashboard)`,
+  `(workspace)`) carries its own `error.tsx` rendering the shared `AppErrorState`, so an error
+  inside a page keeps that page's own shell mounted (a group's `error.tsx` only catches errors
+  in its children, not in its own `layout.tsx`)
 - `src/components/` — one component per file, in subfolders **by kind** (`ui/`, `layout/`,
   `meetings/`, `profile/`, `icons/`), not flat; `ui/` holds the shared, feature-agnostic
   primitives (`ErrorText`, `SuccessText`, `LoadingState`, `TextInputField`, `PasswordField`,
@@ -71,17 +79,22 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   both append the token as a query param, and the API's guard accepts that form only on routes
   that opt in.
 - **The shell, the header and the auth guard belong to the layout, not to a page.** `(app)/layout.tsx`
-  mounts `AuthenticatedUserProvider` (which runs `useAuthenticatedUser()`, holds the single
+  mounts only `AuthenticatedUserProvider` (which runs `useAuthenticatedUser()`, holds the single
   `if (!user) return <LoadingState variant="page"/>` guard and shares the session with everything
-  below it) around `AppShell` (background, `AppHeader`, the `max-w-2xl` content container);
+  below it) — no visual chrome. Its two child route groups each supply their own:
+  `(dashboard)/layout.tsx` (`/`) mounts `DashboardShell` (the Meetwise sidebar/top-bar redesign —
+  `AppSidebar`/`AppTopBar` on `lg:` and up, `MobileTopBar`/`MobileBottomNav`/`MobileNavDrawer`
+  below it); `(workspace)/layout.tsx` (`/meetings/[id]`, `/profile`, `/profile/edit`) mounts the
+  original `AppShell` (background, `AppHeader`, the `max-w-2xl` content container), unchanged.
   `(auth)/layout.tsx` mounts `AuthShell` (the same background, a dark marketing `AuthStoryPanel`
   next to a plain white pane `/login`/`/register` render their own heading/fields/footer into —
   no `BrandHeader`, no `Card`, the story panel is the branding; below `lg`, `AuthMobileHeader`
   replaces the side panel as a compact bar above the form, and the page's switch-account prompt
   moves from a row above the form to the bottom, next to the legal footer, via a `hidden`/
   `lg:hidden` pair rendering the same prompt content in both places).
-  A page that renders `AppHeader`, the background gradient, a content container or its own `!user`
-  loading state is a bug. The gradient itself lives only in `PageShell`, which both shells wrap.
+  A page that renders `AppHeader`, `DashboardShell`'s chrome, a content container or its own `!user`
+  loading state is a bug. `PageShell`'s gradient wraps `AppShell` and `AuthShell` only —
+  `DashboardShell`'s background is the dashboard design's flat color, not that gradient.
   Importing `AppHeader` from anywhere under `src/app/` fails the lint run.
 - **`src/components/ui/` is the only home for a shared primitive, and a feature folder is private
   to its feature.** `meetings/` and `profile/` must not import each other, `layout/` must not
@@ -232,9 +245,11 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   Every color HeroUI exposes as a CSS variable is set there to the Meetwise design system's
   values (light in `:root`, dark in `[data-theme='dark']`), transferred from the Pencil source at
   `../../design/meetwise.pen` ("01 Foundations" / "02 Controls"); tokens the design defines with no
-  HeroUI slot (the primary-button color, avatar tints, the input surface) are plain custom
-  properties there, exposed as Tailwind colors (`bg-action`, `bg-avatar-cool`, …) via its
-  `@theme inline` block. A handful of `-foreground` pairs are overridden off HeroUI's own defaults
+  HeroUI slot (the primary-button color, avatar tints, the input surface, the dashboard sidebar's
+  `nav`/`nav-surface`/`nav-line`/`nav-muted`/`nav-muted-strong`/`nav-accent`/`nav-accent-soft` —
+  constant across the file's Light/Dark themes, so declared once in `:root` rather than duplicated
+  under `[data-theme='dark']`) are plain custom properties there, exposed as Tailwind colors
+  (`bg-action`, `bg-avatar-cool`, `bg-nav`, …) via its `@theme inline` block. A handful of `-foreground` pairs are overridden off HeroUI's own defaults
   because the design's colors don't fit HeroUI's brightness assumptions (a dark, not bright,
   `success`/`warning`; a bright, not muted, dark-mode `accent`/`danger`) — each override carries a
   contrast-ratio comment. `.button--primary` and `.input--secondary` are likewise overridden in the
