@@ -5,7 +5,7 @@ import { Label, ProgressBar } from '@heroui/react';
 import { type Recording, uploadMeetingRecording } from '@/lib/api';
 import { RECORDING_UPLOAD } from '@/lib/uploads';
 import { useFileSelection } from '@/lib/useFileSelection';
-import { UploadIcon, XMarkIcon } from '@/components/icons';
+import { FolderOpenIcon, UploadCloudIcon, XMarkIcon } from '@/components/icons';
 import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 
@@ -19,6 +19,11 @@ interface RecordingUploaderProps {
  * a progress bar and a "Cancel" control. Everything below the drag handling —
  * the hidden input, the client-side check, progress, the mid-upload guard and
  * cancellation — comes from `useFileSelection`.
+ *
+ * The idle state matches the design's "Recording Upload Zone" (`Mn57N`): a solid
+ * (not dashed) bordered box, an accent-tinted icon circle, a heading over a single
+ * helper line combining the "or choose a file" prompt with the constraints, and a dark
+ * primary "Choose file" button — replacing the earlier plain dashed box.
  */
 export function RecordingUploader({
   meetingId,
@@ -45,10 +50,8 @@ export function RecordingUploader({
   return (
     <div className="flex flex-col gap-3">
       <div
-        className={`flex h-64 flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed px-6 text-center transition-colors ${
-          isDragging
-            ? 'border-accent bg-accent/10'
-            : 'border-default-200 bg-default-50'
+        className={`flex h-64 flex-col items-center justify-center gap-2.5 rounded-[9px] border px-5 text-center transition-colors ${
+          isDragging ? 'border-accent bg-accent/10' : 'border-border bg-subtle'
         }`}
         onDragLeave={() => setIsDragging(false)}
         onDragOver={(event) => {
@@ -59,8 +62,6 @@ export function RecordingUploader({
         }}
         onDrop={handleDrop}
       >
-        <UploadIcon aria-hidden="true" className="size-8 text-muted" />
-
         {progress !== null ? (
           <div className="flex w-full max-w-xs flex-col gap-2">
             <ProgressBar aria-label="Upload progress" value={progress}>
@@ -82,16 +83,23 @@ export function RecordingUploader({
           </div>
         ) : (
           <>
-            <p className="text-sm text-muted">
-              Drag and drop a recording here, or
+            <span className="flex size-10 items-center justify-center rounded-[10px] bg-accent-soft">
+              <UploadCloudIcon
+                aria-hidden="true"
+                className="size-[19px] text-accent"
+              />
+            </span>
+            <p className="font-head text-[15px] font-semibold text-foreground">
+              Drop a recording here
             </p>
-            <Button onPress={selection.openFilePicker} variant="secondary">
+            <p className="text-[11px] text-muted">
+              or choose a file · {RECORDING_UPLOAD.allowedExtensionsLabel} · up
+              to {RECORDING_UPLOAD.maxSizeLabel}
+            </p>
+            <Button onPress={selection.openFilePicker}>
+              <FolderOpenIcon aria-hidden="true" className="size-3.5" />
               Choose file
             </Button>
-            <p className="text-xs text-muted">
-              {RECORDING_UPLOAD.allowedExtensionsLabel} · up to{' '}
-              {RECORDING_UPLOAD.maxSizeLabel}
-            </p>
           </>
         )}
 

@@ -40,6 +40,14 @@
   --color-avatar-purple-foreground: var(--avatar-purple-fg);
   --color-avatar-green: var(--avatar-green-bg);
   --color-avatar-green-foreground: var(--avatar-green-fg);
+
+  --color-nav: var(--nav);
+  --color-nav-surface: var(--nav-surface);
+  --color-nav-line: var(--nav-line);
+  --color-nav-muted: var(--nav-muted);
+  --color-nav-muted-strong: var(--nav-muted-strong);
+  --color-nav-accent: var(--nav-accent);
+  --color-nav-accent-soft: var(--nav-accent-soft);
 }
 
 :root {
@@ -97,6 +105,18 @@
   --field-background: var(--subtle);
   --field-border: var(--border);
   --field-placeholder: #8c949f;
+
+  /* The dashboard sidebar/drawer's nav surface — constant across the .pen file's
+     Light/Dark themes ("Meetings dashboard" vs. "Meetings dashboard · Dark" render the
+     same sidebar), so declared once here rather than duplicated under
+     `[data-theme='dark']` below. */
+  --nav: #0a0c10;
+  --nav-surface: #14171d;
+  --nav-line: #2a2f37;
+  --nav-muted: #89919d;
+  --nav-muted-strong: #aeb5bf;
+  --nav-accent: #9bd7fa;
+  --nav-accent-soft: #24313a;
 }
 
 [data-theme='dark'] {
@@ -176,6 +196,13 @@
   padding-inline-start: 0.5rem;
 }
 
+/* HeroUI's `.button` base class hardcodes a pill (`rounded-3xl`) with no CSS variable to
+   override — every Button/Primary/Secondary/Outline/Destructive in the design is `$radius-8`
+   (8px), never a pill, so every button in the app gets the same override regardless of variant. */
+.button {
+  border-radius: 0.5rem;
+}
+
 /* Every unlabeled `<Button>` in the app (the actual primary actions — sign in, create
    account, create meeting, save) renders HeroUI's default "primary" variant. The design's
    Button/Primary is a near-black (light) / accent-blue (dark) action color distinct from
@@ -189,6 +216,32 @@
   --button-bg-hover: color-mix(in oklab, var(--action-bg) 90%, var(--action-fg) 10%);
   --button-bg-pressed: var(--button-bg-hover);
   --button-fg: var(--action-fg);
+}
+
+/* Every `Modal.CloseTrigger` in the app renders HeroUI's only close-button variant
+   (`--default`), a filled gray chip — the design wants a bare "×" glyph in every modal
+   header, no button chrome around it. */
+.close-button--default {
+  background-color: transparent;
+
+  @media (hover: hover) {
+    &:hover,
+    &[data-hovered='true'] {
+      background-color: transparent;
+    }
+  }
+}
+
+/* Browsers default a plain `<button>` to `cursor: default`, not `pointer` — HeroUI's own
+   `Button`/`Dropdown.Trigger` already get `pointer` from their `.button`/`.dropdown__trigger`
+   classes (`cursor: var(--cursor-interactive)`), but a handful of controls in the app are a
+   bare `<button>` on purpose (a design-mandated pixel size below the 44px/40px touch-target
+   minimum every `@/components/ui/Button` enforces, e.g. the dashboard's small quick-action
+   pills). One base rule here covers those instead of a `cursor-pointer` class repeated at
+   each call site — and covers any future bare `<button>` too. Excludes `disabled` so a
+   disabled button still shows it can't be pressed. */
+button:not(:disabled) {
+  cursor: pointer;
 }
 
 html {

@@ -29,6 +29,14 @@ export function formatFileSize(sizeBytes: string): string {
   return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+/** A time-of-day greeting from the local clock — the dashboard's "Good afternoon, …" header. */
+export function getGreeting(date: Date = new Date()): string {
+  const hours = date.getHours();
+  if (hours < 12) return 'Good morning';
+  if (hours < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
 /** Up to two initials from whitespace/punctuation-separated words, e.g. "Jane Doe" -> "JD". */
 function initialsFrom(source: string): string {
   const words = source.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
