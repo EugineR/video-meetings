@@ -17,9 +17,9 @@ export class UsersRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  create(email: string, hashedPassword: string): Promise<User> {
+  create(name: string, email: string, hashedPassword: string): Promise<User> {
     return this.prisma.user.create({
-      data: { email, password: hashedPassword },
+      data: { name, email, password: hashedPassword },
     });
   }
 

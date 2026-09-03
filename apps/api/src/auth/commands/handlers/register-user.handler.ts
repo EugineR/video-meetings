@@ -39,7 +39,7 @@ export class RegisterUserHandler implements ICommandHandler<
       PASSWORD_SALT_ROUNDS,
     );
     const user = await this.commandBus.execute<CreateUserCommand, User>(
-      new CreateUserCommand(command.email, hashedPassword),
+      new CreateUserCommand(command.name, command.email, hashedPassword),
     );
 
     return { accessToken: this.tokenService.sign(user.id, user.email) };

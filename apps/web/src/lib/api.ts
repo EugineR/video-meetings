@@ -170,10 +170,15 @@ async function patchJson<TResponse>(
 }
 
 export function registerUser(
+  name: string,
   email: string,
   password: string,
 ): Promise<AccessTokenResponse> {
-  return postJson<AccessTokenResponse>('/auth/register', { email, password });
+  return postJson<AccessTokenResponse>('/auth/register', {
+    name,
+    email,
+    password,
+  });
 }
 
 export function loginUser(

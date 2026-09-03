@@ -11,6 +11,10 @@ export class CreateUserHandler implements ICommandHandler<
   constructor(private readonly usersRepository: UsersRepository) {}
 
   execute(command: CreateUserCommand): Promise<User> {
-    return this.usersRepository.create(command.email, command.hashedPassword);
+    return this.usersRepository.create(
+      command.name,
+      command.email,
+      command.hashedPassword,
+    );
   }
 }

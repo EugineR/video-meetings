@@ -1,9 +1,11 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import {
   Description,
   FieldError,
   Input,
+  InputGroup,
   Label,
   TextField,
 } from '@heroui/react';
@@ -13,6 +15,8 @@ interface TextInputFieldProps {
   autoComplete?: string;
   /** Hint shown under the input, above any error message. */
   description?: string;
+  /** Leading icon shown inside the field, e.g. `<EnvelopeIcon className="size-4" />`. */
+  icon?: ReactNode;
   isRequired?: boolean;
   label: string;
   maxLength?: number;
@@ -44,6 +48,7 @@ interface TextInputFieldProps {
 export function TextInputField({
   autoComplete,
   description,
+  icon,
   isRequired,
   label,
   maxLength,
@@ -64,13 +69,24 @@ export function TextInputField({
       value={value}
     >
       <Label>{label}</Label>
-      <Input
-        autoComplete={autoComplete}
-        className={touchTarget()}
-        placeholder={placeholder}
-        type={type}
-        variant="secondary"
-      />
+      {icon ? (
+        <InputGroup className={touchTarget()} variant="secondary">
+          <InputGroup.Prefix>{icon}</InputGroup.Prefix>
+          <InputGroup.Input
+            autoComplete={autoComplete}
+            placeholder={placeholder}
+            type={type}
+          />
+        </InputGroup>
+      ) : (
+        <Input
+          autoComplete={autoComplete}
+          className={touchTarget()}
+          placeholder={placeholder}
+          type={type}
+          variant="secondary"
+        />
+      )}
       {description ? <Description>{description}</Description> : null}
       <FieldError />
     </TextField>

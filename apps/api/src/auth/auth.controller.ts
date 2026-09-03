@@ -17,7 +17,7 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   register(@Body() dto: RegisterDto): Promise<AccessTokenResponse> {
     return this.commandBus.execute(
-      new RegisterUserCommand(dto.email, dto.password),
+      new RegisterUserCommand(dto.name, dto.email, dto.password),
     );
   }
 

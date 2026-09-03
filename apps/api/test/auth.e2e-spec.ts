@@ -35,7 +35,11 @@ describe('Auth (e2e)', () => {
     it('creates a new user and returns a JWT access token', async () => {
       const response = await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ email: 'new-user@example.com', password: 'Password123!' })
+        .send({
+          name: 'New User',
+          email: 'new-user@example.com',
+          password: 'Password123!',
+        })
         .expect(201);
 
       const body = response.body as AccessTokenResponseBody;
@@ -46,12 +50,17 @@ describe('Auth (e2e)', () => {
     it('rejects registration with an email that is already taken', async () => {
       await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ email: 'duplicate@example.com', password: 'Password123!' })
+        .send({
+          name: 'Duplicate User',
+          email: 'duplicate@example.com',
+          password: 'Password123!',
+        })
         .expect(201);
 
       await request(app.getHttpServer())
         .post('/auth/register')
         .send({
+          name: 'Duplicate User',
           email: 'duplicate@example.com',
           password: 'AnotherPassword456!',
         })
@@ -61,27 +70,42 @@ describe('Auth (e2e)', () => {
     it('rejects registration with an invalid email', async () => {
       await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ email: 'not-an-email', password: 'Password123!' })
+        .send({
+          name: 'Invalid Email',
+          email: 'not-an-email',
+          password: 'Password123!',
+        })
         .expect(400);
     });
 
     it('rejects registration with a missing password', async () => {
       await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ email: 'missing-password@example.com' })
+        .send({
+          name: 'Missing Password',
+          email: 'missing-password@example.com',
+        })
         .expect(400);
     });
 
     it('rejects registration with a missing email', async () => {
       await request(app.getHttpServer())
         .post('/auth/register')
-        .send({ password: 'Password123!' })
+        .send({ name: 'Missing Email', password: 'Password123!' })
+        .expect(400);
+    });
+
+    it('rejects registration with a missing name', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ email: 'missing-name@example.com', password: 'Password123!' })
         .expect(400);
     });
   });
 
   describe('/auth/login (POST)', () => {
     const existingUser = {
+      name: 'Existing User',
       email: 'existing-user@example.com',
       password: 'Password123!',
     };
@@ -120,6 +144,7 @@ describe('Auth (e2e)', () => {
 
     it('does not create a new user when logging in with an unregistered email', async () => {
       const unregistered = {
+        name: 'Never Registered',
         email: 'never-registered@example.com',
         password: 'Password123!',
       };

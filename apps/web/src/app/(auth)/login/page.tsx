@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, Form, Link } from '@heroui/react';
+import { Form, Link } from '@heroui/react';
 import { loginUser } from '@/lib/api';
 import { storeAccessToken } from '@/lib/auth';
 import { NO_FORM_ERRORS, toFormErrorState } from '@/lib/formErrors';
 import { useResetQueryCache } from '@/lib/queries/session';
 import { validateEmail } from '@/lib/validation';
+import { EnvelopeIcon, LockClosedIcon, LogInIcon } from '@/components/icons';
 import { Button } from '@/components/ui/Button';
 import { ErrorText } from '@/components/ui/ErrorText';
 import { PasswordField } from '@/components/ui/PasswordField';
@@ -47,33 +48,47 @@ export default function LoginPage() {
     }
   };
 
-  return (
-    <Card className="w-full">
-      <Card.Header>
-        <Card.Title render={(props) => <h2 {...props} />}>
-          Welcome back
-        </Card.Title>
-        <Card.Description>
-          Enter your email and password to sign in.
-        </Card.Description>
-      </Card.Header>
+  const switchPrompt = (
+    <p>
+      New to Video Meetings?{' '}
+      <Link className="font-semibold text-foreground" href="/register">
+        Create account
+      </Link>
+    </p>
+  );
 
-      <Form
-        onSubmit={(event) => void onSubmit(event)}
-        validationErrors={errors.fieldErrors}
-      >
-        <Card.Content>
-          <div className="flex flex-col gap-4">
+  return (
+    <div className="flex w-full flex-1 flex-col items-center justify-between gap-8 lg:gap-10">
+      <div className="hidden w-full justify-end text-xs text-muted lg:flex">
+        {switchPrompt}
+      </div>
+
+      <div className="flex w-full max-w-[430px] flex-col gap-[22px]">
+        <div className="flex flex-col gap-2">
+          <h2 className="font-head text-3xl font-semibold text-foreground lg:text-4xl">
+            Welcome back
+          </h2>
+          <p className="text-[13px] leading-[1.4] text-muted">
+            Sign in to continue to your meeting workspace.
+          </p>
+        </div>
+
+        <Form
+          onSubmit={(event) => void onSubmit(event)}
+          validationErrors={errors.fieldErrors}
+        >
+          <div className="flex flex-col gap-3.5">
             <TextInputField
               autoComplete="email"
+              icon={<EnvelopeIcon className="size-4" />}
               isRequired
-              label="Email"
+              label="Email address"
               name="email"
               onChange={(value) => {
                 setEmail(value);
                 clearErrors();
               }}
-              placeholder="you@example.com"
+              placeholder="you@company.com"
               type="email"
               validate={validateEmail}
               value={email}
@@ -81,6 +96,7 @@ export default function LoginPage() {
 
             <PasswordField
               autoComplete="current-password"
+              icon={<LockClosedIcon className="size-4" />}
               isRequired
               label="Password"
               name="password"
@@ -95,18 +111,27 @@ export default function LoginPage() {
             {errors.formError ? (
               <ErrorText>{errors.formError}</ErrorText>
             ) : null}
-          </div>
-        </Card.Content>
 
-        <Card.Footer className="mt-2 flex flex-col gap-3">
-          <Button className="w-full" isPending={isPending} type="submit">
-            {isPending ? 'Signing in…' : 'Sign in'}
-          </Button>
-          <p className="text-center text-sm text-muted">
-            Don&apos;t have an account? <Link href="/register">Create one</Link>
-          </p>
-        </Card.Footer>
-      </Form>
-    </Card>
+            <Button className="w-full" isPending={isPending} type="submit">
+              {isPending ? (
+                'Signing in…'
+              ) : (
+                <>
+                  <LogInIcon className="size-4" />
+                  Sign in
+                </>
+              )}
+            </Button>
+          </div>
+        </Form>
+      </div>
+
+      <div className="flex flex-col items-center gap-4">
+        <div className="text-xs text-muted lg:hidden">{switchPrompt}</div>
+        <p className="font-mono text-9 tracking-[0.04em] text-muted">
+          © {new Date().getFullYear()} Video Meetings · Privacy · Terms
+        </p>
+      </div>
+    </div>
   );
 }

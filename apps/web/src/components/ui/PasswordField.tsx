@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   Description,
   FieldError,
@@ -16,6 +16,8 @@ interface PasswordFieldProps {
   autoComplete: 'current-password' | 'new-password';
   /** Hint shown under the input, above any error message. */
   description?: string;
+  /** Leading icon shown inside the field, e.g. `<LockClosedIcon className="size-4" />`. */
+  icon?: ReactNode;
   isRequired?: boolean;
   label: string;
   minLength?: number;
@@ -25,6 +27,7 @@ interface PasswordFieldProps {
    */
   name: string;
   onChange: (value: string) => void;
+  placeholder?: string;
   /** Returns the message for an invalid value, or `null` when it is acceptable. Runs on submit. */
   validate?: (value: string) => string | null;
   value: string;
@@ -43,11 +46,13 @@ interface PasswordFieldProps {
 export function PasswordField({
   autoComplete,
   description,
+  icon,
   isRequired,
   label,
   minLength,
   name,
   onChange,
+  placeholder = 'Enter your password',
   validate,
   value,
 }: PasswordFieldProps) {
@@ -66,9 +71,10 @@ export function PasswordField({
     >
       <Label>{label}</Label>
       <InputGroup className={touchTarget()} variant="secondary">
+        {icon ? <InputGroup.Prefix>{icon}</InputGroup.Prefix> : null}
         <InputGroup.Input
           autoComplete={autoComplete}
-          placeholder="••••••••"
+          placeholder={placeholder}
           type={isVisible ? 'text' : 'password'}
         />
         <InputGroup.Suffix className="px-1">

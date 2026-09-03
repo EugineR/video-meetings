@@ -1,11 +1,194 @@
 @import 'tailwindcss';
 @import '@heroui/styles';
 
+/*
+ * Meetwise design system tokens, transferred from the Pencil source at
+ * `design/meetwise.pen` ("01 Foundations"). Colors are HeroUI CSS variables where a
+ * direct semantic match exists (background/surface/foreground/muted/border/accent/
+ * success/warning/danger and their `-soft` pairs); everything the design defines that
+ * HeroUI has no slot for (the near-black primary-action color, the accent-tinted
+ * secondary-button foreground, avatar tints, the input surface) is a plain custom
+ * property, exposed as a Tailwind color via `@theme inline` below.
+ */
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-head: var(--font-funnel-sans), var(--font-geist-sans), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Sizes the design uses below Tailwind's smallest default (text-xs = 12px) or above
+     its 24px→36px jump — the rest of the design's type scale already lines up with
+     Tailwind's built-in text-sm/base/lg/xl/2xl/4xl. */
+  --text-8: 0.5rem;
+  --text-9: 0.5625rem;
+  --text-10: 0.625rem;
+  --text-11: 0.6875rem;
+  --text-13: 0.8125rem;
+  --text-28: 1.75rem;
+  --text-43: 2.6875rem;
+
+  --color-action: var(--action-bg);
+  --color-action-foreground: var(--action-fg);
+  --color-accent-strong: var(--accent-strong);
+  --color-muted-strong: var(--muted-strong);
+  --color-subtle: var(--subtle);
+  --color-tile: var(--tile);
+  --color-avatar-warm: var(--avatar-warm-bg);
+  --color-avatar-warm-foreground: var(--avatar-warm-fg);
+  --color-avatar-cool: var(--avatar-cool-bg);
+  --color-avatar-cool-foreground: var(--avatar-cool-fg);
+  --color-avatar-purple: var(--avatar-purple-bg);
+  --color-avatar-purple-foreground: var(--avatar-purple-fg);
+  --color-avatar-green: var(--avatar-green-bg);
+  --color-avatar-green-foreground: var(--avatar-green-fg);
+}
+
 :root {
-  /* HeroUI's default --accent/--muted fall short of WCAG AA (4.5:1): white button
-     text on --accent measures ~3.6:1, and --muted-on-field placeholders ~4.1:1. */
-  --accent: oklch(0.55 0.195 253.83);
-  --muted: oklch(0.5 0.0138 285.94);
+  /* Common (theme-independent): form fields grow a visible 1px border, per the design's
+     Input/Password components — HeroUI ships fields borderless by default. */
+  --field-border-width: 1px;
+
+  /* Light theme ("Mode: Light" in the .pen file) */
+  --background: #f4f6f8;
+  --surface: #ffffff;
+  --foreground: #17191c;
+  --muted: #69717d;
+  --muted-strong: #7a838e;
+  --border: #dde2e8;
+  --separator: #dde2e8;
+
+  --accent: #4a9fd8;
+  --accent-soft: #e8f4fb;
+  --accent-strong: #2577a8;
+  /* HeroUI's default --accent-foreground (near-white) measures ~2.9:1 on this accent —
+     below WCAG AA. Dark ink passes at ~6:1. */
+  --accent-foreground: var(--foreground);
+
+  --success: #1d7a55;
+  --success-soft: #e6f5ee;
+  /* This success color is dark enough that HeroUI's default --success-foreground
+     (near-black) would be unreadable on it; white passes at ~5.3:1. */
+  --success-foreground: #ffffff;
+
+  --warning: #a65d13;
+  --warning-soft: #fff3e5;
+  /* Same reasoning as --success-foreground above (~5:1 with white, unreadable with
+     HeroUI's default dark text). */
+  --warning-foreground: #ffffff;
+
+  --danger: #b83518;
+  --danger-soft: #fceae6;
+
+  --subtle: #f7f8fa;
+  --tile: #f0f2f4;
+  --action-bg: #17191c;
+  --action-fg: #ffffff;
+
+  --avatar-warm-bg: #ffe7d9;
+  --avatar-warm-fg: #9a4e26;
+  --avatar-cool-bg: #dcebff;
+  --avatar-cool-fg: #28659a;
+  --avatar-purple-bg: #eee4ff;
+  --avatar-purple-fg: #6544a5;
+  --avatar-green-bg: #ddf3e8;
+  --avatar-green-fg: #277355;
+
+  --backdrop: #090c12a8;
+
+  --field-background: var(--subtle);
+  --field-border: var(--border);
+  --field-placeholder: #8c949f;
+}
+
+[data-theme='dark'] {
+  /* Dark theme ("Mode: Dark" in the .pen file) */
+  --background: #111318;
+  --surface: #1a1d22;
+  --foreground: #f5f7fa;
+  --muted: #aab1bb;
+  --muted-strong: #8f98a4;
+  --border: #30353d;
+  --separator: #30353d;
+
+  --accent: #63b3e5;
+  --accent-soft: #193342;
+  --accent-strong: #86c9f1;
+  /* Same AA reasoning as the light theme: this accent is bright enough that only a dark
+     foreground passes (~8:1) — it doubles as --action-fg below. */
+  --accent-foreground: var(--action-fg);
+
+  --success: #62c89b;
+  --success-soft: #17352a;
+  /* Bright enough in dark mode for HeroUI's default dark foreground to stay legible. */
+
+  --warning: #f0a04b;
+  --warning-soft: #332517;
+
+  --danger: #ff7657;
+  --danger-soft: #3a1e18;
+  /* This danger color is bright; HeroUI's default --danger-foreground (near-white)
+     measures ~2.6:1 on it. Dark ink passes at ~6.6:1. */
+  --danger-foreground: #17191c;
+
+  --subtle: #20242a;
+  --tile: #252a31;
+  --action-bg: #63b3e5;
+  --action-fg: #081016;
+
+  --avatar-warm-bg: #3a2d28;
+  --avatar-warm-fg: #bc8a70;
+  --avatar-cool-bg: #263442;
+  --avatar-cool-fg: #86a5be;
+  --avatar-purple-bg: #312d3b;
+  --avatar-purple-fg: #a59ab8;
+  --avatar-green-bg: #26362f;
+  --avatar-green-fg: #82aa98;
+
+  --backdrop: #090c12c4;
+
+  --field-background: var(--subtle);
+  --field-border: var(--border);
+  --field-placeholder: #929aa5;
+}
+
+/* The app's text fields use HeroUI's `variant="secondary"`, which otherwise hardcodes
+   its background to `--default` rather than the field tokens above — override its two
+   custom properties directly so inputs pick up the design's `$subtle` surface instead.
+   `Input` and `InputGroup` (used by `PasswordField` and any `TextInputField` with a
+   leading icon) are two separate HeroUI components with their own `--input-bg`/
+   `--input-group-bg` custom properties, so both need the same override. */
+.input--secondary {
+  --input-bg: var(--field-background);
+  --input-bg-hover: var(--field-hover);
+  --input-bg-focus: var(--field-focus);
+}
+
+.input-group--secondary {
+  --input-group-bg: var(--field-background);
+  --input-group-bg-hover: var(--field-hover);
+  --input-group-bg-focus: var(--field-focus);
+}
+
+/* HeroUI zeroes the input's own start padding whenever a leading `InputGroup.Prefix` icon is
+   present (it expects the icon's box to butt straight up against the text) — every icon field in
+   the app (`TextInputField`/`PasswordField` with `icon` set) ends up with the value crammed
+   against the icon. Give it back a small gap instead of leaving it at 0. */
+.input-group:has([data-slot='input-group-prefix']) [data-slot='input-group-input'] {
+  padding-inline-start: 0.5rem;
+}
+
+/* Every unlabeled `<Button>` in the app (the actual primary actions — sign in, create
+   account, create meeting, save) renders HeroUI's default "primary" variant. The design's
+   Button/Primary is a near-black (light) / accent-blue (dark) action color distinct from
+   `$accent`, not `$accent` itself — reproduce that by overriding the variant's two custom
+   properties (`--button-bg*`/`--button-fg`) rather than `--accent`, which stays the app's actual accent hue everywhere
+   else (links, focus rings, badges). Button/Secondary (accent-tinted) is not carried over
+   here: the app's existing `variant="secondary"` buttons are neutral actions (Cancel, Sign
+   out), not the accent-toned "Upload" button the design uses that variant for. */
+.button--primary {
+  --button-bg: var(--action-bg);
+  --button-bg-hover: color-mix(in oklab, var(--action-bg) 90%, var(--action-fg) 10%);
+  --button-bg-pressed: var(--button-bg-hover);
+  --button-fg: var(--action-fg);
 }
 
 html {

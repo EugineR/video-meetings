@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Funnel_Sans, Geist, Geist_Mono } from 'next/font/google';
 import { QueryProvider } from '@/components/layout/QueryProvider';
 import '@/app/globals.css';
 
@@ -13,6 +13,11 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 });
 
+const funnelSans = Funnel_Sans({
+  variable: '--font-funnel-sans',
+  subsets: ['latin'],
+});
+
 export const metadata: Metadata = {
   title: 'Video Meetings',
   description: 'Video meetings, scheduled and joined in one place.',
@@ -20,8 +25,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body className="bg-background text-foreground" suppressHydrationWarning>
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} ${funnelSans.variable}`}
+    >
+      <body
+        className="bg-background font-sans text-foreground"
+        suppressHydrationWarning
+      >
         <QueryProvider>{children}</QueryProvider>
       </body>
     </html>

@@ -13,6 +13,8 @@ pnpm workspace monorepo (`pnpm-workspace.yaml`: `apps/*`) with two applications:
 
 `apps/web` talks to `apps/api` over HTTP via `NEXT_PUBLIC_API_URL` (see `apps/web/CLAUDE.md`) — this is currently the only inter-app wiring. Each app's own architecture is described in its own `CLAUDE.md`; don't restate it here.
 
+`design/meetwise.pen` is the Pencil (pen.dev) design source for `apps/web`'s visual design system — colors, typography and reusable components mocked up on one canvas, ahead of being transferred into the app's code. It is a binary/encrypted file: read or edit it only through the `pencil` MCP server's tools, never with `Read`/`Grep`.
+
 ## Commands
 
 Run from the repo root; the scripts themselves live in `package.json`. Each has `:api`/`:web` variants (`pnpm dev:api`, `pnpm lint:web`, …): `dev`, `build`, `lint`, `test` (only `api` has a test suite — see `apps/api/CLAUDE.md` for single-test and e2e invocations), plus `format` / `format:check` (Prettier over `apps/**`).

@@ -74,8 +74,12 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   mounts `AuthenticatedUserProvider` (which runs `useAuthenticatedUser()`, holds the single
   `if (!user) return <LoadingState variant="page"/>` guard and shares the session with everything
   below it) around `AppShell` (background, `AppHeader`, the `max-w-2xl` content container);
-  `(auth)/layout.tsx` mounts `AuthShell` (the same background, the brand-only `BrandHeader`, the
-  `max-w-md` card slot).
+  `(auth)/layout.tsx` mounts `AuthShell` (the same background, a dark marketing `AuthStoryPanel`
+  next to a plain white pane `/login`/`/register` render their own heading/fields/footer into —
+  no `BrandHeader`, no `Card`, the story panel is the branding; below `lg`, `AuthMobileHeader`
+  replaces the side panel as a compact bar above the form, and the page's switch-account prompt
+  moves from a row above the form to the bottom, next to the legal footer, via a `hidden`/
+  `lg:hidden` pair rendering the same prompt content in both places).
   A page that renders `AppHeader`, the background gradient, a content container or its own `!user`
   loading state is a bug. The gradient itself lives only in `PageShell`, which both shells wrap.
   Importing `AppHeader` from anywhere under `src/app/` fails the lint run.
@@ -224,11 +228,23 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   below the minimum and is a bug.
 - Theming is CSS-variable/`oklch`-based and switches on `[data-theme='dark']`/`[data-theme='light']`,
   **not** `prefers-color-scheme`. No switcher is wired up; the default light theme renders.
-- **`src/app/globals.css` imports `tailwindcss` before `@heroui/styles` — the order matters.** It
-  also darkens HeroUI's default `--accent`/`--muted`, whose originals fail WCAG AA (4.5:1) for
-  button text on `--accent` and placeholder text on `--muted`. Keep contrast at AA, and keep every
-  control at the 44px (mobile) / 40px (desktop) touch-target minimum — which is the
+- **`src/app/globals.css` imports `tailwindcss` before `@heroui/styles` — the order matters.**
+  Every color HeroUI exposes as a CSS variable is set there to the Meetwise design system's
+  values (light in `:root`, dark in `[data-theme='dark']`), transferred from the Pencil source at
+  `../../design/meetwise.pen` ("01 Foundations" / "02 Controls"); tokens the design defines with no
+  HeroUI slot (the primary-button color, avatar tints, the input surface) are plain custom
+  properties there, exposed as Tailwind colors (`bg-action`, `bg-avatar-cool`, …) via its
+  `@theme inline` block. A handful of `-foreground` pairs are overridden off HeroUI's own defaults
+  because the design's colors don't fit HeroUI's brightness assumptions (a dark, not bright,
+  `success`/`warning`; a bright, not muted, dark-mode `accent`/`danger`) — each override carries a
+  contrast-ratio comment. `.button--primary` and `.input--secondary` are likewise overridden in the
+  same file so the app's default button variant and `variant="secondary"` text fields render the
+  design's action color and input surface without any call-site change. Keep contrast at AA, and
+  keep every control at the 44px (mobile) / 40px (desktop) touch-target minimum — which is the
   `src/lib/touchTarget.ts` rule above, never a height written at a call site.
+- **Fonts are loaded once in the root `layout.tsx`** via `next/font/google` — Geist (body,
+  `--font-sans`), Geist Mono (`--font-mono`), Funnel Sans (headings, `--font-head`, applied with the
+  `font-head` utility) — matching the design's `font-body`/`font-data`/`font-head` tokens.
 
 ## Testing UI changes
 

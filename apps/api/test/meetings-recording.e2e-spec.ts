@@ -50,7 +50,7 @@ async function registerAndLogin(
 ): Promise<string> {
   const response = await request(app.getHttpServer())
     .post('/auth/register')
-    .send({ email, password: 'Password123!' })
+    .send({ name: 'Test User', email, password: 'Password123!' })
     .expect(201);
 
   return (response.body as AccessTokenResponseBody).accessToken;

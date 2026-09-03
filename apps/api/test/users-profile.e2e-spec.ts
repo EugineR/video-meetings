@@ -25,7 +25,7 @@ async function registerAndLogin(
 ): Promise<string> {
   const response = await request(app.getHttpServer())
     .post('/auth/register')
-    .send({ email, password })
+    .send({ name: 'Test User', email, password })
     .expect(201);
 
   return (response.body as AccessTokenResponseBody).accessToken;
@@ -63,7 +63,7 @@ describe('Users profile (e2e)', () => {
       const body = response.body as ProfileResponseBody;
       expect(body.id).toEqual(expect.any(String));
       expect(body.email).toBe('owner@example.com');
-      expect(body.name).toBeNull();
+      expect(body.name).toBe('Test User');
       expect(body.createdAt).toEqual(expect.any(String));
     });
 
@@ -219,7 +219,7 @@ describe('Users profile (e2e)', () => {
         .set('Authorization', `Bearer ${ownerToken}`)
         .expect(200);
 
-      expect((response.body as ProfileResponseBody).name).toBeNull();
+      expect((response.body as ProfileResponseBody).name).toBe('Test User');
     });
   });
 
