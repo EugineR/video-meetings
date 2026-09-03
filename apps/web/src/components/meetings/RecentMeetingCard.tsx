@@ -28,11 +28,14 @@ interface RecentMeetingCardProps {
  * The participants line stands in for the design's meeting description, which has no
  * backing field on `Meeting` — same substitution `MeetingRow` used to make.
  *
- * The quick-action pill (`Fu4mT`/`J7yV4r` in the design) is a plain element rather than
- * `@/components/ui/Button`, deliberately smaller than the 44px/40px touch-target minimum:
- * the card itself is already a full-size stretched-link tap target, this pill is a small
- * secondary shortcut inside it, and the design's own size for it (~26px) is what was
- * reported as a visual bug when it rendered at the touch-target height instead.
+ * The quick-action pill is one of the design's two dedicated small button variants —
+ * `J7yV4r` (Button / Primary / Small) for "Open summary", `Fu4mT` (Button / Secondary /
+ * Small) for "Upload recording", both `$radius-7`/`gap-6`/`px-10`/11px-600 typography, only
+ * the fill, foreground and height (32px ready / 26px pending) differing per variant. Each is
+ * a plain element rather than `@/components/ui/Button`, deliberately below the 44px/40px
+ * touch-target minimum: the card itself is already a full-size stretched-link tap target,
+ * this pill is a small secondary shortcut inside it, and the design's own compact size is
+ * what was reported as a visual bug when it rendered at the touch-target height instead.
  *
  * "Open summary"'s `Link` sets `color` via an inline `style`, not a `text-*` className: this
  * app's own `a { color: inherit }` in `globals.css` is unlayered CSS, which — per the CSS
@@ -41,7 +44,8 @@ interface RecentMeetingCardProps {
  * utilities`). That reset is deliberate everywhere else (the stretched-link title reads in the
  * surrounding ink color, not link-blue), so the fix for this one exceptional Link isn't a
  * stronger class — no class can outrank an unlayered rule — it's an inline style, the one thing
- * with higher precedence than any stylesheet rule.
+ * with higher precedence than any stylesheet rule. "Upload recording" needs no such style: it's
+ * a plain `<button>`, not an `<a>`, so the `a { color: inherit }` reset never applies to it.
  *
  * Stretched-link pattern: the title `Link`'s `::after` covers the whole (`relative`) card,
  * and the action row is a later, `relative` sibling so it paints above that overlay and
@@ -101,16 +105,16 @@ export function RecentMeetingCard({
 
         {hasRecording ? (
           <Link
-            className="flex shrink-0 items-center gap-1.5 rounded-[7px] bg-accent-soft px-2.5 py-1.5 text-[11px] font-semibold"
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-[7px] bg-accent-strong px-2.5 text-[11px] font-semibold"
             href={`/meetings/${meeting.id}`}
-            style={{ color: 'var(--accent-strong)' } satisfies CSSProperties}
+            style={{ color: 'var(--action-fg)' } satisfies CSSProperties}
           >
             <SparklesIcon aria-hidden="true" className="size-3.5" />
             Open summary
           </Link>
         ) : (
           <button
-            className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-[7px] bg-background px-2.5 py-1.5 text-[11px] font-semibold text-accent-strong"
+            className="flex h-[26px] shrink-0 cursor-pointer items-center gap-1.5 rounded-[7px] bg-accent-soft px-2.5 text-[11px] font-semibold text-accent-strong"
             onClick={upload.open}
             type="button"
           >

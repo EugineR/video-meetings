@@ -6,7 +6,7 @@
  * `design/meetwise.pen` ("01 Foundations"). Colors are HeroUI CSS variables where a
  * direct semantic match exists (background/surface/foreground/muted/border/accent/
  * success/warning/danger and their `-soft` pairs); everything the design defines that
- * HeroUI has no slot for (the near-black primary-action color, the accent-tinted
+ * HeroUI has no slot for (the primary-button foreground, the accent-tinted
  * secondary-button foreground, avatar tints, the input surface) is a plain custom
  * property, exposed as a Tailwind color via `@theme inline` below.
  */
@@ -26,7 +26,6 @@
   --text-28: 1.75rem;
   --text-43: 2.6875rem;
 
-  --color-action: var(--action-bg);
   --color-action-foreground: var(--action-fg);
   --color-accent-strong: var(--accent-strong);
   --color-muted-strong: var(--muted-strong);
@@ -88,7 +87,6 @@
 
   --subtle: #f7f8fa;
   --tile: #f0f2f4;
-  --action-bg: #17191c;
   --action-fg: #ffffff;
 
   --avatar-warm-bg: #ffe7d9;
@@ -151,7 +149,6 @@
 
   --subtle: #20242a;
   --tile: #252a31;
-  --action-bg: #63b3e5;
   --action-fg: #081016;
 
   --avatar-warm-bg: #3a2d28;
@@ -205,15 +202,17 @@
 
 /* Every unlabeled `<Button>` in the app (the actual primary actions — sign in, create
    account, create meeting, save) renders HeroUI's default "primary" variant. The design's
-   Button/Primary is a near-black (light) / accent-blue (dark) action color distinct from
-   `$accent`, not `$accent` itself — reproduce that by overriding the variant's two custom
-   properties (`--button-bg*`/`--button-fg`) rather than `--accent`, which stays the app's actual accent hue everywhere
-   else (links, focus rings, badges). Button/Secondary (accent-tinted) is not carried over
-   here: the app's existing `variant="secondary"` buttons are neutral actions (Cancel, Sign
-   out), not the accent-toned "Upload" button the design uses that variant for. */
+   Button/Primary now fills with `$accent-strong` itself (it used to be a separate near-black
+   action color) — reproduce that by overriding the variant's two custom properties
+   (`--button-bg*`/`--button-fg`) rather than pointing HeroUI's own `--accent` slot at it,
+   which stays reserved for `--accent`'s own callers (links, focus rings, badges) so a future
+   re-divergence of the two colors doesn't require touching this rule. Button/Secondary
+   (accent-tinted) is not carried over here: the app's existing `variant="secondary"` buttons
+   are neutral actions (Cancel, Sign out), not the accent-toned "Upload recording" button the
+   design uses that variant for (see `RecentMeetingCard`). */
 .button--primary {
-  --button-bg: var(--action-bg);
-  --button-bg-hover: color-mix(in oklab, var(--action-bg) 90%, var(--action-fg) 10%);
+  --button-bg: var(--accent-strong);
+  --button-bg-hover: color-mix(in oklab, var(--accent-strong) 90%, var(--action-fg) 10%);
   --button-bg-pressed: var(--button-bg-hover);
   --button-fg: var(--action-fg);
 }

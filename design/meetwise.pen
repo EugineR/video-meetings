@@ -1106,9 +1106,9 @@
                               "name": "Button / Primary",
                               "reusable": true,
                               "height": 40,
-                              "fill": "$action-bg",
+                              "fill": "$accent-strong",
                               "cornerRadius": "$radius-8",
-                              "stroke": "$action-bg",
+                              "stroke": "$accent-strong",
                               "strokeWidth": 1,
                               "gap": "$space-8",
                               "padding": [
@@ -1255,6 +1255,28 @@
                                   "fontWeight": "600"
                                 }
                               ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "m9dpa",
+                          "name": "Small button variants",
+                          "width": "fill_container",
+                          "gap": "$space-10",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "id": "N0gyk",
+                              "type": "ref",
+                              "ref": "J7yV4r",
+                              "name": "Primary small example"
+                            },
+                            {
+                              "id": "hYtEu",
+                              "type": "ref",
+                              "ref": "Fu4mT",
+                              "name": "Secondary small example"
                             }
                           ]
                         },
@@ -6015,7 +6037,7 @@
                                                       "height": 24,
                                                       "fill": "$avatar-cool-bg",
                                                       "cornerRadius": "$radius-12",
-                                                      "stroke": "$white",
+                                                      "stroke": "$surface",
                                                       "strokeWidth": 2,
                                                       "justifyContent": "center",
                                                       "alignItems": "center",
@@ -6042,7 +6064,7 @@
                                                       "height": 24,
                                                       "fill": "$avatar-purple-bg",
                                                       "cornerRadius": "$radius-12",
-                                                      "stroke": "$white",
+                                                      "stroke": "$surface",
                                                       "strokeWidth": 2,
                                                       "justifyContent": "center",
                                                       "alignItems": "center",
@@ -6069,7 +6091,7 @@
                                                       "height": 24,
                                                       "fill": "$avatar-green-bg",
                                                       "cornerRadius": "$radius-12",
-                                                      "stroke": "$white",
+                                                      "stroke": "$surface",
                                                       "strokeWidth": 2,
                                                       "justifyContent": "center",
                                                       "alignItems": "center",
@@ -6096,7 +6118,7 @@
                                                       "height": 24,
                                                       "fill": "$tile",
                                                       "cornerRadius": "$radius-12",
-                                                      "stroke": "$white",
+                                                      "stroke": "$surface",
                                                       "strokeWidth": 2,
                                                       "justifyContent": "center",
                                                       "alignItems": "center",
@@ -6118,12 +6140,16 @@
                                                 {
                                                   "type": "frame",
                                                   "id": "Fu4mT",
-                                                  "name": "Upload recording",
-                                                  "fill": "$bg",
+                                                  "name": "Button / Secondary / Small · Upload recording",
+                                                  "reusable": true,
+                                                  "height": 32,
+                                                  "fill": "$accent-soft",
                                                   "cornerRadius": "$radius-7",
+                                                  "stroke": "$accent-soft",
+                                                  "strokeWidth": 1,
                                                   "gap": "$space-6",
                                                   "padding": [
-                                                    "$space-6",
+                                                    "$space-0",
                                                     "$space-10"
                                                   ],
                                                   "alignItems": "center",
@@ -6316,7 +6342,7 @@
                                                       "height": 24,
                                                       "fill": "$avatar-warm-bg",
                                                       "cornerRadius": "$radius-12",
-                                                      "stroke": "$white",
+                                                      "stroke": "$surface",
                                                       "strokeWidth": 2,
                                                       "justifyContent": "center",
                                                       "alignItems": "center",
@@ -6343,7 +6369,7 @@
                                                       "height": 24,
                                                       "fill": "$avatar-cool-bg",
                                                       "cornerRadius": "$radius-12",
-                                                      "stroke": "$white",
+                                                      "stroke": "$surface",
                                                       "strokeWidth": 2,
                                                       "justifyContent": "center",
                                                       "alignItems": "center",
@@ -6365,12 +6391,16 @@
                                                 {
                                                   "type": "frame",
                                                   "id": "J7yV4r",
-                                                  "name": "Open summary",
-                                                  "fill": "$accent-soft",
+                                                  "name": "Button / Primary / Small · Open summary",
+                                                  "reusable": true,
+                                                  "height": 32,
+                                                  "fill": "$accent-strong",
                                                   "cornerRadius": "$radius-7",
+                                                  "stroke": "$accent-strong",
+                                                  "strokeWidth": 1,
                                                   "gap": "$space-6",
                                                   "padding": [
-                                                    "$space-6",
+                                                    "$space-0",
                                                     "$space-10"
                                                   ],
                                                   "alignItems": "center",
@@ -6383,13 +6413,13 @@
                                                       "height": 14,
                                                       "icon": "sparkles",
                                                       "library": "lucide",
-                                                      "fill": "$accent-strong"
+                                                      "fill": "$action-fg"
                                                     },
                                                     {
                                                       "type": "text",
                                                       "id": "LKCbD",
                                                       "name": "Open summary label",
-                                                      "fill": "$accent-strong",
+                                                      "fill": "$action-fg",
                                                       "content": "Open summary",
                                                       "fontFamily": "$font-body",
                                                       "fontSize": "$type-11",
