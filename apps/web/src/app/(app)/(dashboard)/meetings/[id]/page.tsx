@@ -128,65 +128,67 @@ export default function MeetingDetailPage() {
             ) : null}
           </div>
 
-          <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-border bg-surface p-3.5 lg:gap-4 lg:p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 flex-col gap-[3px] lg:gap-1">
-                <h2 className="font-head text-[17px] font-semibold text-foreground lg:text-lg">
-                  Recordings
-                </h2>
-                <p className="text-[10px] text-muted lg:text-[11px]">
-                  <span className="lg:hidden">
-                    Upload and review transcripts
-                  </span>
-                  <span className="hidden lg:inline">
-                    Upload files, play recordings, and review transcripts.
-                  </span>
-                </p>
-              </div>
-              <p className="shrink-0 font-mono text-[9px] font-semibold tracking-[0.7px] text-accent-strong lg:text-[10px]">
-                {meeting.recordings.length} FILES
-              </p>
-            </div>
-
-            <RecordingUploader
-              meetingId={meeting.id}
-              onUploaded={onRecordingUploaded}
-            />
-            {meeting.recordings.map((recording) => (
-              <RecordingCard
-                key={recording.id}
-                meetingId={meeting.id}
-                onDeleted={onRecordingDeleted}
-                recording={recording}
-              />
-            ))}
-          </div>
-
-          {showSummarySection ? (
-            <div className="flex flex-col gap-[15px] rounded-[10px] border border-border bg-surface p-3.5 lg:gap-[18px] lg:p-5">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:gap-[22px]">
+            <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-border bg-surface p-3.5 lg:w-[654px] lg:shrink-0 lg:gap-4 lg:p-5">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex flex-col gap-[2px] lg:gap-[3px]">
+                <div className="flex min-w-0 flex-col gap-[3px] lg:gap-1">
                   <h2 className="font-head text-[17px] font-semibold text-foreground lg:text-lg">
-                    Meeting intelligence
+                    Recordings
                   </h2>
                   <p className="text-[10px] text-muted lg:text-[11px]">
-                    AI-generated from this meeting&apos;s recordings
+                    <span className="lg:hidden">
+                      Upload and review transcripts
+                    </span>
+                    <span className="hidden lg:inline">
+                      Upload files, play recordings, and review transcripts.
+                    </span>
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-[5px] rounded-xl bg-accent-soft px-[7px] py-[5px] text-accent-strong lg:gap-1.5 lg:px-2.5">
-                  <SparklesIcon aria-hidden="true" className="size-3" />
-                  <span className="font-mono text-[8px] font-semibold tracking-[0.5px] lg:text-[9px]">
-                    AI READY
-                  </span>
-                </div>
+                <p className="shrink-0 font-mono text-[9px] font-semibold tracking-[0.7px] text-accent-strong lg:text-[10px]">
+                  {meeting.recordings.length} FILES
+                </p>
               </div>
 
-              <MeetingSummarySection
-                isUpdating={isSummaryPending}
-                summary={meeting.summary}
+              <RecordingUploader
+                meetingId={meeting.id}
+                onUploaded={onRecordingUploaded}
               />
+              {meeting.recordings.map((recording) => (
+                <RecordingCard
+                  key={recording.id}
+                  meetingId={meeting.id}
+                  onDeleted={onRecordingDeleted}
+                  recording={recording}
+                />
+              ))}
             </div>
-          ) : null}
+
+            {showSummarySection ? (
+              <div className="flex min-w-0 flex-col gap-[15px] rounded-[10px] border border-border bg-surface p-3.5 lg:flex-1 lg:gap-[18px] lg:p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-col gap-[2px] lg:gap-[3px]">
+                    <h2 className="font-head text-[17px] font-semibold text-foreground lg:text-lg">
+                      Meeting intelligence
+                    </h2>
+                    <p className="text-[10px] text-muted lg:text-[11px]">
+                      AI-generated from this meeting&apos;s recordings
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-[5px] rounded-xl bg-accent-soft px-[7px] py-[5px] text-accent-strong lg:gap-1.5 lg:px-2.5">
+                    <SparklesIcon aria-hidden="true" className="size-3" />
+                    <span className="font-mono text-[8px] font-semibold tracking-[0.5px] lg:text-[9px]">
+                      AI READY
+                    </span>
+                  </div>
+                </div>
+
+                <MeetingSummarySection
+                  isUpdating={isSummaryPending}
+                  summary={meeting.summary}
+                />
+              </div>
+            ) : null}
+          </div>
         </>
       )}
     </div>
