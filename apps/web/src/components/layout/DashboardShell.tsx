@@ -7,6 +7,10 @@ import { AppTopBar } from '@/components/layout/AppTopBar';
 import { MobileBottomNav } from '@/components/layout/MobileBottomNav';
 import { MobileNavDrawer } from '@/components/layout/MobileNavDrawer';
 import { MobileTopBar } from '@/components/layout/MobileTopBar';
+import {
+  PageHeaderProvider,
+  type PageHeaderContent,
+} from '@/components/layout/PageHeaderProvider';
 import { useProfileQuery } from '@/lib/queries/profile';
 
 interface DashboardShellProps {
@@ -14,20 +18,24 @@ interface DashboardShellProps {
 }
 
 /**
- * The chrome of the dashboard route group (`/`): the Meetwise sidebar/top-bar redesign,
- * fed from the same session context and profile query `AppShell` uses for the original
- * chrome. Used by `(dashboard)/layout.tsx`, so `page.tsx` contributes content only — see
- * `(app)/layout.tsx` for why this is a separate shell from `AppShell` rather than a variant
- * of it.
+ * The chrome of the dashboard route group (`/`, `/meetings/[id]`): the Meetwise
+ * sidebar/top-bar redesign, fed from the same session context and profile query `AppShell`
+ * uses for the original chrome. Used by `(dashboard)/layout.tsx`, so a page contributes
+ * content only — see `(app)/layout.tsx` for why this is a separate shell from `AppShell`
+ * rather than a variant of it.
  *
- * Owns the mobile nav drawer's open state: it is the one piece of this chrome that is real
- * interaction rather than markup-only mockup (`MobileTopBar`'s menu button opens it,
- * `MobileNavDrawer`'s backdrop and close button close it).
+ * Owns two pieces of real state: the mobile nav drawer's open flag (`MobileTopBar`'s menu
+ * button opens it, `MobileNavDrawer`'s backdrop and close button close it), and `AppTopBar`'s
+ * title/breadcrumb — a page below wraps that override through `usePageHeader()`
+ * (`PageHeaderProvider.tsx`) rather than this shared, non-remounting shell taking per-route
+ * props it has no way to receive from a layout that mounts it once for every dashboard
+ * route.
  */
 export function DashboardShell({ children }: DashboardShellProps) {
   const { user, signOut } = useAuthenticatedUserContext();
   const { profile } = useProfileQuery();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [header, setHeader] = useState<PageHeaderContent>({});
 
   const name = profile?.name ?? null;
 
@@ -37,15 +45,19 @@ export function DashboardShell({ children }: DashboardShellProps) {
         <AppSidebar email={user.email} name={name} onSignOut={signOut} />
       </div>
 
-      <div className="flex min-h-screen flex-1 flex-col pb-[76px] lg:pb-0">
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col pb-[76px] lg:pb-0">
         <div className="hidden lg:block">
-          <AppTopBar />
+          <AppTopBar breadcrumb={header.breadcrumb} title={header.title} />
         </div>
         <div className="lg:hidden">
           <MobileTopBar onOpenMenu={() => setIsMenuOpen(true)} />
         </div>
 
-        <main className="flex-1">{children}</main>
+        <main className="flex-1">
+          <PageHeaderProvider setHeader={setHeader}>
+            {children}
+          </PageHeaderProvider>
+        </main>
       </div>
 
       <div className="fixed inset-x-0 bottom-0 lg:hidden">

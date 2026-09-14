@@ -79,7 +79,7 @@ export function MeetingTableRow({ meeting, onUploaded }: MeetingTableRowProps) {
       <div className="w-[130px] shrink-0">
         <MeetingStatusBadge
           className="px-2 py-1 text-[10px]"
-          hasRecording={hasRecording}
+          isReady={hasRecording}
           pendingLabel="Needs upload"
           readyLabel="Uploaded"
           showDot

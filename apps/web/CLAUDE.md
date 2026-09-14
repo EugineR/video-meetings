@@ -25,14 +25,14 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
 - `src/app/` — two top-level route groups plus the root `layout.tsx` and `globals.css`: `(app)`
   holds the authenticated routes, `(auth)` holds `/login` and `/register` with their
   `layout.tsx`. `(app)/layout.tsx` is the auth guard only (`AuthenticatedUserProvider`); its
-  two child route groups each own their own visual chrome — `(dashboard)` (`/`, the Meetwise
-  sidebar/top-bar shell) and `(workspace)` (`/meetings/[id]`, `/profile`, `/profile/edit`, the
-  original `AppShell` header) — because Next.js only gives sibling routes different layouts
-  across a folder boundary, and `/` used to be a direct sibling of `meetings`/`profile` under
-  one shared `AppShell`. Each of the three route-group layouts (`(app)`, `(dashboard)`,
-  `(workspace)`) carries its own `error.tsx` rendering the shared `AppErrorState`, so an error
-  inside a page keeps that page's own shell mounted (a group's `error.tsx` only catches errors
-  in its children, not in its own `layout.tsx`)
+  two child route groups each own their own visual chrome — `(dashboard)` (`/`,
+  `/meetings/[id]`, the Meetwise sidebar/top-bar shell) and `(workspace)` (`/profile`,
+  `/profile/edit`, the original `AppShell` header) — because Next.js only gives sibling routes
+  different layouts across a folder boundary, and `/` used to be a direct sibling of
+  `meetings`/`profile` under one shared `AppShell`. Each of the three route-group layouts
+  (`(app)`, `(dashboard)`, `(workspace)`) carries its own `error.tsx` rendering the shared
+  `AppErrorState`, so an error inside a page keeps that page's own shell mounted (a group's
+  `error.tsx` only catches errors in its children, not in its own `layout.tsx`)
 - `src/components/` — one component per file, in subfolders **by kind** (`ui/`, `layout/`,
   `meetings/`, `profile/`, `icons/`), not flat; `ui/` holds the shared, feature-agnostic
   primitives (`ErrorText`, `SuccessText`, `LoadingState`, `TextInputField`, `PasswordField`,
@@ -82,10 +82,14 @@ Next.js App Router on Tailwind CSS v4, HeroUI v3 and TanStack Query; nothing of 
   mounts only `AuthenticatedUserProvider` (which runs `useAuthenticatedUser()`, holds the single
   `if (!user) return <LoadingState variant="page"/>` guard and shares the session with everything
   below it) — no visual chrome. Its two child route groups each supply their own:
-  `(dashboard)/layout.tsx` (`/`) mounts `DashboardShell` (the Meetwise sidebar/top-bar redesign —
-  `AppSidebar`/`AppTopBar` on `lg:` and up, `MobileTopBar`/`MobileBottomNav`/`MobileNavDrawer`
-  below it); `(workspace)/layout.tsx` (`/meetings/[id]`, `/profile`, `/profile/edit`) mounts the
-  original `AppShell` (background, `AppHeader`, the `max-w-2xl` content container), unchanged.
+  `(dashboard)/layout.tsx` (`/`, `/meetings/[id]`) mounts `DashboardShell` (the Meetwise
+  sidebar/top-bar redesign — `AppSidebar`/`AppTopBar` on `lg:` and up,
+  `MobileTopBar`/`MobileBottomNav`/`MobileNavDrawer` below it) once for the whole group, so a
+  page needing a non-default `AppTopBar` title/breadcrumb announces it through
+  `usePageHeader()` (`PageHeaderProvider.tsx`) rather than the shared, non-remounting shell
+  taking per-route props a layout mounting it once has no way to pass down;
+  `(workspace)/layout.tsx` (`/profile`, `/profile/edit`) mounts the original `AppShell`
+  (background, `AppHeader`, the `max-w-2xl` content container), unchanged.
   `(auth)/layout.tsx` mounts `AuthShell` (the same background, a dark marketing `AuthStoryPanel`
   next to a plain white pane `/login`/`/register` render their own heading/fields/footer into —
   no `BrandHeader`, no `Card`, the story panel is the branding; below `lg`, `AuthMobileHeader`
