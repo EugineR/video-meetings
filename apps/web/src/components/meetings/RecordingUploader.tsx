@@ -22,8 +22,12 @@ interface RecordingUploaderProps {
  *
  * The idle state matches the design's "Recording Upload Zone" (`Mn57N`): a solid
  * (not dashed) bordered box, an accent-tinted icon circle, a heading over a single
- * helper line combining the "or choose a file" prompt with the constraints, and a dark
- * primary "Choose file" button — replacing the earlier plain dashed box.
+ * helper line combining the "or choose a file" prompt with the constraints, and a
+ * primary "Choose file" button — replacing the earlier plain dashed box. The button
+ * stays an unstyled `<Button>` so it always tracks the shared Button/Primary design
+ * token rather than baking in a one-off color. Sizes step down slightly below `lg`,
+ * matching the design's mobile stack (`WuOMR`), short of the touch-target minimum
+ * `src/lib/touchTarget.ts` enforces on every control.
  */
 export function RecordingUploader({
   meetingId,
@@ -50,7 +54,7 @@ export function RecordingUploader({
   return (
     <div className="flex flex-col gap-3">
       <div
-        className={`flex h-64 flex-col items-center justify-center gap-2.5 rounded-[9px] border px-5 text-center transition-colors ${
+        className={`flex h-56 flex-col items-center justify-center gap-2.5 rounded-[9px] border px-4 text-center transition-colors lg:h-64 lg:px-5 ${
           isDragging ? 'border-accent bg-accent/10' : 'border-border bg-subtle'
         }`}
         onDragLeave={() => setIsDragging(false)}
@@ -83,16 +87,16 @@ export function RecordingUploader({
           </div>
         ) : (
           <>
-            <span className="flex size-10 items-center justify-center rounded-[10px] bg-accent-soft">
+            <span className="flex size-9 items-center justify-center rounded-[10px] bg-accent-soft lg:size-10">
               <UploadCloudIcon
                 aria-hidden="true"
-                className="size-[19px] text-accent"
+                className="size-4 text-accent lg:size-[19px]"
               />
             </span>
-            <p className="font-head text-[15px] font-semibold text-foreground">
+            <p className="font-head text-[13px] font-semibold text-foreground lg:text-[15px]">
               Drop a recording here
             </p>
-            <p className="text-[11px] text-muted">
+            <p className="text-[10px] text-muted lg:text-[11px]">
               or choose a file · {RECORDING_UPLOAD.allowedExtensionsLabel} · up
               to {RECORDING_UPLOAD.maxSizeLabel}
             </p>

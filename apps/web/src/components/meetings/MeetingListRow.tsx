@@ -46,7 +46,7 @@ export function MeetingListRow({ meeting, onUploaded }: MeetingListRowProps) {
 
       <MeetingStatusBadge
         className="shrink-0 px-1.5 py-1 text-[9px]"
-        hasRecording={hasRecording}
+        isReady={hasRecording}
         pendingLabel="Needs upload"
         readyLabel="Uploaded"
       />

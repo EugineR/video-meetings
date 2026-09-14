@@ -63,7 +63,7 @@ export function RecentMeetingCard({
       <div className="flex flex-col gap-2">
         <MeetingStatusBadge
           className="w-fit px-2 py-1 text-[10px]"
-          hasRecording={hasRecording}
+          isReady={hasRecording}
           pendingLabel="Recording needed"
           readyLabel="Summary ready"
           showDot
