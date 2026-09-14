@@ -57,7 +57,53 @@
               "ref": "l8cW3e",
               "name": "Meetings Dashboard Content / Desktop",
               "width": "fill_container",
-              "height": "fill_container"
+              "height": "fill_container",
+              "descendants": {
+                "Fu4mT": {
+                  "type": "frame",
+                  "id": "h4QHP",
+                  "name": "Frame 4",
+                  "width": 131,
+                  "height": 26,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "W9NuYI",
+                      "x": 0,
+                      "y": 0,
+                      "name": "Frame 3",
+                      "width": 131,
+                      "height": 26,
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "BQfWU",
+                          "x": 0,
+                          "y": 0,
+                          "name": "Frame 2",
+                          "width": 131,
+                          "height": 26,
+                          "layout": "none",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "XhWHw",
+                              "x": 0,
+                              "y": 0,
+                              "name": "Frame 1",
+                              "width": 131,
+                              "height": 26,
+                              "layout": "none"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
             }
           ]
         }
