@@ -46,7 +46,7 @@ export default function MeetingDetailPage() {
           <span className="hidden lg:inline">Back to meetings</span>
         </Button>
 
-        {meeting ? (
+        {meeting && meeting.recordings.length > 0 ? (
           <MeetingStatusBadge
             className="px-2.5 py-[5px] text-[10px]"
             isReady={isMeetingSettled(meeting)}

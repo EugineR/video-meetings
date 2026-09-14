@@ -8,7 +8,6 @@ export { TrashIcon } from '@/components/icons/TrashIcon';
 export { XMarkIcon } from '@/components/icons/XMarkIcon';
 export { ArrowLeftIcon } from '@/components/icons/ArrowLeftIcon';
 export { PlusIcon } from '@/components/icons/PlusIcon';
-export { PlayCircleIcon } from '@/components/icons/PlayCircleIcon';
 export { PlayIcon } from '@/components/icons/PlayIcon';
 export { ChevronDownIcon } from '@/components/icons/ChevronDownIcon';
 export { UserIcon } from '@/components/icons/UserIcon';
